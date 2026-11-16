@@ -27,7 +27,7 @@ const form = reactive({
   systemPrompt: "",
 });
 
-const testInput = shallowRef("The ancient gate is sealed. Find the [Silver Key] to proceed!");
+const testInput = shallowRef("The ancient gate is sealed. Find the Silver Key to proceed!");
 const testResult = shallowRef(null);
 const testErr = shallowRef("");
 const testing = shallowRef(false);
