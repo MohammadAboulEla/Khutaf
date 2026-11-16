@@ -7,6 +7,14 @@ import {main} from '../models';
 
 export function Attach(arg1:number):Promise<void>;
 
+export function CacheCount():Promise<number>;
+
+export function ClearSavedGameHooks(arg1:string):Promise<void>;
+
+export function ClearTranslationCache():Promise<number>;
+
+export function DeleteSavedGame(arg1:string):Promise<void>;
+
 export function Detach():Promise<void>;
 
 export function GetConfig():Promise<config.Config>;
@@ -21,7 +29,13 @@ export function ListProcesses():Promise<Array<hook.ProcessInfo>>;
 
 export function PreviewArabic(arg1:string):Promise<main.ShapePreview>;
 
+export function QuickAttach(arg1:string):Promise<void>;
+
+export function RemoveSavedGameHook(arg1:string,arg2:string,arg3:number,arg4:number):Promise<void>;
+
 export function SaveConfig(arg1:config.Config):Promise<void>;
+
+export function SavedGames():Promise<Array<session.SavedGame>>;
 
 export function SetDebugMode(arg1:boolean,arg2:boolean):Promise<void>;
 

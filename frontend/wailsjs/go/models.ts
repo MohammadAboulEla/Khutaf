@@ -206,6 +206,24 @@ export namespace config {
 		    return a;
 		}
 	}
+	export class EmbedHook {
+	    hookCode: string;
+	    hookName: string;
+	    ctx: number;
+	    ctx2: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new EmbedHook(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hookCode = source["hookCode"];
+	        this.hookName = source["hookName"];
+	        this.ctx = source["ctx"];
+	        this.ctx2 = source["ctx2"];
+	    }
+	}
 	
 	
 	
@@ -309,6 +327,44 @@ export namespace session {
 	        this.embeddable = source["embeddable"];
 	        this.embedding = source["embedding"];
 	    }
+	}
+	export class SavedGame {
+	    exePath: string;
+	    title: string;
+	    embedHooks: config.EmbedHook[];
+	    runningPid: number;
+	    attached: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SavedGame(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.exePath = source["exePath"];
+	        this.title = source["title"];
+	        this.embedHooks = this.convertValues(source["embedHooks"], config.EmbedHook);
+	        this.runningPid = source["runningPid"];
+	        this.attached = source["attached"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Status {
 	    hostReady: boolean;

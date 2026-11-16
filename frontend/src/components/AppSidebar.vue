@@ -8,6 +8,7 @@ const props = defineProps({
   items: {
     type: Array,
     default: () => [
+      { id: "games", name: "Games", icon: "Folder" },
       { id: "hooks", name: "Hook Console", icon: "Code" },
       { id: "embed", name: "Embed & Arabic", icon: "BookOpen" },
       { id: "translators", name: "Translators", icon: "Quote" },

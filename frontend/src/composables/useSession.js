@@ -31,6 +31,8 @@ const hookOutputs = ref({});
 const embedFeed = ref([]);
 const logs = ref([]);
 const debugTraces = ref([]);
+const savedGames = ref([]);
+const cacheCount = ref(0);
 const config = ref(null);
 const errorBanner = shallowRef("");
 const saveState = shallowRef("");
@@ -192,6 +194,72 @@ const setDebugMode = (enabled, realTrans = false) => call("SetDebugMode", Boolea
 const clearDebugTraces = () => {
   debugTraces.value = [];
 };
+
+async function refreshSavedGames() {
+  try {
+    const [games, count] = await Promise.all([call("SavedGames"), call("CacheCount")]);
+    if (games) savedGames.value = games;
+    if (typeof count === "number") cacheCount.value = count;
+  } catch (e) {
+    errorBanner.value = String(e);
+  }
+}
+
+async function quickAttach(exePath) {
+  errorBanner.value = "";
+  try {
+    hooks.value = [];
+    hookOutputs.value = {};
+    await call("QuickAttach", exePath);
+    const st = await call("Status");
+    if (st) status.value = st;
+    await refreshSavedGames();
+    return true;
+  } catch (e) {
+    errorBanner.value = String(e);
+    return false;
+  }
+}
+
+async function deleteSavedGame(exePath) {
+  errorBanner.value = "";
+  try {
+    await call("DeleteSavedGame", exePath);
+    await refreshSavedGames();
+  } catch (e) {
+    errorBanner.value = String(e);
+  }
+}
+
+async function clearSavedGameHooks(exePath) {
+  errorBanner.value = "";
+  try {
+    await call("ClearSavedGameHooks", exePath);
+    await refreshSavedGames();
+  } catch (e) {
+    errorBanner.value = String(e);
+  }
+}
+
+async function removeSavedGameHook(exePath, h) {
+  errorBanner.value = "";
+  try {
+    await call("RemoveSavedGameHook", exePath, h.hookCode, h.ctx, h.ctx2);
+    await refreshSavedGames();
+  } catch (e) {
+    errorBanner.value = String(e);
+  }
+}
+
+async function clearTranslationCache() {
+  errorBanner.value = "";
+  try {
+    await call("ClearTranslationCache");
+    cacheCount.value = 0;
+  } catch (e) {
+    errorBanner.value = String(e);
+  }
+}
 const clearError = () => {
   errorBanner.value = "";
 };
@@ -206,15 +274,23 @@ export function useSession() {
     embedFeed: readonly(embedFeed),
     logs: readonly(logs),
     debugTraces: readonly(debugTraces),
+    savedGames: readonly(savedGames),
+    cacheCount: readonly(cacheCount),
     config,
     errorBanner: readonly(errorBanner),
     saveState: readonly(saveState),
     refreshProcesses,
+    refreshSavedGames,
     attach,
+    quickAttach,
     detach,
     setEmbed,
     insertHookCode,
     saveConfig,
+    deleteSavedGame,
+    clearSavedGameHooks,
+    removeSavedGameHook,
+    clearTranslationCache,
     previewArabic,
     testTranslate,
     listFonts,

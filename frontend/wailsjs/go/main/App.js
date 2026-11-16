@@ -6,6 +6,22 @@ export function Attach(arg1) {
   return window['go']['main']['App']['Attach'](arg1);
 }
 
+export function CacheCount() {
+  return window['go']['main']['App']['CacheCount']();
+}
+
+export function ClearSavedGameHooks(arg1) {
+  return window['go']['main']['App']['ClearSavedGameHooks'](arg1);
+}
+
+export function ClearTranslationCache() {
+  return window['go']['main']['App']['ClearTranslationCache']();
+}
+
+export function DeleteSavedGame(arg1) {
+  return window['go']['main']['App']['DeleteSavedGame'](arg1);
+}
+
 export function Detach() {
   return window['go']['main']['App']['Detach']();
 }
@@ -34,8 +50,20 @@ export function PreviewArabic(arg1) {
   return window['go']['main']['App']['PreviewArabic'](arg1);
 }
 
+export function QuickAttach(arg1) {
+  return window['go']['main']['App']['QuickAttach'](arg1);
+}
+
+export function RemoveSavedGameHook(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RemoveSavedGameHook'](arg1, arg2, arg3, arg4);
+}
+
 export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
+}
+
+export function SavedGames() {
+  return window['go']['main']['App']['SavedGames']();
 }
 
 export function SetDebugMode(arg1, arg2) {

@@ -81,6 +81,22 @@ func (m *Manager) Active() string {
 	return m.provider.Name()
 }
 
+// CacheSize returns the number of cached translations in memory.
+func (m *Manager) CacheSize() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.cache)
+}
+
+// ClearCache empties the in-memory translation cache and returns the removed count.
+func (m *Manager) ClearCache() int {
+	m.mu.Lock()
+	n := len(m.cache)
+	m.cache = map[string]string{}
+	m.mu.Unlock()
+	return n
+}
+
 // Translate returns a cached translation or queries the provider.
 // Concurrent requests for the same text share one in-flight call.
 func (m *Manager) Translate(ctx context.Context, text string) (string, bool, error) {

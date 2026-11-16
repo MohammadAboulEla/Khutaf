@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -256,6 +257,98 @@ func (s *Session) SetDebugMode(enabled bool, realTrans bool) {
 func (s *Session) DebugMode() bool { return s.debugMode.Load() }
 // ListProcesses returns attachable windowed processes.
 func (s *Session) ListProcesses() ([]hook.ProcessInfo, error) { return hook.ListProcesses() }
+
+// SavedGame describes a persisted game profile and whether it is currently running.
+type SavedGame struct {
+	ExePath    string             `json:"exePath"`
+	Title      string             `json:"title"`
+	EmbedHooks []config.EmbedHook `json:"embedHooks"`
+	RunningPID uint32             `json:"runningPid"`
+	Attached   bool               `json:"attached"`
+}
+
+// SavedGames returns all saved game profiles with live running/attached status.
+func (s *Session) SavedGames() []SavedGame {
+	games := s.store.Games()
+	s.mu.Lock()
+	curPath := strings.ToLower(filepath.Clean(s.gamePath))
+	isAttached := len(s.pids) > 0
+	s.mu.Unlock()
+
+	out := make([]SavedGame, 0, len(games))
+	for exePath, prof := range games {
+		var runningPID uint32
+		if pids := hook.PIDsByPath(exePath); len(pids) > 0 {
+			runningPID = pids[0]
+		}
+		title := prof.Title
+		if title == "" {
+			title = filepath.Base(exePath)
+		}
+		out = append(out, SavedGame{
+			ExePath:    exePath,
+			Title:      title,
+			EmbedHooks: prof.EmbedHooks,
+			RunningPID: runningPID,
+			Attached:   isAttached && curPath == exePath,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Attached != out[j].Attached {
+			return out[i].Attached
+		}
+		if (out[i].RunningPID != 0) != (out[j].RunningPID != 0) {
+			return out[i].RunningPID != 0
+		}
+		return strings.ToLower(out[i].Title) < strings.ToLower(out[j].Title)
+	})
+	return out
+}
+
+// QuickAttach attaches to the first running instance of exePath.
+func (s *Session) QuickAttach(exePath string) error {
+	pids := hook.PIDsByPath(exePath)
+	if len(pids) == 0 {
+		return fmt.Errorf("%s is not currently running", filepath.Base(exePath))
+	}
+	return s.Attach(pids[0])
+}
+
+// DeleteSavedGame removes a saved game profile from games.json.
+func (s *Session) DeleteSavedGame(exePath string) error {
+	return s.store.DeleteGame(exePath)
+}
+
+// ClearSavedGameHooks removes all saved embed hooks for exePath.
+func (s *Session) ClearSavedGameHooks(exePath string) error {
+	return s.store.UpdateGame(exePath, func(g *config.GameProfile) {
+		g.EmbedHooks = nil
+	})
+}
+
+// RemoveSavedGameHook removes a single saved embed hook from exePath.
+func (s *Session) RemoveSavedGameHook(exePath, hookCode string, ctx, ctx2 uint64) error {
+	return s.store.UpdateGame(exePath, func(g *config.GameProfile) {
+		kept := g.EmbedHooks[:0]
+		for _, h := range g.EmbedHooks {
+			if h.HookCode == hookCode && h.Ctx == ctx && h.Ctx2 == ctx2 {
+				continue
+			}
+			kept = append(kept, h)
+		}
+		g.EmbedHooks = kept
+	})
+}
+
+// ClearTranslationCache clears the in-memory translation cache and returns the count cleared.
+func (s *Session) ClearTranslationCache() int {
+	n := s.translator.ClearCache()
+	s.log("info", fmt.Sprintf("cleared %d cached translations", n))
+	return n
+}
+
+// CacheCount returns the number of cached translations in memory.
+func (s *Session) CacheCount() int { return s.translator.CacheSize() }
 
 // ---- attach / detach ----
 

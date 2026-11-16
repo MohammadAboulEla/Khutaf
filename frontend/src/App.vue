@@ -5,6 +5,7 @@ import AppSidebar from "./components/AppSidebar.vue";
 import AppFooter from "./components/AppFooter.vue";
 import AboutModal from "./components/AboutModal.vue";
 import HookConsoleView from "./views/HookConsoleView.vue";
+import GamesView from "./views/GamesView.vue";
 import EmbedSettingsView from "./views/EmbedSettingsView.vue";
 import TranslatorsView from "./views/TranslatorsView.vue";
 import TextPipelineView from "./views/TextPipelineView.vue";
@@ -23,7 +24,7 @@ const {
 
 const { status, logs, errorBanner, clearError } = useSession();
 
-const activeTab = shallowRef("hooks");
+const activeTab = shallowRef("games");
 const aboutOpen = shallowRef(false);
 
 const footerText = computed(() => {
@@ -68,6 +69,7 @@ const footerText = computed(() => {
         <span>{{ errorBanner }}</span>
         <button class="banner-close" type="button" @click="clearError">×</button>
       </div>
+      <GamesView v-if="activeTab === 'games'" @open-hooks="activeTab = 'hooks'" />
       <HookConsoleView v-show="activeTab === 'hooks'" />
       <EmbedSettingsView v-if="activeTab === 'embed'" />
       <TranslatorsView v-if="activeTab === 'translators'" />

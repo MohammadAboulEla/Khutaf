@@ -179,6 +179,37 @@ func (s *Store) Game(exePath string) GameProfile {
 	return s.games[gameKey(exePath)]
 }
 
+// Games returns a snapshot of all saved game profiles keyed by normalized exe path.
+func (s *Store) Games() map[string]GameProfile {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]GameProfile, len(s.games))
+	for k, v := range s.games {
+		hooks := make([]EmbedHook, len(v.EmbedHooks))
+		copy(hooks, v.EmbedHooks)
+		v.EmbedHooks = hooks
+		out[k] = v
+	}
+	return out
+}
+
+// DeleteGame removes a saved game profile and persists games.json.
+func (s *Store) DeleteGame(exePath string) error {
+	s.mu.Lock()
+	delete(s.games, gameKey(exePath))
+	snapshot := s.gamesSnapshotLocked()
+	s.mu.Unlock()
+	return writeJSON(filepath.Join(s.dir, "games.json"), snapshot)
+}
+
+func (s *Store) gamesSnapshotLocked() map[string]GameProfile {
+	snapshot := make(map[string]GameProfile, len(s.games))
+	for k, v := range s.games {
+		snapshot[k] = v
+	}
+	return snapshot
+}
+
 // UpdateGame mutates and persists the profile for exePath.
 func (s *Store) UpdateGame(exePath string, fn func(*GameProfile)) error {
 	s.mu.Lock()

@@ -88,6 +88,31 @@ func (a *App) SetDebugMode(enabled bool, realTrans bool) {
 	a.session.SetDebugMode(enabled, realTrans)
 }
 
+// SavedGames returns all saved game profiles with running/attached status.
+func (a *App) SavedGames() []session.SavedGame { return a.session.SavedGames() }
+
+// QuickAttach attaches to a saved game by executable path if it is running.
+func (a *App) QuickAttach(exePath string) error { return a.session.QuickAttach(exePath) }
+
+// DeleteSavedGame removes a saved game profile.
+func (a *App) DeleteSavedGame(exePath string) error { return a.session.DeleteSavedGame(exePath) }
+
+// ClearSavedGameHooks clears all saved embed hooks for a game.
+func (a *App) ClearSavedGameHooks(exePath string) error {
+	return a.session.ClearSavedGameHooks(exePath)
+}
+
+// RemoveSavedGameHook removes one saved embed hook from a game profile.
+func (a *App) RemoveSavedGameHook(exePath, hookCode string, ctx, ctx2 uint64) error {
+	return a.session.RemoveSavedGameHook(exePath, hookCode, ctx, ctx2)
+}
+
+// ClearTranslationCache clears the in-memory translation cache.
+func (a *App) ClearTranslationCache() int { return a.session.ClearTranslationCache() }
+
+// CacheCount returns the number of cached translations in memory.
+func (a *App) CacheCount() int { return a.session.CacheCount() }
+
 var (
 	user32DLL             = syscall.NewLazyDLL("user32.dll")
 	gdi32DLL              = syscall.NewLazyDLL("gdi32.dll")
