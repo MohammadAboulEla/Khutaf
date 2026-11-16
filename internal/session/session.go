@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +34,7 @@ const (
 	EventHookDel   = "hook:remove"
 	EventHookText  = "hook:output"
 	EventEmbedLine = "embed:line"
+	EventDebugTrace = "debug:trace"
 )
 
 // HookView is a hook as shown in the UI.
@@ -50,8 +52,26 @@ type Status struct {
 	GameName  string   `json:"gameName"`
 	Engine    string   `json:"engine"`
 	Is64      bool     `json:"is64"`
-	PIDs      []uint32 `json:"pids"`
-	Provider  string   `json:"provider"`
+	PIDs           []uint32 `json:"pids"`
+	Provider       string   `json:"provider"`
+	DebugMode      bool     `json:"debugMode"`
+	DebugRealTrans bool     `json:"debugRealTrans"`
+}
+
+// DebugTrace records per-stage execution timings (in microseconds) for one embed call.
+type DebugTrace struct {
+	Seq         uint64 `json:"seq"`
+	Time        string `json:"time"`
+	Key         string `json:"key"`
+	OrigLen     int    `json:"origLen"`
+	Cached      bool   `json:"cached"`
+	PreRulesUs  int64  `json:"preRulesUs"`
+	TranslateUs int64  `json:"translateUs"`
+	PostRulesUs int64  `json:"postRulesUs"`
+	ShapeUs     int64  `json:"shapeUs"`
+	CallbackUs  int64  `json:"callbackUs"`
+	TotalUs     int64  `json:"totalUs"`
+	Error       string `json:"error,omitempty"`
 }
 
 // EmbedLine reports one embedded translation round-trip.
@@ -77,7 +97,11 @@ type Session struct {
 	emit       Emitter
 	events     chan func()
 
-	rules atomic.Pointer[rules]
+	rules          atomic.Pointer[rules]
+	embedCfg       atomic.Pointer[config.EmbedSettings]
+	debugMode      atomic.Bool
+	debugRealTrans atomic.Bool
+	debugSeq       atomic.Uint64
 
 	mu        sync.Mutex
 	gamePath  string
@@ -168,6 +192,8 @@ func (s *Session) applyConfig(c config.Config) error {
 	if err != nil {
 		return fmt.Errorf("post-processing: %w", err)
 	}
+	embed := c.Embed
+	s.embedCfg.Store(&embed)
 	s.rules.Store(&rules{pre: pre, post: post})
 	s.translator.Configure(c.Translator)
 	return nil
@@ -186,8 +212,10 @@ func (s *Session) Status() Status {
 		GameName:  filepath.Base(s.gamePath),
 		Engine:    s.engine,
 		Is64:      s.is64,
-		PIDs:      s.pidList(),
-		Provider:  s.translator.Active(),
+		PIDs:           s.pidList(),
+		Provider:       s.translator.Active(),
+		DebugMode:      s.debugMode.Load(),
+		DebugRealTrans: s.debugRealTrans.Load(),
 	}
 	if s.hostErr != nil {
 		st.HostError = s.hostErr.Error()
@@ -217,6 +245,15 @@ func (s *Session) Hooks() []HookView {
 	return out
 }
 
+// SetDebugMode toggles performance profiling mode and optionally keeps real translation active.
+func (s *Session) SetDebugMode(enabled bool, realTrans bool) {
+	s.debugMode.Store(enabled)
+	s.debugRealTrans.Store(realTrans)
+	s.post(EventStatus, s.Status())
+}
+
+// DebugMode reports whether debug profiling mode is active.
+func (s *Session) DebugMode() bool { return s.debugMode.Load() }
 // ListProcesses returns attachable windowed processes.
 func (s *Session) ListProcesses() ([]hook.ProcessInfo, error) { return hook.ListProcesses() }
 
@@ -397,7 +434,7 @@ func (s *Session) Translate(ctx context.Context, text string) (string, bool, err
 
 // ShapeForEmbed applies wrapping, shaping and visual ordering with current settings.
 func (s *Session) ShapeForEmbed(trans string) string {
-	cfg := s.store.Config().Embed
+	cfg := s.embedCfg.Load()
 	return arabic.Process(trans, arabic.Options{
 		MaxLineLength: cfg.MaxLineLength,
 		ForceWrap:     cfg.LimitLineLength,
@@ -407,28 +444,104 @@ func (s *Session) ShapeForEmbed(trans string) string {
 
 func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 	start := time.Now()
-	timeout := time.Duration(s.store.Config().Embed.TimeoutMs) * time.Millisecond
-	if timeout <= 0 {
-		timeout = 2 * time.Second
-	}
-	// Leave headroom so the reply arrives before the game stops waiting.
-	ctx, cancel := context.WithTimeout(context.Background(), timeout*9/10)
-	defer cancel()
-
 	line := EmbedLine{Key: tp.Key(), Original: text}
-	trans, cached, err := s.Translate(ctx, text)
-	shaped := ""
-	if err != nil {
-		line.Error = err.Error()
-	} else {
-		shaped = s.ShapeForEmbed(trans)
-	}
-	// Always answer so the game thread is released immediately.
-	s.host.EmbedCallback(tp, text, shaped)
+	debugging := s.debugMode.Load()
 
+	var (
+		trans       string
+		shaped      string
+		cached      bool
+		err         error
+		preUs       int64
+		transUs     int64
+		postUs      int64
+		shapeUs     int64
+		callbackUs  int64
+		seq         uint64
+	)
+
+	if debugging {
+		seq = s.debugSeq.Add(1)
+		r := s.rules.Load()
+
+		t0 := time.Now()
+		preText := r.pre.Apply(text)
+		preUs = time.Since(t0).Microseconds()
+
+		t1 := time.Now()
+		if s.debugRealTrans.Load() {
+			timeout := time.Duration(s.embedCfg.Load().TimeoutMs) * time.Millisecond
+			if timeout <= 0 {
+				timeout = 2 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout*9/10)
+			trans, cached, err = s.translator.Translate(ctx, preText)
+			cancel()
+		} else {
+			trans = fmt.Sprintf("نص اختباري %d", seq)
+		}
+		transUs = time.Since(t1).Microseconds()
+
+		if err != nil {
+			line.Error = err.Error()
+		} else {
+			t2 := time.Now()
+			trans = r.post.Apply(trans)
+			if s.debugRealTrans.Load() && !pipeline.PlaceholdersPreserved(text, trans) {
+				err = errors.New("translation dropped [..]/{..} placeholders")
+				line.Error = err.Error()
+			}
+			postUs = time.Since(t2).Microseconds()
+
+			if err == nil {
+				t3 := time.Now()
+				shaped = s.ShapeForEmbed(trans)
+				shapeUs = time.Since(t3).Microseconds()
+			}
+		}
+	} else {
+		timeout := time.Duration(s.embedCfg.Load().TimeoutMs) * time.Millisecond
+		if timeout <= 0 {
+			timeout = 2 * time.Second
+		}
+		// Leave headroom so the reply arrives before the game stops waiting.
+		ctx, cancel := context.WithTimeout(context.Background(), timeout*9/10)
+		defer cancel()
+
+		trans, cached, err = s.Translate(ctx, text)
+		if err != nil {
+			line.Error = err.Error()
+		} else {
+			shaped = s.ShapeForEmbed(trans)
+		}
+	}
+
+	// Always answer so the game thread is released immediately.
+	tCb := time.Now()
+	s.host.EmbedCallback(tp, text, shaped)
+	callbackUs = time.Since(tCb).Microseconds()
+
+	totalDur := time.Since(start)
 	line.Translated, line.Shaped, line.Cached = trans, shaped, cached
-	line.ElapsedMs = time.Since(start).Milliseconds()
+	line.ElapsedMs = totalDur.Milliseconds()
 	s.post(EventEmbedLine, line)
+
+	if debugging {
+		s.post(EventDebugTrace, DebugTrace{
+			Seq:         seq,
+			Time:        start.Format("15:04:05.000"),
+			Key:         line.Key,
+			OrigLen:     len([]rune(text)),
+			Cached:      cached,
+			PreRulesUs:  preUs,
+			TranslateUs: transUs,
+			PostRulesUs: postUs,
+			ShapeUs:     shapeUs,
+			CallbackUs:  callbackUs,
+			TotalUs:     totalDur.Microseconds(),
+			Error:       line.Error,
+		})
+	}
 }
 
 // ---- hook.Handler ----
@@ -499,8 +612,31 @@ func (s *Session) OnHostInfo(kind hook.HostInfo, msg string) {
 	case hook.HostInfoWarning, hook.HostInfoEmuWarning:
 		s.log("warn", msg)
 	default:
+		if strings.HasPrefix(msg, "[perf] ") {
+			s.emitPerfTrace(strings.TrimPrefix(msg, "[perf] "))
+		}
 		s.log("info", msg)
 	}
+}
+
+func (s *Session) emitPerfTrace(payload string) {
+	// Expected format: "<metric>: <microseconds> us"
+	parts := strings.SplitN(payload, ":", 2)
+	if len(parts) != 2 {
+		return
+	}
+	name := strings.TrimSpace(parts[0])
+	valStr := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(parts[1]), "us"))
+	us, err := strconv.ParseInt(valStr, 10, 64)
+	if err != nil {
+		return
+	}
+	s.post(EventDebugTrace, DebugTrace{
+		Seq:     s.debugSeq.Add(1),
+		Time:    time.Now().Format("15:04:05.000"),
+		Key:     name,
+		TotalUs: us,
+	})
 }
 
 // OnHookInsert implements hook.Handler: re-enables saved embed hooks.

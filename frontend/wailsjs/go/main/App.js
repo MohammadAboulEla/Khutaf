@@ -38,6 +38,10 @@ export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
 }
 
+export function SetDebugMode(arg1, arg2) {
+  return window['go']['main']['App']['SetDebugMode'](arg1, arg2);
+}
+
 export function SetEmbed(arg1, arg2) {
   return window['go']['main']['App']['SetEmbed'](arg1, arg2);
 }

@@ -52,8 +52,9 @@ func NewBing(cfg config.BingSettings) *Bing {
 	b := &Bing{
 		cfg: cfg,
 		client: &http.Client{
-			Timeout: 15 * time.Second,
-			Jar:     jar,
+			Timeout:   15 * time.Second,
+			Transport: newHTTPTransport(),
+			Jar:       jar,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},

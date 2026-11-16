@@ -12,6 +12,7 @@ const props = defineProps({
       { id: "embed", name: "Embed & Arabic", icon: "BookOpen" },
       { id: "translators", name: "Translators", icon: "Quote" },
       { id: "pipeline", name: "Text Pipeline", icon: "Cog" },
+      { id: "debug", name: "Debug", icon: "Activity" },
     ],
   },
 });

@@ -320,6 +320,8 @@ export namespace session {
 	    is64: boolean;
 	    pids: number[];
 	    provider: string;
+	    debugMode: boolean;
+	    debugRealTrans: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Status(source);
@@ -336,6 +338,8 @@ export namespace session {
 	        this.is64 = source["is64"];
 	        this.pids = source["pids"];
 	        this.provider = source["provider"];
+	        this.debugMode = source["debugMode"];
+	        this.debugRealTrans = source["debugRealTrans"];
 	    }
 	}
 

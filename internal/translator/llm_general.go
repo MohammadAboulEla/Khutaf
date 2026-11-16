@@ -23,7 +23,13 @@ type LLM struct {
 
 // NewLLM creates a client for the given settings.
 func NewLLM(cfg config.LLMSettings) *LLM {
-	return &LLM{cfg: cfg, client: &http.Client{Timeout: 60 * time.Second}}
+	return &LLM{
+		cfg: cfg,
+		client: &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: newHTTPTransport(),
+		},
+	}
 }
 
 // Name implements Provider.

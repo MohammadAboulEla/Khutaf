@@ -23,6 +23,8 @@ export function PreviewArabic(arg1:string):Promise<main.ShapePreview>;
 
 export function SaveConfig(arg1:config.Config):Promise<void>;
 
+export function SetDebugMode(arg1:boolean,arg2:boolean):Promise<void>;
+
 export function SetEmbed(arg1:string,arg2:boolean):Promise<void>;
 
 export function Status():Promise<session.Status>;

@@ -8,6 +8,7 @@ import HookConsoleView from "./views/HookConsoleView.vue";
 import EmbedSettingsView from "./views/EmbedSettingsView.vue";
 import TranslatorsView from "./views/TranslatorsView.vue";
 import TextPipelineView from "./views/TextPipelineView.vue";
+import DebugView from "./views/DebugView.vue";
 import { useTheme } from "./composables/useTheme.js";
 import { useSidebar } from "./composables/useSidebar.js";
 import { useSession } from "./composables/useSession.js";
@@ -30,7 +31,13 @@ const footerText = computed(() => {
   const base = status.value.attached
     ? `Attached: ${status.value.gameName} (${status.value.engine || "native"})`
     : "Idle — select a process to attach";
-  const prov = status.value.provider ? ` · Translator: ${status.value.provider}` : " · Translator: off";
+  const prov = status.value.debugMode
+    ? status.value.debugRealTrans
+      ? " · Translator: debugging (real)"
+      : " · Translator: debugging (test mode)"
+    : status.value.provider
+      ? ` · Translator: ${status.value.provider}`
+      : " · Translator: off";
   const logPart = last ? ` · [${last.time}] ${last.msg}` : "";
   return base + prov + logPart;
 });
@@ -65,6 +72,7 @@ const footerText = computed(() => {
       <EmbedSettingsView v-if="activeTab === 'embed'" />
       <TranslatorsView v-if="activeTab === 'translators'" />
       <TextPipelineView v-if="activeTab === 'pipeline'" />
+      <DebugView v-if="activeTab === 'debug'" />
     </main>
 
     <AppFooter class="foot" :status="footerText" />

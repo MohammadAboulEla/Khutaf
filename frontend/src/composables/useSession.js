@@ -21,6 +21,8 @@ const status = ref({
   is64: true,
   pids: [],
   provider: "",
+  debugMode: false,
+  debugRealTrans: false,
 });
 
 const processes = ref([]);
@@ -28,6 +30,7 @@ const hooks = ref([]);
 const hookOutputs = ref({});
 const embedFeed = ref([]);
 const logs = ref([]);
+const debugTraces = ref([]);
 const config = ref(null);
 const errorBanner = shallowRef("");
 const saveState = shallowRef("");
@@ -52,16 +55,53 @@ function init() {
     hooks.value = hooks.value.filter((x) => x.key !== key);
   });
 
+  let pendingOutputs = {};
+  let pendingFeed = [];
+  let pendingLogs = [];
+  let pendingTraces = [];
+  let flushTimer = null;
+
+  function scheduleFlush() {
+    if (flushTimer !== null) return;
+    flushTimer = requestAnimationFrame(() => {
+      flushTimer = null;
+      if (Object.keys(pendingOutputs).length) {
+        hookOutputs.value = { ...hookOutputs.value, ...pendingOutputs };
+        pendingOutputs = {};
+      }
+      if (pendingFeed.length) {
+        embedFeed.value = [...pendingFeed.reverse(), ...embedFeed.value].slice(0, 100);
+        pendingFeed = [];
+      }
+      if (pendingLogs.length) {
+        logs.value = [...pendingLogs.reverse(), ...logs.value].slice(0, 200);
+        pendingLogs = [];
+      }
+      if (pendingTraces.length) {
+        debugTraces.value = [...pendingTraces.reverse(), ...debugTraces.value].slice(0, 300);
+        pendingTraces = [];
+      }
+    });
+  }
+
   on("hook:output", ({ key, text }) => {
-    hookOutputs.value = { ...hookOutputs.value, [key]: text };
+    pendingOutputs[key] = text;
+    scheduleFlush();
   });
 
   on("embed:line", (line) => {
-    embedFeed.value = [line, ...embedFeed.value.slice(0, 99)];
+    pendingFeed.push(line);
+    scheduleFlush();
   });
 
   on("log", (entry) => {
-    logs.value = [entry, ...logs.value.slice(0, 199)];
+    pendingLogs.push(entry);
+    scheduleFlush();
+  });
+
+  on("debug:trace", (trace) => {
+    pendingTraces.push(trace);
+    scheduleFlush();
   });
 
   refreshAll();
@@ -148,6 +188,10 @@ async function saveConfig(next) {
 const previewArabic = (text) => call("PreviewArabic", text);
 const testTranslate = (text) => call("TestTranslate", text);
 const listFonts = () => call("ListFonts");
+const setDebugMode = (enabled, realTrans = false) => call("SetDebugMode", Boolean(enabled), Boolean(realTrans));
+const clearDebugTraces = () => {
+  debugTraces.value = [];
+};
 const clearError = () => {
   errorBanner.value = "";
 };
@@ -161,6 +205,7 @@ export function useSession() {
     hookOutputs: readonly(hookOutputs),
     embedFeed: readonly(embedFeed),
     logs: readonly(logs),
+    debugTraces: readonly(debugTraces),
     config,
     errorBanner: readonly(errorBanner),
     saveState: readonly(saveState),
@@ -173,6 +218,8 @@ export function useSession() {
     previewArabic,
     testTranslate,
     listFonts,
+    setDebugMode,
+    clearDebugTraces,
     clearError,
   };
 }

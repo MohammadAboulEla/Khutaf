@@ -83,6 +83,11 @@ func (a *App) GetConfig() config.Config { return a.session.Config() }
 // SaveConfig persists settings.
 func (a *App) SaveConfig(c config.Config) error { return a.session.SaveConfig(c) }
 
+// SetDebugMode toggles performance profiling mode.
+func (a *App) SetDebugMode(enabled bool, realTrans bool) {
+	a.session.SetDebugMode(enabled, realTrans)
+}
+
 var (
 	user32DLL             = syscall.NewLazyDLL("user32.dll")
 	gdi32DLL              = syscall.NewLazyDLL("gdi32.dll")
