@@ -28,7 +28,6 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
         class="item"
         :class="{ active: props.active === i.id }"
         type="button"
-        :title="props.collapsed ? i.name : undefined"
         @click="emit('select', i.id)"
       >
         <Icon :name="i.icon" :size="18" />
@@ -40,7 +39,6 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
       <button
         class="collapser"
         type="button"
-        :title="props.collapsed ? 'Expand sidebar' : 'Collapse sidebar'"
         @click="emit('toggle-collapsed')"
       >
         <span class="chev" :class="{ flip: props.collapsed }">

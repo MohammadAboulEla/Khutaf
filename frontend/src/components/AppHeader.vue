@@ -32,10 +32,10 @@ const close = () => wails()?.Quit();
     </div>
 
     <div class="header-actions no-drag">
-      <button class="btn" title="Toggle theme" @click="emit('toggle-theme')">
+      <button class="btn" @click="emit('toggle-theme')">
         <Icon :name="theme === 'dark' ? 'Sun' : 'Moon'" :size="14" />
       </button>
-      <button class="btn" title="Toggle sidebar side" @click="emit('toggle-sidebar')">
+      <button class="btn" @click="emit('toggle-sidebar')">
         <span class="panel-icon" :class="{ flipped: sidebar === 'left' }">
           <Icon name="PanelLeft" :size="14" />
         </span>
@@ -45,13 +45,13 @@ const close = () => wails()?.Quit();
         <Icon name="Info" :size="12" />
       </button>
       <span class="vdivider" />
-      <button class="btn wctl" title="Minimize" @click="minimize">
+      <button class="btn wctl" @click="minimize">
         <Icon name="Minus" :size="14" />
       </button>
-      <button class="btn wctl" title="Maximize" @click="toggleMax">
+      <button class="btn wctl" @click="toggleMax">
         <Icon name="Square" :size="12" />
       </button>
-      <button class="btn wctl close" title="Close" @click="close">
+      <button class="btn wctl close" @click="close">
         <Icon name="X" :size="14" />
       </button>
     </div>

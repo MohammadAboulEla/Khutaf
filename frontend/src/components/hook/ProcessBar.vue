@@ -36,7 +36,7 @@ function onInsert() {
         </option>
       </select>
 
-      <button class="btn" type="button" title="Refresh processes" @click="emit('refresh')">
+      <button class="btn" type="button" @click="emit('refresh')">
         <Icon name="RefreshCw" :size="13" />
         <span>Refresh</span>
       </button>

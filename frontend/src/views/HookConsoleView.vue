@@ -22,7 +22,9 @@ const {
 
 const STORAGE_KEY = "khutaf:inspectorHeight";
 const saved = Number(localStorage.getItem(STORAGE_KEY));
-const inspectorHeight = shallowRef(Number.isFinite(saved) && saved >= 90 ? saved : 190);
+const inspectorHeight = shallowRef(
+  Number.isFinite(saved) && saved >= 90 ? saved : 190,
+);
 const dragging = shallowRef(false);
 
 let startY = 0;
@@ -75,7 +77,6 @@ onUnmounted(() => {
 
     <div
       class="splitter"
-      title="Drag to resize hook list"
       @mousedown.prevent="startDrag"
     >
       <span class="grip" />

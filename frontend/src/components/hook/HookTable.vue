@@ -40,7 +40,11 @@ const filteredHooks = computed(() => {
       </div>
       <label class="chk">
         <input v-model="embedOnly" type="checkbox" />
-        <span>Embeddable only ({{ filteredHooks.length }}/{{ props.hooks.length }})</span>
+        <span
+          >Embeddable only ({{ filteredHooks.length }}/{{
+            props.hooks.length
+          }})</span
+        >
       </label>
     </div>
 
@@ -57,29 +61,33 @@ const filteredHooks = computed(() => {
         <tbody>
           <tr v-if="!filteredHooks.length">
             <td colspan="4" class="empty">
-              No text hooks discovered yet. Attach to a running game and advance dialogue.
+              No text hooks discovered yet. Attach to a running game and advance
+              dialogue.
             </td>
           </tr>
-          <tr v-for="h in filteredHooks" :key="h.key" :class="{ active: h.embedding }">
+          <tr
+            v-for="h in filteredHooks"
+            :key="h.key"
+            :class="{ active: h.embedding }"
+          >
             <td class="col-embed">
               <input
                 type="checkbox"
                 :checked="h.embedding"
                 :disabled="!h.embeddable"
-                :title="h.embeddable ? 'Toggle in-game Arabic embedding' : 'Hook is read-only'"
                 @change="emit('toggle-embed', h.key, $event.target.checked)"
               />
             </td>
-            <td class="col-name" :title="h.hookName">
+            <td class="col-name">
               <div class="name-cell">
                 <span class="name">{{ h.hookName }}</span>
                 <span v-if="h.embeddable" class="tag">embed</span>
               </div>
             </td>
-            <td class="col-code" :title="h.hookCode">
+            <td class="col-code">
               <div class="ellipsis">{{ h.hookCode }}</div>
             </td>
-            <td class="col-text" :title="props.outputs[h.key] || ''">
+            <td class="col-text">
               <div class="text-preview">{{ props.outputs[h.key] || "—" }}</div>
             </td>
           </tr>

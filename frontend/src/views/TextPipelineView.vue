@@ -51,7 +51,7 @@ function onSave() {
 
       <div v-if="!preRules.length" class="empty">No pre-translation rules configured.</div>
       <div v-for="(r, idx) in preRules" :key="'pre-' + idx" class="rule-row">
-        <input v-model="r.enabled" type="checkbox" title="Enabled" />
+        <input v-model="r.enabled" type="checkbox" />
         <label class="regex-chk">
           <input v-model="r.regex" type="checkbox" />
           <span>Regex</span>
@@ -75,7 +75,7 @@ function onSave() {
 
       <div v-if="!postRules.length" class="empty">No post-translation rules configured.</div>
       <div v-for="(r, idx) in postRules" :key="'post-' + idx" class="rule-row">
-        <input v-model="r.enabled" type="checkbox" title="Enabled" />
+        <input v-model="r.enabled" type="checkbox" />
         <label class="regex-chk">
           <input v-model="r.regex" type="checkbox" />
           <span>Regex</span>
