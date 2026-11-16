@@ -10,7 +10,7 @@ const props = defineProps({
 const emit = defineEmits(["toggle-embed"]);
 
 const query = shallowRef("");
-const embedOnly = shallowRef(false);
+const embedOnly = shallowRef(true);
 
 const filteredHooks = computed(() => {
   const q = query.value.trim().toLowerCase();
@@ -54,13 +54,12 @@ const filteredHooks = computed(() => {
           <tr>
             <th class="col-embed">Embed</th>
             <th class="col-name">Engine / Hook</th>
-            <th class="col-code">H-Code</th>
             <th>Latest Captured Text</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="!filteredHooks.length">
-            <td colspan="4" class="empty">
+            <td colspan="3" class="empty">
               No text hooks discovered yet. Attach to a running game and advance
               dialogue.
             </td>
@@ -83,9 +82,6 @@ const filteredHooks = computed(() => {
                 <span class="name">{{ h.hookName }}</span>
                 <span v-if="h.embeddable" class="tag">embed</span>
               </div>
-            </td>
-            <td class="col-code">
-              <div class="ellipsis">{{ h.hookCode }}</div>
             </td>
             <td class="col-text">
               <div class="text-preview">{{ props.outputs[h.key] || "—" }}</div>
