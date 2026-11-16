@@ -138,8 +138,7 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
   transition: opacity 0.12s;
 }
 .sidebar[data-collapsed="true"] .label {
-  opacity: 0;
-  pointer-events: none;
+  display: none;
 }
 .chev {
   display: inline-flex;
