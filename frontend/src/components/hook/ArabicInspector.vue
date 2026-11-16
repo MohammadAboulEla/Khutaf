@@ -8,7 +8,7 @@ const props = defineProps({
 });
 
 const tab = shallowRef("feed");
-const sampleText = shallowRef("مرحبا بك يا Ahmed في عالم <color=red>Khutaf</color>! [HP: 100]");
+const sampleText = shallowRef("مرحباً يا Ahmed في عالم <color=red>Khutaf</color> نقاط الصحة الخاصة بك <color=#4ade80>100</color> الحالة ممتازة.");
 const preview = shallowRef({ logical: "", shaped: "", codes: "" });
 const transBusy = shallowRef(false);
 const transError = shallowRef("");
@@ -35,6 +35,22 @@ async function onTestTranslate() {
     transBusy.value = false;
   }
 }
+
+// Parse <color=...>...</color> tags into safe renderable segments.
+function parseColorSegments(text) {
+  if (!text) return [];
+  const re = /(<color=([a-zA-Z]+|#[0-9a-fA-F]{3,8})>)(.*?)(<\/color>)/g;
+  const out = [];
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push({ text: text.slice(last, m.index) });
+    out.push({ text: m[3], color: m[2] });
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push({ text: text.slice(last) });
+  return out;
+}
 </script>
 
 <template>
@@ -55,7 +71,7 @@ async function onTestTranslate() {
           :class="{ active: tab === 'tester' }"
           @click="tab = 'tester'"
         >
-          Arabic Shaping &amp; BiDi Tester
+          Arabic Preview &amp; Test
         </button>
       </div>
 
@@ -90,21 +106,18 @@ async function onTestTranslate() {
       <input
         v-model="sampleText"
         class="input"
-        placeholder="Type Arabic or source dialogue to inspect shaping & BiDi ordering…"
+        dir="auto"
+        placeholder="Type English or Arabic text to test translation and how it appears in-game…"
       />
       <div v-if="transError" class="err">{{ transError }}</div>
       <div class="out-grid">
         <div class="box">
-          <div class="lbl">Logical Wrapped (RTL)</div>
-          <pre class="val rtl">{{ preview.logical }}</pre>
+          <div class="lbl">Readable Arabic (Line Wrapped)</div>
+          <pre class="val rtl" dir="rtl">{{ preview.logical }}</pre>
         </div>
         <div class="box">
-          <div class="lbl">In-Game Visual Buffer (Shaped LTR)</div>
-          <pre class="val">{{ preview.shaped }}</pre>
-        </div>
-        <div class="box">
-          <div class="lbl">Unicode Codepoints</div>
-          <div class="codes">{{ preview.codes }}</div>
+          <div class="lbl">In-Game Output Preview</div>
+          <pre class="val ltr-override"><template v-for="(seg, i) in parseColorSegments(preview.shaped)" :key="i"><span v-if="seg.color" :style="{ color: seg.color }">{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template></pre>
         </div>
       </div>
     </div>
@@ -231,7 +244,7 @@ async function onTestTranslate() {
 .out-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
   min-height: 0;
 }
@@ -256,6 +269,16 @@ async function onTestTranslate() {
 .val.rtl {
   direction: rtl;
   text-align: right;
+}
+.val.ltr-override {
+  direction: ltr;
+  unicode-bidi: bidi-override;
+  text-align: left;
+}
+.tag-hint {
+  color: var(--fg-muted);
+  opacity: 0.7;
+  font-size: 11px;
 }
 .codes {
   font-family: var(--mono);
