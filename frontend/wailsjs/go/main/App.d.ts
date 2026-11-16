@@ -15,6 +15,8 @@ export function Hooks():Promise<Array<session.HookView>>;
 
 export function InsertHookCode(arg1:string):Promise<void>;
 
+export function ListFonts():Promise<Array<string>>;
+
 export function ListProcesses():Promise<Array<hook.ProcessInfo>>;
 
 export function PreviewArabic(arg1:string):Promise<main.ShapePreview>;

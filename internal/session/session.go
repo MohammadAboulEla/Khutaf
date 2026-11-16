@@ -355,7 +355,7 @@ func (s *Session) pushEmbedSettings(pid uint32) {
 	unityDir := ""
 	if cfg.ChangeFont {
 		font = cfg.FontFamily
-		if strings.HasPrefix(strings.ToLower(engine), "unity") {
+		if cfg.UseUnityBundle && strings.HasPrefix(strings.ToLower(engine), "unity") {
 			unityDir = s.unityFontDir()
 		}
 	}

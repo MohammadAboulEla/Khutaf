@@ -47,6 +47,9 @@ func Process(text string, opts Options) string {
 	if opts.DisplayMode == DisplayOriTrans && !strings.HasPrefix(text, "\n") {
 		// Start Arabic on a fresh line below the original text.
 		text = "\n" + text
+	} else if opts.DisplayMode == DisplayTransOri && !strings.HasSuffix(text, "\n") {
+		// Put the original text on a fresh line below the Arabic translation.
+		text += "\n"
 	}
 	return text
 }

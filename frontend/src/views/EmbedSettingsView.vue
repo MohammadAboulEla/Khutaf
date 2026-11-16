@@ -1,15 +1,23 @@
 <script setup>
-import { reactive, watch } from "vue";
+import { reactive, shallowRef, watch, onMounted } from "vue";
 import { useSession } from "../composables/useSession.js";
 
-const { config, saveConfig, saveState } = useSession();
+const { config, saveConfig, saveState, listFonts } = useSession();
+
+const fonts = shallowRef(["Tahoma", "Arial", "Segoe UI"]);
+
+onMounted(async () => {
+  const list = await listFonts();
+  if (list?.length) fonts.value = list;
+});
 
 const form = reactive({
   timeoutMs: 2000,
   displayMode: 0,
   clearText: false,
   changeFont: true,
-  fontFamily: "Arial",
+  fontFamily: "Tahoma",
+  useUnityBundle: false,
   changeFontSize: false,
   fontSizeRelative: 1.0,
   limitLineLength: false,
@@ -40,6 +48,7 @@ function onSave() {
       clearText: form.clearText,
       changeFont: form.changeFont,
       fontFamily: form.fontFamily.trim(),
+      useUnityBundle: form.useUnityBundle,
       changeFontSize: form.changeFontSize,
       fontSizeRelative: Number(form.fontSizeRelative) || 1.0,
       limitLineLength: form.limitLineLength,
@@ -81,8 +90,13 @@ function onSave() {
         </label>
 
         <label class="field">
-          <span class="lbl">Override Game Font Family (OS / Unity TMP Fallback)</span>
-          <input v-model="form.fontFamily" class="input" placeholder="Arial, Tahoma, Rubik, Tajawal…" />
+          <span class="lbl">Override Game Font Family (takes effect on next game launch)</span>
+          <select v-model="form.fontFamily" class="input">
+            <option v-if="form.fontFamily && !fonts.includes(form.fontFamily)" :value="form.fontFamily">
+              {{ form.fontFamily }}
+            </option>
+            <option v-for="f in fonts" :key="f" :value="f">{{ f }}</option>
+          </select>
         </label>
 
         <label class="field">
@@ -102,7 +116,11 @@ function onSave() {
       <div class="checks">
         <label class="chk">
           <input v-model="form.changeFont" type="checkbox" />
-          <span>Enable Unity TMP AssetBundle &amp; Dynamic OS Font Injection</span>
+          <span>Override Game Font (OS Font / Unity Dynamic TMP)</span>
+        </label>
+        <label class="chk">
+          <input v-model="form.useUnityBundle" type="checkbox" />
+          <span>Use Unity Arial SDF Bundle (fallback if OS font fails)</span>
         </label>
         <label class="chk">
           <input v-model="form.changeFontSize" type="checkbox" />
@@ -150,19 +168,22 @@ function onSave() {
 }
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
 }
 .field {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  min-width: 0;
 }
 .lbl {
   font-size: 11px;
   color: var(--fg-muted);
 }
 .input {
+  width: 100%;
+  min-width: 0;
   height: 32px;
   padding: 0 10px;
   background: var(--paper);

@@ -146,6 +146,7 @@ export namespace config {
 	    clearText: boolean;
 	    changeFont: boolean;
 	    fontFamily: string;
+	    useUnityBundle: boolean;
 	    changeFontSize: boolean;
 	    fontSizeRelative: number;
 	    limitLineLength: boolean;
@@ -162,6 +163,7 @@ export namespace config {
 	        this.clearText = source["clearText"];
 	        this.changeFont = source["changeFont"];
 	        this.fontFamily = source["fontFamily"];
+	        this.useUnityBundle = source["useUnityBundle"];
 	        this.changeFontSize = source["changeFontSize"];
 	        this.fontSizeRelative = source["fontSizeRelative"];
 	        this.limitLineLength = source["limitLineLength"];

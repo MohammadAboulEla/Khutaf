@@ -147,6 +147,7 @@ async function saveConfig(next) {
 
 const previewArabic = (text) => call("PreviewArabic", text);
 const testTranslate = (text) => call("TestTranslate", text);
+const listFonts = () => call("ListFonts");
 const clearError = () => {
   errorBanner.value = "";
 };
@@ -171,6 +172,7 @@ export function useSession() {
     saveConfig,
     previewArabic,
     testTranslate,
+    listFonts,
     clearError,
   };
 }

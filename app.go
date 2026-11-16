@@ -4,9 +4,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/sys/windows"
 
 	"khutaf/internal/arabic"
 	"khutaf/internal/config"
@@ -77,6 +82,58 @@ func (a *App) GetConfig() config.Config { return a.session.Config() }
 
 // SaveConfig persists settings.
 func (a *App) SaveConfig(c config.Config) error { return a.session.SaveConfig(c) }
+
+var (
+	user32DLL             = syscall.NewLazyDLL("user32.dll")
+	gdi32DLL              = syscall.NewLazyDLL("gdi32.dll")
+	procGetDC             = user32DLL.NewProc("GetDC")
+	procReleaseDC         = user32DLL.NewProc("ReleaseDC")
+	procEnumFontFamiliesW = gdi32DLL.NewProc("EnumFontFamiliesExW")
+)
+
+type logFontW struct {
+	Height         int32
+	Width          int32
+	Escapement     int32
+	Orientation    int32
+	Weight         int32
+	Italic         byte
+	Underline      byte
+	StrikeOut      byte
+	CharSet        byte
+	OutPrecision   byte
+	ClipPrecision  byte
+	Quality        byte
+	PitchAndFamily byte
+	FaceName       [32]uint16
+}
+
+// ListFonts returns installed Windows font family names.
+func (a *App) ListFonts() []string {
+	hdc, _, _ := procGetDC.Call(0)
+	if hdc == 0 {
+		return []string{"Arial", "Segoe UI", "Tahoma"}
+	}
+	defer procReleaseDC.Call(0, hdc)
+
+	seen := map[string]bool{}
+	cb := syscall.NewCallback(func(lf *logFontW, _ uintptr, _ uintptr, _ uintptr) uintptr {
+		name := windows.UTF16ToString(lf.FaceName[:])
+		if name != "" && !strings.HasPrefix(name, "@") {
+			seen[name] = true
+		}
+		return 1
+	})
+	lf := logFontW{CharSet: 1} // DEFAULT_CHARSET
+	procEnumFontFamiliesW.Call(hdc, uintptr(unsafe.Pointer(&lf)), cb, 0, 0)
+
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
+	return out
+}
 
 // ShapePreview is the result of PreviewArabic.
 type ShapePreview struct {

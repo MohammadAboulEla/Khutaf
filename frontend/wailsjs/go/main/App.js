@@ -22,6 +22,10 @@ export function InsertHookCode(arg1) {
   return window['go']['main']['App']['InsertHookCode'](arg1);
 }
 
+export function ListFonts() {
+  return window['go']['main']['App']['ListFonts']();
+}
+
 export function ListProcesses() {
   return window['go']['main']['App']['ListProcesses']();
 }

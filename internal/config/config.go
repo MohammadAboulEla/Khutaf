@@ -19,6 +19,7 @@ type EmbedSettings struct {
 	ClearText        bool    `json:"clearText"`
 	ChangeFont       bool    `json:"changeFont"`
 	FontFamily       string  `json:"fontFamily"`
+	UseUnityBundle   bool    `json:"useUnityBundle"` // load arialuni_sdf_u* (overrides OS font when glyphs exist)
 	ChangeFontSize   bool    `json:"changeFontSize"`
 	FontSizeRelative float32 `json:"fontSizeRelative"`
 	LimitLineLength  bool    `json:"limitLineLength"` // wrap non-Arabic output too
@@ -101,6 +102,7 @@ func Default() Config {
 			DisplayMode:      1,
 			ChangeFont:       true,
 			FontFamily:       "Tahoma",
+			UseUnityBundle:   false,
 			FontSizeRelative: 1,
 			MaxLineLength:    40,
 		},
