@@ -1,0 +1,7 @@
+build/bin
+node_modules
+frontend/dist
+runtime/
+CLAUDE.md
+PRD.md
+handof.md
