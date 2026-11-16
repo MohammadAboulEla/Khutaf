@@ -2,8 +2,8 @@
 import Icon from "./Icon.vue";
 
 defineProps({
-  title: { type: String, default: "خُطّاف" },
-  subtitle: { type: String, default: "Khutaf · Embedded Arabic Hook" },
+  title: { type: String, default: "Khutفـا" },
+  subtitle: { type: String, default: " · Embedded Arabic Hook" },
   version: { type: String, default: "0.1" },
   theme: { type: String, default: "dark" },
   sidebar: { type: String, default: "left" },
@@ -21,7 +21,7 @@ const close = () => wails()?.Quit();
 <template>
   <header class="app-header drag">
     <div class="brand">
-      <div class="brand-mark">خ</div>
+      <div class="brand-mark">Kh</div>
       <div class="ar">{{ title }}</div>
       <div class="en">{{ subtitle }} · v{{ version }}</div>
     </div>

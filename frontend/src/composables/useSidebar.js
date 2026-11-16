@@ -4,9 +4,10 @@ const SIDE_KEY = "app:sidebar:side";
 const COLLAPSED_KEY = "app:sidebar:collapsed";
 
 const savedSide = localStorage.getItem(SIDE_KEY);
-const side = ref(savedSide === "left" || savedSide === "right" ? savedSide : "right");
+const side = ref(savedSide === "left" || savedSide === "right" ? savedSide : "left");
 
-const collapsed = ref(localStorage.getItem(COLLAPSED_KEY) === "1");
+const savedCollapsed = localStorage.getItem(COLLAPSED_KEY);
+const collapsed = ref(savedCollapsed === null ? true : savedCollapsed === "1");
 
 watchEffect(() => localStorage.setItem(SIDE_KEY, side.value));
 watchEffect(() => localStorage.setItem(COLLAPSED_KEY, collapsed.value ? "1" : "0"));

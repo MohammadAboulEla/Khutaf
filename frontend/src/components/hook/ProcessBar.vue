@@ -112,7 +112,6 @@ function onInsert() {
 .select {
   flex: 1;
   min-width: 240px;
-  font-family: var(--mono);
 }
 .code-input {
   width: 260px;
