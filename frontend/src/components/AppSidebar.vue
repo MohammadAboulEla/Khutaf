@@ -1,5 +1,6 @@
 <script setup>
 import Icon from "./Icon.vue";
+import Tooltip from "./Tooltip.vue";
 
 const props = defineProps({
   side: { type: String, default: "right" },
@@ -24,30 +25,42 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
 <template>
   <aside class="sidebar" :data-side="props.side" :data-collapsed="props.collapsed">
     <nav class="nav">
-      <button
+      <Tooltip
         v-for="i in props.items"
         :key="i.id"
-        class="item"
-        :class="{ active: props.active === i.id }"
-        type="button"
-        @click="emit('select', i.id)"
+        :text="props.collapsed ? i.name : ''"
+        :placement="props.side === 'left' ? 'right' : 'left'"
+        class="nav-tip"
       >
-        <Icon :name="i.icon" :size="18" />
-        <span class="label">{{ i.name }}</span>
-      </button>
+        <button
+          class="item"
+          :class="{ active: props.active === i.id }"
+          type="button"
+          @click="emit('select', i.id)"
+        >
+          <Icon :name="i.icon" :size="18" />
+          <span class="label">{{ i.name }}</span>
+        </button>
+      </Tooltip>
     </nav>
 
     <div class="bottom">
-      <button
-        class="collapser"
-        type="button"
-        @click="emit('toggle-collapsed')"
+      <Tooltip
+        :text="props.collapsed ? 'Expand sidebar' : ''"
+        :placement="props.side === 'left' ? 'right' : 'left'"
+        class="nav-tip"
       >
-        <span class="chev" :class="{ flip: props.collapsed }">
-          <Icon name="PanelLeft" :size="18" />
-        </span>
-        <span class="label">Collapse</span>
-      </button>
+        <button
+          class="collapser"
+          type="button"
+          @click="emit('toggle-collapsed')"
+        >
+          <span class="chev" :class="{ flip: props.collapsed }">
+            <Icon name="PanelLeft" :size="18" />
+          </span>
+          <span class="label">Collapse</span>
+        </button>
+      </Tooltip>
     </div>
   </aside>
 </template>
@@ -76,8 +89,12 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
   gap: 2px;
   overflow-y: auto;
 }
+.nav-tip {
+  width: 100%;
+}
 .item,
 .collapser {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 10px;
