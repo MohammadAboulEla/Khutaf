@@ -33,6 +33,7 @@ const logs = ref([]);
 const debugTraces = ref([]);
 const savedGames = ref([]);
 const cacheCount = ref(0);
+const appVersion = ref("0.1.0");
 const config = ref(null);
 const errorBanner = shallowRef("");
 const saveState = shallowRef("");
@@ -110,14 +111,16 @@ function init() {
 }
 
 async function refreshAll() {
-  const [st, cfg, hk] = await Promise.all([
+  const [st, cfg, hk, ver] = await Promise.all([
     call("Status"),
     call("GetConfig"),
     call("Hooks"),
+    call("AppVersion"),
   ]);
   if (st) status.value = st;
   if (cfg) config.value = cfg;
   if (hk) hooks.value = hk;
+  if (ver) appVersion.value = ver;
   await refreshProcesses();
 }
 
@@ -276,6 +279,7 @@ export function useSession() {
     debugTraces: readonly(debugTraces),
     savedGames: readonly(savedGames),
     cacheCount: readonly(cacheCount),
+    appVersion: readonly(appVersion),
     config,
     errorBanner: readonly(errorBanner),
     saveState: readonly(saveState),

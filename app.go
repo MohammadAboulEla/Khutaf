@@ -19,6 +19,10 @@ import (
 	"khutaf/internal/session"
 )
 
+// AppVersion is the single source of truth for the application version.
+// Can be overridden at build time via: -ldflags "-X main.AppVersion=x.y.z"
+var AppVersion = "0.1.0"
+
 // App is the Wails-bound facade over the session.
 type App struct {
 	ctx     context.Context
@@ -58,6 +62,9 @@ func configDir() string {
 
 // Status returns the session status.
 func (a *App) Status() session.Status { return a.session.Status() }
+
+// AppVersion returns the application version string.
+func (a *App) AppVersion() string { return AppVersion }
 
 // ListProcesses returns attachable windowed processes.
 func (a *App) ListProcesses() ([]hook.ProcessInfo, error) { return a.session.ListProcesses() }

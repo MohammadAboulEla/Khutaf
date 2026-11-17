@@ -1,6 +1,7 @@
 <script setup>
 defineProps({
   status: { type: String, default: "Ready" },
+  version: { type: String, default: "0.1.0" },
 });
 </script>
 
@@ -8,7 +9,7 @@ defineProps({
   <footer class="footer">
     <span class="status">{{ status }}</span>
     <span class="spacer" />
-    <span class="meta">v0.1</span>
+    <span class="meta">v{{ version }}</span>
   </footer>
 </template>
 

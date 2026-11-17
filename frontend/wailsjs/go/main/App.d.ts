@@ -5,6 +5,8 @@ import {session} from '../models';
 import {hook} from '../models';
 import {main} from '../models';
 
+export function AppVersion():Promise<string>;
+
 export function Attach(arg1:number):Promise<void>;
 
 export function CacheCount():Promise<number>;

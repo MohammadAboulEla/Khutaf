@@ -22,7 +22,7 @@ const {
   toggleCollapsed: toggleSidebarCollapsed,
 } = useSidebar();
 
-const { status, logs, errorBanner, clearError } = useSession();
+const { status, logs, errorBanner, clearError, appVersion } = useSession();
 
 const activeTab = shallowRef("games");
 const aboutOpen = shallowRef(false);
@@ -50,6 +50,7 @@ const footerText = computed(() => {
       :theme="theme"
       :sidebar="sidebar"
       :host-ready="status.hostReady"
+      :version="appVersion"
       @toggle-theme="toggleTheme"
       @toggle-sidebar="toggleSidebar"
       @open-about="aboutOpen = true"
@@ -77,9 +78,9 @@ const footerText = computed(() => {
       <DebugView v-if="activeTab === 'debug'" />
     </main>
 
-    <AppFooter class="foot" :status="footerText" />
+    <AppFooter class="foot" :status="footerText" :version="appVersion" />
 
-    <AboutModal :open="aboutOpen" @close="aboutOpen = false" />
+    <AboutModal :open="aboutOpen" :version="appVersion" @close="aboutOpen = false" />
   </div>
 </template>
 

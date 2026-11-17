@@ -4,7 +4,7 @@ import Icon from "./Icon.vue";
 defineProps({
   title: { type: String, default: "Khutفـا" },
   subtitle: { type: String, default: " · Embedded Arabic Hook" },
-  version: { type: String, default: "0.1" },
+  version: { type: String, default: "0.1.0" },
   theme: { type: String, default: "dark" },
   sidebar: { type: String, default: "left" },
   hostReady: { type: Boolean, default: false },
