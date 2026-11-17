@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"khutaf/internal/config"
+	"khutaf/internal/pipeline"
 )
 
 const maxConcurrentRequests = 4
@@ -17,23 +18,30 @@ type inflightCall struct {
 	err  error
 }
 
-// Manager holds the active provider, an in-memory translation cache, and
+// Manager holds the active provider, a persistent translation cache, and
 // deduplicates concurrent identical requests.
-// TODO: replace the memory cache with the SQLite translation memory (Milestone 4).
 type Manager struct {
 	mu       sync.RWMutex
 	hasCfg   bool
 	cfg      config.TranslatorSettings
 	provider Provider
-	cache    map[string]string
+	gameUID  string
+	cache    *pipeline.Cache
 	inflight map[string]*inflightCall
 	sem      chan struct{}
 }
 
-// NewManager creates an empty manager.
-func NewManager() *Manager {
+// NewManager creates a manager backed by the given cache (or an in-memory cache if nil/omitted).
+func NewManager(cache ...*pipeline.Cache) *Manager {
+	var c *pipeline.Cache
+	if len(cache) > 0 && cache[0] != nil {
+		c = cache[0]
+	} else {
+		c = pipeline.NewMemoryCache()
+	}
 	return &Manager{
-		cache:    map[string]string{},
+		gameUID:  pipeline.NormalizeGameUID(""),
+		cache:    c,
 		inflight: map[string]*inflightCall{},
 		sem:      make(chan struct{}, maxConcurrentRequests),
 	}
@@ -46,6 +54,16 @@ func newHTTPTransport() *http.Transport {
 		IdleConnTimeout:     90 * time.Second,
 	}
 }
+
+// SetGame sets the active game scope for cache lookups and writes.
+func (m *Manager) SetGame(gamePath string) {
+	m.mu.Lock()
+	m.gameUID = pipeline.NormalizeGameUID(gamePath)
+	m.mu.Unlock()
+}
+
+// Cache returns the underlying translation cache.
+func (m *Manager) Cache() *pipeline.Cache { return m.cache }
 
 // Configure (re)builds the active provider when translator settings change.
 func (m *Manager) Configure(cfg config.TranslatorSettings) {
@@ -67,7 +85,6 @@ func (m *Manager) Configure(cfg config.TranslatorSettings) {
 	m.cfg = cfg
 	m.hasCfg = true
 	m.provider = p
-	m.cache = map[string]string{}
 	m.mu.Unlock()
 }
 
@@ -81,20 +98,14 @@ func (m *Manager) Active() string {
 	return m.provider.Name()
 }
 
-// CacheSize returns the number of cached translations in memory.
+// CacheSize returns the total number of cached translations.
 func (m *Manager) CacheSize() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.cache)
+	return m.cache.Count()
 }
 
-// ClearCache empties the in-memory translation cache and returns the removed count.
+// ClearCache removes non-manual cached translations and returns the removed count.
 func (m *Manager) ClearCache() int {
-	m.mu.Lock()
-	n := len(m.cache)
-	m.cache = map[string]string{}
-	m.mu.Unlock()
-	return n
+	return m.cache.Clear("", false)
 }
 
 // Translate returns a cached translation or queries the provider.
@@ -102,21 +113,28 @@ func (m *Manager) ClearCache() int {
 func (m *Manager) Translate(ctx context.Context, text string) (string, bool, error) {
 	m.mu.RLock()
 	p := m.provider
-	cached, hit := m.cache[text]
+	gameUID := m.gameUID
 	m.mu.RUnlock()
-	if hit {
+
+	provName := ""
+	if p != nil {
+		provName = p.Name()
+	}
+	if cached, hit := m.cache.Get(gameUID, provName, text); hit {
 		return cached, true, nil
 	}
 	if p == nil {
 		return "", false, ErrNoProvider
 	}
 
+	infKey := gameUID + "\x00" + provName + "\x00" + text
+
 	m.mu.Lock()
-	if cached, hit = m.cache[text]; hit {
+	if cached, hit := m.cache.Get(gameUID, provName, text); hit {
 		m.mu.Unlock()
 		return cached, true, nil
 	}
-	if call, exists := m.inflight[text]; exists {
+	if call, exists := m.inflight[infKey]; exists {
 		m.mu.Unlock()
 		select {
 		case <-call.done:
@@ -126,7 +144,7 @@ func (m *Manager) Translate(ctx context.Context, text string) (string, bool, err
 		}
 	}
 	call := &inflightCall{done: make(chan struct{})}
-	m.inflight[text] = call
+	m.inflight[infKey] = call
 	m.mu.Unlock()
 
 	var out string
@@ -139,11 +157,12 @@ func (m *Manager) Translate(ctx context.Context, text string) (string, bool, err
 		err = ctx.Err()
 	}
 
-	m.mu.Lock()
-	delete(m.inflight, text)
 	if err == nil {
-		m.cache[text] = out
+		m.cache.PutAuto(gameUID, provName, text, out)
 	}
+
+	m.mu.Lock()
+	delete(m.inflight, infKey)
 	m.mu.Unlock()
 
 	call.val, call.err = out, err

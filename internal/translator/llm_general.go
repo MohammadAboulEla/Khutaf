@@ -62,6 +62,9 @@ func (l *LLM) Translate(ctx context.Context, text string) (string, error) {
 		return "", errors.New("LLM base URL and model are required")
 	}
 	prompt := strings.NewReplacer("{source}", l.cfg.SourceLang, "{target}", l.cfg.TargetLang).Replace(l.cfg.SystemPrompt)
+	if gp := GlossaryPromptFromContext(ctx); gp != "" {
+		prompt += "\n\n" + gp
+	}
 	body, err := json.Marshal(chatRequest{
 		Model: l.cfg.Model,
 		Messages: []chatMessage{

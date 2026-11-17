@@ -66,7 +66,7 @@ function hookTooltip(h) {
 }
 
 function ruleCount(g) {
-  return (g.pipeline?.preRules?.length || 0) + (g.pipeline?.postRules?.length || 0);
+  return (g.pipeline?.preRules?.length || 0) + (g.pipeline?.glossary?.length || 0) + (g.pipeline?.postRules?.length || 0);
 }
 </script>
 
@@ -185,7 +185,7 @@ function ruleCount(g) {
           <span class="hlbl">
             Custom Rules:
             <template v-if="ruleCount(g)">
-              {{ g.pipeline?.preRules?.length || 0 }} pre · {{ g.pipeline?.postRules?.length || 0 }} post
+              {{ g.pipeline?.preRules?.length || 0 }} pre · {{ g.pipeline?.glossary?.length || 0 }} glossary · {{ g.pipeline?.postRules?.length || 0 }} post
             </template>
             <template v-else>None</template>
           </span>
@@ -194,7 +194,7 @@ function ruleCount(g) {
               v-if="ruleCount(g)"
               class="link-btn"
               type="button"
-              @click="saveGamePipeline(g.exePath, { preRules: [], postRules: [] })"
+              @click="saveGamePipeline(g.exePath, { preRules: [], postRules: [], glossary: [] })"
             >
               Clear Rules
             </button>

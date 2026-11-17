@@ -66,10 +66,25 @@ type Rule struct {
 	Replace string `json:"replace"`
 }
 
-// PipelineSettings holds text processing rules.
+// GlossaryEntry maps a source proper noun or term to its target Arabic translation.
+type GlossaryEntry struct {
+	Enabled       bool   `json:"enabled"`
+	Source        string `json:"source"`
+	Target        string `json:"target"`
+	CaseSensitive bool   `json:"caseSensitive,omitempty"`
+}
+
+// GlossaryFile is the on-disk schema of glossary.json.
+type GlossaryFile struct {
+	Global []GlossaryEntry            `json:"global"`
+	Games  map[string][]GlossaryEntry `json:"games,omitempty"`
+}
+
+// PipelineSettings holds text processing rules and glossary terms.
 type PipelineSettings struct {
-	PreRules  []Rule `json:"preRules"`
-	PostRules []Rule `json:"postRules"`
+	PreRules  []Rule          `json:"preRules"`
+	PostRules []Rule          `json:"postRules"`
+	Glossary  []GlossaryEntry `json:"glossary,omitempty"`
 }
 
 // Config is the root of config.json.
@@ -152,6 +167,22 @@ func Open(dir string) (*Store, error) {
 	if err := readJSON(filepath.Join(dir, "games.json"), &s.games); err != nil {
 		return nil, err
 	}
+	var gf GlossaryFile
+	if err := readJSON(filepath.Join(dir, "glossary.json"), &gf); err != nil {
+		return nil, err
+	}
+	if len(gf.Global) > 0 {
+		s.cfg.Pipeline.Glossary = gf.Global
+	}
+	for k, entries := range gf.Games {
+		if len(entries) == 0 {
+			continue
+		}
+		key := gameKey(k)
+		g := s.games[key]
+		g.Pipeline.Glossary = entries
+		s.games[key] = g
+	}
 	return s, nil
 }
 
@@ -169,8 +200,12 @@ func (s *Store) Config() Config {
 func (s *Store) SaveConfig(c Config) error {
 	s.mu.Lock()
 	s.cfg = c
+	games := s.gamesSnapshotLocked()
 	s.mu.Unlock()
-	return writeJSON(filepath.Join(s.dir, "config.json"), c)
+	if err := writeJSON(filepath.Join(s.dir, "config.json"), c); err != nil {
+		return err
+	}
+	return s.saveGlossaryFile(c.Pipeline.Glossary, games)
 }
 
 // Game returns the profile for exePath.
@@ -199,8 +234,12 @@ func (s *Store) DeleteGame(exePath string) error {
 	s.mu.Lock()
 	delete(s.games, gameKey(exePath))
 	snapshot := s.gamesSnapshotLocked()
+	globalGlossary := s.cfg.Pipeline.Glossary
 	s.mu.Unlock()
-	return writeJSON(filepath.Join(s.dir, "games.json"), snapshot)
+	if err := writeJSON(filepath.Join(s.dir, "games.json"), snapshot); err != nil {
+		return err
+	}
+	return s.saveGlossaryFile(globalGlossary, snapshot)
 }
 
 func (s *Store) gamesSnapshotLocked() map[string]GameProfile {
@@ -218,12 +257,30 @@ func (s *Store) UpdateGame(exePath string, fn func(*GameProfile)) error {
 	g := s.games[key]
 	fn(&g)
 	s.games[key] = g
-	snapshot := make(map[string]GameProfile, len(s.games))
-	for k, v := range s.games {
-		snapshot[k] = v
-	}
+	snapshot := s.gamesSnapshotLocked()
+	globalGlossary := s.cfg.Pipeline.Glossary
 	s.mu.Unlock()
-	return writeJSON(filepath.Join(s.dir, "games.json"), snapshot)
+	if err := writeJSON(filepath.Join(s.dir, "games.json"), snapshot); err != nil {
+		return err
+	}
+	return s.saveGlossaryFile(globalGlossary, snapshot)
+}
+
+func (s *Store) saveGlossaryFile(global []GlossaryEntry, games map[string]GameProfile) error {
+	gf := GlossaryFile{Global: global}
+	if gf.Global == nil {
+		gf.Global = []GlossaryEntry{}
+	}
+	for k, g := range games {
+		if len(g.Pipeline.Glossary) == 0 {
+			continue
+		}
+		if gf.Games == nil {
+			gf.Games = make(map[string][]GlossaryEntry)
+		}
+		gf.Games[k] = g.Pipeline.Glossary
+	}
+	return writeJSON(filepath.Join(s.dir, "glossary.json"), gf)
 }
 
 func gameKey(exePath string) string { return strings.ToLower(filepath.Clean(exePath)) }

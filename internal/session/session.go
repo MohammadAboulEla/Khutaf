@@ -86,7 +86,11 @@ type EmbedLine struct {
 	ElapsedMs  int64  `json:"elapsedMs"`
 }
 
-type rules struct{ pre, post *pipeline.RuleSet }
+type rules struct {
+	pre      *pipeline.RuleSet
+	post     *pipeline.RuleSet
+	glossary *pipeline.Glossary
+}
 
 // Session is the application core. Create with New.
 type Session struct {
@@ -116,9 +120,18 @@ type Session struct {
 // New loads the native host from runtimeDir (failure is non-fatal: the UI still
 // works for previews and settings) and starts the event dispatcher.
 func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
+	var cache *pipeline.Cache
+	var cacheErr error
+	if store != nil {
+		cache, cacheErr = pipeline.OpenCache(filepath.Join(store.Dir(), "cache.db"))
+	}
+	if cache == nil {
+		cache = pipeline.NewMemoryCache()
+	}
+
 	s := &Session{
 		store:      store,
-		translator: translator.NewManager(),
+		translator: translator.NewManager(cache),
 		runtimeDir: runtimeDir,
 		emit:       emit,
 		events:     make(chan func(), 4096),
@@ -131,6 +144,9 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 			fn()
 		}
 	}()
+	if cacheErr != nil {
+		s.log("warn", "translation cache fallback to memory: "+cacheErr.Error())
+	}
 	if err := s.applyConfig(store.Config()); err != nil {
 		s.log("warn", err.Error())
 	}
@@ -146,6 +162,12 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 		s.log("info", "hook host started ("+runtimeDir+")")
 	}
 	return s
+}
+
+// Close detaches any active game and closes the translation cache database.
+func (s *Session) Close() error {
+	s.Detach()
+	return s.translator.Cache().Close()
 }
 
 // post queues UI work so native callbacks never block on the frontend.
@@ -202,8 +224,9 @@ func (s *Session) rebuildRules(global config.PipelineSettings, gamePath string) 
 	preList = append(preList, global.PreRules...)
 	postList := make([]config.Rule, 0, len(global.PostRules))
 	postList = append(postList, global.PostRules...)
+	var gp config.PipelineSettings
 	if gamePath != "" {
-		gp := s.store.Game(gamePath).Pipeline
+		gp = s.store.Game(gamePath).Pipeline
 		preList = append(preList, gp.PreRules...)
 		postList = append(postList, gp.PostRules...)
 	}
@@ -215,7 +238,8 @@ func (s *Session) rebuildRules(global config.PipelineSettings, gamePath string) 
 	if err != nil {
 		return fmt.Errorf("post-processing: %w", err)
 	}
-	s.rules.Store(&rules{pre: pre, post: post})
+	glossary := pipeline.CompileGlossary(global.Glossary, gp.Glossary)
+	s.rules.Store(&rules{pre: pre, post: post, glossary: glossary})
 	return nil
 }
 
@@ -386,15 +410,40 @@ func (s *Session) SaveGamePipeline(exePath string, p config.PipelineSettings) er
 	return nil
 }
 
-// ClearTranslationCache clears the in-memory translation cache and returns the count cleared.
+// ClearTranslationCache clears non-manual cached translations and returns the count cleared.
 func (s *Session) ClearTranslationCache() int {
 	n := s.translator.ClearCache()
 	s.log("info", fmt.Sprintf("cleared %d cached translations", n))
 	return n
 }
 
-// CacheCount returns the number of cached translations in memory.
+// CacheCount returns the total number of cached translations.
 func (s *Session) CacheCount() int { return s.translator.CacheSize() }
+
+// ListCacheEntries returns filtered cache entries for the cache browser UI.
+func (s *Session) ListCacheEntries(gamePath, query string, manualOnly bool, limit int) []pipeline.CacheEntry {
+	return s.translator.Cache().List(gamePath, query, manualOnly, limit)
+}
+
+// SaveCacheEntry inserts or updates a persistent manual translation override.
+func (s *Session) SaveCacheEntry(gameUID, provider, sourceText, translated string) error {
+	if strings.TrimSpace(sourceText) == "" {
+		return errors.New("source text is required")
+	}
+	return s.translator.Cache().PutManual(gameUID, provider, sourceText, translated)
+}
+
+// DeleteCacheEntry deletes a single entry from the SQLite translation cache.
+func (s *Session) DeleteCacheEntry(gameUID, provider, sourceText string) error {
+	return s.translator.Cache().Delete(gameUID, provider, sourceText)
+}
+
+// ClearScopeCache clears cached entries for gamePath (or all games when empty).
+func (s *Session) ClearScopeCache(gamePath string, includeManual bool) int {
+	n := s.translator.Cache().Clear(gamePath, includeManual)
+	s.log("info", fmt.Sprintf("cleared %d cached translations", n))
+	return n
+}
 
 // ---- attach / detach ----
 
@@ -423,6 +472,7 @@ func (s *Session) Attach(pid uint32) error {
 	s.engine = hook.DetectEngine(path)
 	s.mu.Unlock()
 	_ = s.rebuildRules(s.store.Config().Pipeline, path)
+	s.translator.SetGame(path)
 
 	cfg := s.store.Config().Hook
 	s.host.Settings(hook.HostSettings{
@@ -459,6 +509,7 @@ func (s *Session) Detach() {
 	s.engine = ""
 	s.mu.Unlock()
 	_ = s.rebuildRules(s.store.Config().Pipeline, "")
+	s.translator.SetGame("")
 	if s.host != nil {
 		for _, pid := range pids {
 			s.host.DetachProcess(pid)
@@ -558,11 +609,16 @@ func (s *Session) unityFontDir() string {
 
 // ---- translation ----
 
-// Translate runs the full pipeline (pre-rules, translator, post-rules,
+// Translate runs the full pipeline (pre-rules, glossary, translator, post-rules,
 // placeholder check) and returns the logical (unshaped) translation.
 func (s *Session) Translate(ctx context.Context, text string) (string, bool, error) {
 	r := s.rules.Load()
-	trans, cached, err := s.translator.Translate(ctx, r.pre.Apply(text))
+	preText := r.pre.Apply(text)
+	if gp := r.glossary.PromptContext(preText); gp != "" {
+		ctx = translator.WithGlossaryPrompt(ctx, gp)
+	}
+	preText = r.glossary.Apply(preText)
+	trans, cached, err := s.translator.Translate(ctx, preText)
 	if err != nil {
 		return "", false, err
 	}
@@ -607,6 +663,8 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 
 		t0 := time.Now()
 		preText := r.pre.Apply(text)
+		glossaryPrompt := r.glossary.PromptContext(preText)
+		preText = r.glossary.Apply(preText)
 		preUs = time.Since(t0).Microseconds()
 
 		t1 := time.Now()
@@ -616,6 +674,9 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 				timeout = 2 * time.Second
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), timeout*9/10)
+			if glossaryPrompt != "" {
+				ctx = translator.WithGlossaryPrompt(ctx, glossaryPrompt)
+			}
 			trans, cached, err = s.translator.Translate(ctx, preText)
 			cancel()
 		} else {

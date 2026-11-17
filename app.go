@@ -16,6 +16,7 @@ import (
 	"khutaf/internal/arabic"
 	"khutaf/internal/config"
 	"khutaf/internal/hook"
+	"khutaf/internal/pipeline"
 	"khutaf/internal/session"
 )
 
@@ -47,7 +48,7 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(context.Context) {
 	if a.session != nil {
-		a.session.Detach()
+		_ = a.session.Close()
 	}
 }
 
@@ -119,11 +120,31 @@ func (a *App) SaveGamePipeline(exePath string, p config.PipelineSettings) error 
 	return a.session.SaveGamePipeline(exePath, p)
 }
 
-// ClearTranslationCache clears the in-memory translation cache.
+// ClearTranslationCache clears non-manual cached translations.
 func (a *App) ClearTranslationCache() int { return a.session.ClearTranslationCache() }
 
-// CacheCount returns the number of cached translations in memory.
+// CacheCount returns the total number of cached translations.
 func (a *App) CacheCount() int { return a.session.CacheCount() }
+
+// ListCacheEntries returns filtered SQLite cache entries.
+func (a *App) ListCacheEntries(gamePath, query string, manualOnly bool, limit int) []pipeline.CacheEntry {
+	return a.session.ListCacheEntries(gamePath, query, manualOnly, limit)
+}
+
+// SaveCacheEntry persists a manual translation override.
+func (a *App) SaveCacheEntry(gameUID, provider, sourceText, translated string) error {
+	return a.session.SaveCacheEntry(gameUID, provider, sourceText, translated)
+}
+
+// DeleteCacheEntry removes a translation cache entry.
+func (a *App) DeleteCacheEntry(gameUID, provider, sourceText string) error {
+	return a.session.DeleteCacheEntry(gameUID, provider, sourceText)
+}
+
+// ClearScopeCache clears cached entries for gamePath (or all games when empty).
+func (a *App) ClearScopeCache(gamePath string, includeManual bool) int {
+	return a.session.ClearScopeCache(gamePath, includeManual)
+}
 
 var (
 	user32DLL             = syscall.NewLazyDLL("user32.dll")

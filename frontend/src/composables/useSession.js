@@ -94,6 +94,9 @@ function init() {
   });
 
   on("embed:line", (line) => {
+    if (line && !line.cached && !line.error) {
+      cacheCount.value++;
+    }
     pendingFeed.push(line);
     scheduleFlush();
   });
@@ -259,9 +262,46 @@ async function clearTranslationCache() {
   errorBanner.value = "";
   try {
     await call("ClearTranslationCache");
-    cacheCount.value = 0;
+    const count = await call("CacheCount");
+    cacheCount.value = typeof count === "number" ? count : 0;
   } catch (e) {
     errorBanner.value = String(e);
+  }
+}
+
+const listCacheEntries = (gamePath = "", query = "", manualOnly = false, limit = 200) =>
+  call("ListCacheEntries", gamePath, query, Boolean(manualOnly), Number(limit) || 200);
+
+async function saveCacheEntry(gameUid, provider, sourceText, translated) {
+  errorBanner.value = "";
+  try {
+    await call("SaveCacheEntry", gameUid, provider, sourceText, translated);
+    await refreshSavedGames();
+  } catch (e) {
+    errorBanner.value = String(e);
+    throw e;
+  }
+}
+
+async function deleteCacheEntry(gameUid, provider, sourceText) {
+  errorBanner.value = "";
+  try {
+    await call("DeleteCacheEntry", gameUid, provider, sourceText);
+    await refreshSavedGames();
+  } catch (e) {
+    errorBanner.value = String(e);
+  }
+}
+
+async function clearScopeCache(gamePath = "", includeManual = false) {
+  errorBanner.value = "";
+  try {
+    const n = await call("ClearScopeCache", gamePath, Boolean(includeManual));
+    await refreshSavedGames();
+    return n;
+  } catch (e) {
+    errorBanner.value = String(e);
+    return 0;
   }
 }
 
@@ -314,6 +354,10 @@ export function useSession() {
     clearSavedGameHooks,
     removeSavedGameHook,
     clearTranslationCache,
+    listCacheEntries,
+    saveCacheEntry,
+    deleteCacheEntry,
+    clearScopeCache,
     previewArabic,
     testTranslate,
     listFonts,

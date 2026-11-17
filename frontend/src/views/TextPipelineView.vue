@@ -6,32 +6,50 @@ import { useSession } from "../composables/useSession.js";
 const {
   config,
   savedGames,
+  cacheCount,
   pipelineTarget,
   refreshSavedGames,
   saveConfig,
   saveGamePipeline,
+  listCacheEntries,
+  saveCacheEntry,
+  deleteCacheEntry,
+  clearScopeCache,
   saveState,
 } = useSession();
 
 const preRules = ref([]);
+const glossary = ref([]);
 const postRules = ref([]);
 const preSample = shallowRef("<b>Guide:</b> Welcome<br>to Wonderia!");
 const postSample = shallowRef("الدليل: مرحباً بك في وونديريا!");
 
+const cacheEntries = ref([]);
+const cacheQuery = shallowRef("");
+const cacheManualOnly = shallowRef(false);
+const cacheLoading = shallowRef(false);
+const showAddOverride = shallowRef(false);
+const newSource = shallowRef("");
+const newTarget = shallowRef("");
+const savedRowKey = shallowRef("");
+
 onMounted(() => {
   refreshSavedGames();
+  refreshCache();
 });
 
 function loadRules() {
   if (pipelineTarget.value === "global") {
     const p = config.value?.pipeline;
     preRules.value = (p?.preRules || []).map((r) => ({ ...r }));
+    glossary.value = (p?.glossary || []).map((g) => ({ ...g }));
     postRules.value = (p?.postRules || []).map((r) => ({ ...r }));
     return;
   }
   const game = savedGames.value.find((g) => g.exePath === pipelineTarget.value);
   const p = game?.pipeline;
   preRules.value = (p?.preRules || []).map((r) => ({ ...r }));
+  glossary.value = (p?.glossary || []).map((g) => ({ ...g }));
   postRules.value = (p?.postRules || []).map((r) => ({ ...r }));
 }
 
@@ -39,6 +57,10 @@ watch([config, savedGames, pipelineTarget], loadRules, { immediate: true });
 
 function addRule(list) {
   list.push({ enabled: true, regex: false, pattern: "", replace: "" });
+}
+
+function addGlossaryTerm() {
+  glossary.value.push({ enabled: true, caseSensitive: false, source: "", target: "" });
 }
 
 function removeRule(list, idx) {
@@ -49,6 +71,7 @@ function onSave() {
   const payload = {
     preRules: preRules.value,
     postRules: postRules.value,
+    glossary: glossary.value,
   };
   if (pipelineTarget.value === "global") {
     if (!config.value) return;
@@ -56,6 +79,14 @@ function onSave() {
   } else {
     saveGamePipeline(pipelineTarget.value, payload);
   }
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isASCIIWordChar(ch) {
+  return /^[A-Za-z0-9_]$/.test(ch);
 }
 
 function applyRulesPreview(text, rules) {
@@ -76,15 +107,102 @@ function applyRulesPreview(text, rules) {
   return { out, error };
 }
 
+function applyGlossaryPreview(text, entries) {
+  const active = entries
+    .map((e, idx) => ({
+      enabled: e.enabled,
+      caseSensitive: Boolean(e.caseSensitive),
+      source: (e.source || "").trim(),
+      target: (e.target || "").trim(),
+      idx,
+    }))
+    .filter((e) => e.enabled && e.source && e.target)
+    .sort((a, b) => [...b.source].length - [...a.source].length || a.idx - b.idx);
+
+  let out = text;
+  for (const e of active) {
+    const chars = [...e.source];
+    let pat = escapeRegex(e.source);
+    if (chars.length && isASCIIWordChar(chars[0])) pat = `\\b${pat}`;
+    if (chars.length && isASCIIWordChar(chars[chars.length - 1])) pat = `${pat}\\b`;
+    const re = new RegExp(pat, e.caseSensitive ? "g" : "gi");
+    out = out.replace(re, () => e.target);
+  }
+  return out;
+}
+
 const preview = computed(() => {
   const pre = applyRulesPreview(preSample.value, preRules.value);
+  const afterGlossary = applyGlossaryPreview(pre.out, glossary.value);
   const post = applyRulesPreview(postSample.value, postRules.value);
   return {
-    afterPre: pre.out,
+    afterPre: afterGlossary,
     afterPost: post.out,
     error: pre.error || post.error,
   };
 });
+
+async function refreshCache() {
+  cacheLoading.value = true;
+  try {
+    const rows = await listCacheEntries(pipelineTarget.value, cacheQuery.value, cacheManualOnly.value, 200);
+    cacheEntries.value = Array.isArray(rows) ? rows.map((r) => ({ ...r })) : [];
+  } finally {
+    cacheLoading.value = false;
+  }
+}
+
+let queryTimer = null;
+watch(cacheQuery, () => {
+  clearTimeout(queryTimer);
+  queryTimer = setTimeout(refreshCache, 150);
+});
+
+watch([pipelineTarget, cacheManualOnly], () => {
+  refreshCache();
+});
+
+function rowKey(entry) {
+  return `${entry.gameUid}\0${entry.provider}\0${entry.sourceText}`;
+}
+
+async function onAddOverride() {
+  const src = newSource.value.trim();
+  if (!src) return;
+  const gameUid = pipelineTarget.value === "global" ? "global" : pipelineTarget.value;
+  await saveCacheEntry(gameUid, "manual", src, newTarget.value);
+  newSource.value = "";
+  newTarget.value = "";
+  showAddOverride.value = false;
+  await refreshCache();
+}
+
+async function onSaveCacheRow(entry) {
+  await saveCacheEntry(entry.gameUid, entry.provider || "manual", entry.sourceText, entry.translated);
+  const k = rowKey(entry);
+  savedRowKey.value = k;
+  setTimeout(() => {
+    if (savedRowKey.value === k) savedRowKey.value = "";
+  }, 1500);
+  await refreshCache();
+}
+
+async function onDeleteCacheRow(entry) {
+  await deleteCacheEntry(entry.gameUid, entry.provider, entry.sourceText);
+  await refreshCache();
+}
+
+async function onClearAutoCache() {
+  const scope = pipelineTarget.value === "global" ? "" : pipelineTarget.value;
+  await clearScopeCache(scope, false);
+  await refreshCache();
+}
+
+function formatScopeName(gameUid) {
+  if (!gameUid || gameUid === "global") return "global";
+  const parts = gameUid.split(/[\\/]/);
+  return parts[parts.length - 1] || gameUid;
+}
 </script>
 
 <template>
@@ -145,6 +263,38 @@ const preview = computed(() => {
           <div class="head-title">
             <span class="step">Step 2</span>
             <div>
+              <h3 class="h3">Glossary &amp; Proper Nouns</h3>
+              <p class="sub">Enforce consistent Arabic names before translation and inject matching terms into LLM prompts.</p>
+            </div>
+          </div>
+          <button class="btn" type="button" @click="addGlossaryTerm">+ Add Term</button>
+        </div>
+
+        <div v-if="!glossary.length" class="empty">No glossary terms configured for this scope.</div>
+        <div v-for="(g, idx) in glossary" :key="'gloss-' + idx" class="rule-row">
+          <input v-model="g.enabled" type="checkbox" title="Enable term" />
+          <button
+            type="button"
+            class="mode-chip"
+            :class="{ active: g.caseSensitive }"
+            @click="g.caseSensitive = !g.caseSensitive"
+          >
+            {{ g.caseSensitive ? "Case" : "Any Case" }}
+          </button>
+          <input v-model="g.source" class="input" dir="auto" placeholder="Source term (e.g. Wonderia)…" />
+          <span class="arrow">→</span>
+          <input v-model="g.target" class="input ar" dir="rtl" placeholder="Arabic translation (e.g. وونديريا)…" />
+          <button class="icon-btn" type="button" @click="removeRule(glossary, idx)">
+            <Icon name="Trash" :size="13" />
+          </button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head">
+          <div class="head-title">
+            <span class="step">Step 3</span>
+            <div>
               <h3 class="h3">Post-Translation Correction</h3>
               <p class="sub">Fix recurring translation quirks before Arabic shaping &amp; wrapping.</p>
             </div>
@@ -176,20 +326,95 @@ const preview = computed(() => {
         <div class="head">
           <div>
             <h3 class="h3">Live Rule Tester</h3>
-            <p class="sub">Test Pre-Rules on raw game text (left) and Post-Rules on translated Arabic (right).</p>
+            <p class="sub">Test Pre-Rules &amp; Glossary on raw game text (left) and Post-Rules on translated Arabic (right).</p>
           </div>
           <span v-if="preview.error" class="err">{{ preview.error }}</span>
         </div>
         <div class="preview-grid">
           <div class="pbox">
-            <div class="plbl">Raw Game Text → After Pre-Rules</div>
+            <div class="plbl">Raw Game Text → After Pre-Rules &amp; Glossary</div>
             <input v-model="preSample" class="input mono pinput" dir="auto" placeholder="Raw game text (e.g. <b>Guide:</b> Hello<br>world)…" />
             <div class="pval mono" dir="auto">{{ preview.afterPre }}</div>
           </div>
           <div class="pbox">
             <div class="plbl">Translated Arabic → After Post-Rules</div>
             <input v-model="postSample" class="input pinput" dir="rtl" placeholder="Translated Arabic text…" />
-            <div class="pval" dir="rtl">{{ preview.afterPost }}</div>
+            <div class="pval ar" dir="rtl">{{ preview.afterPost }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head cache-head">
+          <div class="head-title">
+            <span class="step">Cache</span>
+            <div>
+              <div class="cache-title-row">
+                <h3 class="h3">Translation Memory (SQLite Cache)</h3>
+                <span class="badge">{{ cacheCount }} total</span>
+              </div>
+              <p class="sub">Instant 0 ms persisted translations. Edited rows become permanent manual overrides.</p>
+            </div>
+          </div>
+          <div class="cache-actions">
+            <button class="btn" type="button" @click="showAddOverride = !showAddOverride">
+              {{ showAddOverride ? "Cancel" : "+ Add Override" }}
+            </button>
+            <button class="btn inline-btn" type="button" :disabled="cacheLoading" @click="refreshCache">
+              <Icon name="RefreshCw" :size="12" />
+              <span>Refresh</span>
+            </button>
+            <button class="btn" type="button" @click="onClearAutoCache">Clear Auto Cache</button>
+          </div>
+        </div>
+
+        <div class="cache-filters">
+          <div class="search-wrap">
+            <Icon name="Search" :size="13" />
+            <input
+              v-model="cacheQuery"
+              class="search-input"
+              dir="auto"
+              placeholder="Search source or Arabic translation…"
+            />
+          </div>
+          <button
+            type="button"
+            class="mode-chip"
+            :class="{ active: cacheManualOnly }"
+            @click="cacheManualOnly = !cacheManualOnly"
+          >
+            Manual Only
+          </button>
+        </div>
+
+        <div v-if="showAddOverride" class="override-bar">
+          <input v-model="newSource" class="input" dir="auto" placeholder="Exact source line…" />
+          <span class="arrow">→</span>
+          <input v-model="newTarget" class="input ar" dir="rtl" placeholder="Manual Arabic translation…" />
+          <button class="btn primary" type="button" :disabled="!newSource.trim()" @click="onAddOverride">
+            Save Override
+          </button>
+        </div>
+
+        <div v-if="!cacheEntries.length" class="empty">
+          {{ cacheLoading ? "Loading cached translations…" : "No cached translations match this filter." }}
+        </div>
+        <div v-else class="cache-list">
+          <div v-for="entry in cacheEntries" :key="rowKey(entry)" class="cache-row">
+            <div class="cache-meta">
+              <span class="tag" :title="entry.gameUid">{{ formatScopeName(entry.gameUid) }}</span>
+              <span class="tag">{{ entry.provider || "manual" }}</span>
+              <span v-if="entry.manual" class="tag manual">Manual</span>
+            </div>
+            <div class="cache-src" dir="auto" :title="entry.sourceText">{{ entry.sourceText }}</div>
+            <input v-model="entry.translated" class="input ar" dir="rtl" placeholder="Arabic translation…" />
+            <button class="btn" type="button" @click="onSaveCacheRow(entry)">
+              {{ savedRowKey === rowKey(entry) ? "Saved ✓" : "Save" }}
+            </button>
+            <button class="icon-btn" type="button" title="Delete entry" @click="onDeleteCacheRow(entry)">
+              <Icon name="Trash" :size="13" />
+            </button>
           </div>
         </div>
       </div>
@@ -393,5 +618,123 @@ const preview = computed(() => {
   color: #f87171;
   font-family: var(--mono);
   font-size: 11px;
+}
+.ar {
+  font-family: var(--arabic);
+  font-size: 13px;
+}
+.cache-head {
+  flex-wrap: wrap;
+}
+.cache-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.badge {
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--fg) 10%, transparent);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.cache-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.inline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cache-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.search-wrap {
+  flex: 1;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-muted);
+}
+.search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.override-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.cache-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.cache-row {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 0.9fr) minmax(180px, 1.1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.cache-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: 210px;
+}
+.tag {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tag.manual {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.cache-src {
+  font-size: 12px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
