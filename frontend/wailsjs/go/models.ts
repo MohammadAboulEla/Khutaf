@@ -14,6 +14,24 @@ export namespace config {
 	        this.targetLang = source["targetLang"];
 	    }
 	}
+	export class GlossaryEntry {
+	    enabled: boolean;
+	    source: string;
+	    target: string;
+	    caseSensitive?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new GlossaryEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.source = source["source"];
+	        this.target = source["target"];
+	        this.caseSensitive = source["caseSensitive"];
+	    }
+	}
 	export class Rule {
 	    enabled: boolean;
 	    regex: boolean;
@@ -35,6 +53,7 @@ export namespace config {
 	export class PipelineSettings {
 	    preRules: Rule[];
 	    postRules: Rule[];
+	    glossary?: GlossaryEntry[];
 	
 	    static createFrom(source: any = {}) {
 	        return new PipelineSettings(source);
@@ -44,6 +63,7 @@ export namespace config {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.preRules = this.convertValues(source["preRules"], Rule);
 	        this.postRules = this.convertValues(source["postRules"], Rule);
+	        this.glossary = this.convertValues(source["glossary"], GlossaryEntry);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -63,6 +83,52 @@ export namespace config {
 		    }
 		    return a;
 		}
+	}
+	export class LlamaCppSettings {
+	    binaryPath: string;
+	    modelPath: string;
+	    port: number;
+	    gpuLayers: number;
+	    ctxSize: number;
+	    autoStart: boolean;
+	    extraArgs: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LlamaCppSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.binaryPath = source["binaryPath"];
+	        this.modelPath = source["modelPath"];
+	        this.port = source["port"];
+	        this.gpuLayers = source["gpuLayers"];
+	        this.ctxSize = source["ctxSize"];
+	        this.autoStart = source["autoStart"];
+	        this.extraArgs = source["extraArgs"];
+	    }
+	}
+	export class OfflineLLMSettings {
+	    baseUrl: string;
+	    model: string;
+	    template: string;
+	    sourceLang: string;
+	    targetLang: string;
+	    temperature: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new OfflineLLMSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.baseUrl = source["baseUrl"];
+	        this.model = source["model"];
+	        this.template = source["template"];
+	        this.sourceLang = source["sourceLang"];
+	        this.targetLang = source["targetLang"];
+	        this.temperature = source["temperature"];
+	    }
 	}
 	export class LLMSettings {
 	    baseUrl: string;
@@ -88,10 +154,27 @@ export namespace config {
 	        this.targetLang = source["targetLang"];
 	    }
 	}
+	export class TraditionalSettings {
+	    sourceLang: string;
+	    targetLang: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TraditionalSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sourceLang = source["sourceLang"];
+	        this.targetLang = source["targetLang"];
+	    }
+	}
 	export class TranslatorSettings {
 	    active: string;
 	    bing: BingSettings;
+	    traditional: TraditionalSettings;
 	    llm: LLMSettings;
+	    offlineLlm: OfflineLLMSettings;
+	    llamaCpp: LlamaCppSettings;
 	
 	    static createFrom(source: any = {}) {
 	        return new TranslatorSettings(source);
@@ -101,7 +184,10 @@ export namespace config {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.active = source["active"];
 	        this.bing = this.convertValues(source["bing"], BingSettings);
+	        this.traditional = this.convertValues(source["traditional"], TraditionalSettings);
 	        this.llm = this.convertValues(source["llm"], LLMSettings);
+	        this.offlineLlm = this.convertValues(source["offlineLlm"], OfflineLLMSettings);
+	        this.llamaCpp = this.convertValues(source["llamaCpp"], LlamaCppSettings);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -229,6 +315,10 @@ export namespace config {
 	
 	
 	
+	
+	
+	
+	
 
 }
 
@@ -293,6 +383,33 @@ export namespace main {
 	        this.shaped = source["shaped"];
 	        this.cached = source["cached"];
 	        this.elapsedMs = source["elapsedMs"];
+	    }
+	}
+
+}
+
+export namespace pipeline {
+	
+	export class CacheEntry {
+	    gameUid: string;
+	    provider: string;
+	    sourceText: string;
+	    translated: string;
+	    manual: boolean;
+	    updatedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CacheEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.gameUid = source["gameUid"];
+	        this.provider = source["provider"];
+	        this.sourceText = source["sourceText"];
+	        this.translated = source["translated"];
+	        this.manual = source["manual"];
+	        this.updatedAt = source["updatedAt"];
 	    }
 	}
 
@@ -398,6 +515,39 @@ export namespace session {
 	        this.provider = source["provider"];
 	        this.debugMode = source["debugMode"];
 	        this.debugRealTrans = source["debugRealTrans"];
+	    }
+	}
+
+}
+
+export namespace translator {
+	
+	export class LlamaCppStatus {
+	    running: boolean;
+	    ready: boolean;
+	    pid: number;
+	    port: number;
+	    baseUrl: string;
+	    modelPath: string;
+	    modelName: string;
+	    lastError: string;
+	    recentLogs: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LlamaCppStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.ready = source["ready"];
+	        this.pid = source["pid"];
+	        this.port = source["port"];
+	        this.baseUrl = source["baseUrl"];
+	        this.modelPath = source["modelPath"];
+	        this.modelName = source["modelName"];
+	        this.lastError = source["lastError"];
+	        this.recentLogs = source["recentLogs"];
 	    }
 	}
 

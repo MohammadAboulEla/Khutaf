@@ -10,6 +10,14 @@ export function Attach(arg1) {
   return window['go']['main']['App']['Attach'](arg1);
 }
 
+export function BrowseGGUFModel() {
+  return window['go']['main']['App']['BrowseGGUFModel']();
+}
+
+export function BrowseLlamaBinary() {
+  return window['go']['main']['App']['BrowseLlamaBinary']();
+}
+
 export function CacheCount() {
   return window['go']['main']['App']['CacheCount']();
 }
@@ -18,8 +26,16 @@ export function ClearSavedGameHooks(arg1) {
   return window['go']['main']['App']['ClearSavedGameHooks'](arg1);
 }
 
+export function ClearScopeCache(arg1, arg2) {
+  return window['go']['main']['App']['ClearScopeCache'](arg1, arg2);
+}
+
 export function ClearTranslationCache() {
   return window['go']['main']['App']['ClearTranslationCache']();
+}
+
+export function DeleteCacheEntry(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DeleteCacheEntry'](arg1, arg2, arg3);
 }
 
 export function DeleteSavedGame(arg1) {
@@ -42,12 +58,20 @@ export function InsertHookCode(arg1) {
   return window['go']['main']['App']['InsertHookCode'](arg1);
 }
 
+export function ListCacheEntries(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListCacheEntries'](arg1, arg2, arg3, arg4);
+}
+
 export function ListFonts() {
   return window['go']['main']['App']['ListFonts']();
 }
 
 export function ListProcesses() {
   return window['go']['main']['App']['ListProcesses']();
+}
+
+export function LlamaServerStatus() {
+  return window['go']['main']['App']['LlamaServerStatus']();
 }
 
 export function PreviewArabic(arg1) {
@@ -60,6 +84,10 @@ export function QuickAttach(arg1) {
 
 export function RemoveSavedGameHook(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['RemoveSavedGameHook'](arg1, arg2, arg3, arg4);
+}
+
+export function SaveCacheEntry(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SaveCacheEntry'](arg1, arg2, arg3, arg4);
 }
 
 export function SaveConfig(arg1) {
@@ -82,8 +110,16 @@ export function SetEmbed(arg1, arg2) {
   return window['go']['main']['App']['SetEmbed'](arg1, arg2);
 }
 
+export function StartLlamaServer(arg1) {
+  return window['go']['main']['App']['StartLlamaServer'](arg1);
+}
+
 export function Status() {
   return window['go']['main']['App']['Status']();
+}
+
+export function StopLlamaServer() {
+  return window['go']['main']['App']['StopLlamaServer']();
 }
 
 export function TestTranslate(arg1) {
