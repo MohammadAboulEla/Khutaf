@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, shallowRef } from "vue";
+import { onMounted, ref, shallowRef } from "vue";
 import Icon from "../components/Icon.vue";
 import Tooltip from "../components/Tooltip.vue";
 import { useSession } from "../composables/useSession.js";
@@ -20,6 +20,11 @@ const {
 } = useSession();
 
 const cacheCleared = shallowRef(false);
+const expandedHooks = ref({});
+
+function toggleHooks(exePath) {
+  expandedHooks.value[exePath] = !expandedHooks.value[exePath];
+}
 
 onMounted(() => {
   refreshSavedGames();
@@ -136,39 +141,44 @@ function ruleCount(g) {
         </div>
 
         <div class="hooks-box">
-          <div class="hooks-head">
-            <span class="hlbl">Saved Embed Hooks ({{ g.embedHooks?.length || 0 }})</span>
+          <div class="hooks-head" @click="toggleHooks(g.exePath)">
+            <span class="hlbl toggle-lbl">
+              <Icon :name="expandedHooks[g.exePath] ? 'ChevronDown' : 'Chevron'" :size="12" />
+              <span>Saved Embed Hooks ({{ g.embedHooks?.length || 0 }})</span>
+            </span>
             <button
               v-if="g.embedHooks?.length"
               class="link-btn"
               type="button"
-              @click="clearSavedGameHooks(g.exePath)"
+              @click.stop="clearSavedGameHooks(g.exePath)"
             >
               Clear Hooks
             </button>
           </div>
-          <div v-if="!g.embedHooks?.length" class="no-hooks">No saved embed hooks.</div>
-          <div v-else class="hook-list">
-            <div
-              v-for="(h, idx) in g.embedHooks"
-              :key="`${h.hookCode}:${h.ctx}:${h.ctx2}:${idx}`"
-              class="hook-item"
-            >
-              <Tooltip :text="hookTooltip(h)" mono class="hname-tip">
-                <span class="hname">{{ formatHookLabel(h, idx) }}</span>
-              </Tooltip>
-              <span class="hctx">ctx {{ h.ctx.toString(16) }}</span>
-              <Tooltip text="Remove hook">
-                <button
-                  class="del-hook"
-                  type="button"
-                  @click="removeSavedGameHook(g.exePath, h)"
-                >
-                  ×
-                </button>
-              </Tooltip>
+          <template v-if="expandedHooks[g.exePath]">
+            <div v-if="!g.embedHooks?.length" class="no-hooks">No saved embed hooks.</div>
+            <div v-else class="hook-list">
+              <div
+                v-for="(h, idx) in g.embedHooks"
+                :key="`${h.hookCode}:${h.ctx}:${h.ctx2}:${idx}`"
+                class="hook-item"
+              >
+                <Tooltip :text="hookTooltip(h)" mono class="hname-tip">
+                  <span class="hname">{{ formatHookLabel(h, idx) }}</span>
+                </Tooltip>
+                <span class="hctx">ctx {{ h.ctx.toString(16) }}</span>
+                <Tooltip text="Remove hook">
+                  <button
+                    class="del-hook"
+                    type="button"
+                    @click="removeSavedGameHook(g.exePath, h)"
+                  >
+                    ×
+                  </button>
+                </Tooltip>
+              </div>
             </div>
-          </div>
+          </template>
         </div>
 
         <div class="rules-bar">
@@ -363,6 +373,13 @@ function ruleCount(g) {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-lbl {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 .hlbl {
   font-size: 11px;
