@@ -4,7 +4,7 @@ import Icon from "./Icon.vue";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  title: { type: String, default: "Asar" },
+  title: { type: String, default: "Khutaf" },
   version: { type: String, default: "0.1.0" },
 });
 
@@ -18,36 +18,24 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
 
 const sections = [
   {
-    heading: "About this app",
-    body: "Asar is a minimal Wails + Vue 3 desktop template. It ships a thin app shell — header, sidebar, main, footer — and stays out of your way. Use it as a starting point for any tool that needs to feel native on Windows while reusing the Vue ecosystem.",
+    heading: "About Khutaf",
+    body: "Khutaf (خُطّاف) is a real-time in-game Arabic text hook and embedded translator for Windows PC games. It attaches to running games, intercepts dialogue directly from memory, translates it, and injects properly shaped RTL Arabic back into the game UI.",
   },
   {
-    heading: "Design principles",
-    body: "Tokens over hardcoded colors. Scoped styles per component. One source of truth for state, derived everywhere else. Compose with small files instead of growing a single mega-component. The shell does layout; everything else is opt-in.",
+    heading: "Arabic Shaping & BiDi Engine",
+    body: "Built-in contextual shaping (Presentation Forms + Lam-Alef ligatures), logical line wrapping before reversal, bracket mirroring, and LTR run preservation so <tags>, {vars}, and numbers stay intact inside LTR-only game engines.",
   },
   {
-    heading: "Stack",
-    body: "Vue 3 with the Composition API and <script setup>. Wails v2 for the native window and Go bridge. Vite for HMR. No CSS framework — just CSS variables and grid/flex. No global state library yet; composables hold cross-component UI state.",
+    heading: "Unity & Native Hooks",
+    body: "Supports Unity Mono and IL2CPP TextMeshPro/UI.Text dynamic OS font loading and fallback SDF asset bundles, plus Win32 GDI text hooks via KhutafHook32/64.",
   },
   {
-    heading: "Keyboard shortcuts",
-    body: "Esc closes any open modal. Window controls live in the header (minimize, maximize, close). The theme and sidebar-side buttons persist your choice to localStorage so the app reopens the way you left it.",
+    heading: "Translators & Pipeline",
+    body: "Includes free Bing web translation and OpenAI-compatible LLM endpoints (OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Ollama, llama.cpp), pre/post regex & literal rules, request deduplication, and live performance profiling in the Debug tab.",
   },
   {
-    heading: "Acknowledgements",
-    body: "Lucide icons. The Vue and Wails teams for their respective tooling. The open-source community for endless examples to learn from. And every late-night session that turned 'just a quick prototype' into a real piece of software.",
-  },
-  {
-    heading: "License",
-    body: "MIT. Use it, fork it, sell it, ignore the author. A link back is appreciated but never required. No warranty — if this app eats your data, that's on you, not on the template.",
-  },
-  {
-    heading: "Roadmap",
-    body: "Pinia store wiring when shared state shows up. A command palette overlay. Optional drag-out tabs. Native menu integration via the Wails menu API. None of this is committed — additions happen only when a real use case demands them.",
-  },
-  {
-    heading: "Contact",
-    body: "Issues and pull requests welcome on the project repository. For private inquiries, use the email listed in the package metadata. Bug reports with a minimal reproduction will always be addressed before feature requests.",
+    heading: "Shortcuts & Persistence",
+    body: "Press Esc to close modals. Saved game profiles and embed hooks are stored in userconfig/games.json, settings in userconfig/config.json, and UI theme/sidebar preferences persist automatically.",
   },
 ];
 </script>
@@ -66,10 +54,10 @@ const sections = [
 
           <div class="body">
             <div class="hero">
-              <div class="mark">أ</div>
+              <div class="mark">Kh</div>
               <div>
-                <div class="name">{{ title }}</div>
-                <div class="ver">version {{ version }}</div>
+                <div class="name">{{ title }} · خُطّاف</div>
+                <div class="ver">version {{ version }} · Embedded Arabic Game Hook</div>
               </div>
             </div>
 
@@ -106,7 +94,7 @@ const sections = [
   max-height: min(640px, 90vh);
   background: var(--bg-elev);
   color: var(--fg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input, var(--border));
   border-radius: 10px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
   overflow: hidden;
@@ -146,11 +134,11 @@ const sections = [
 .mark {
   width: 44px; height: 44px;
   border-radius: 8px;
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--accent);
+  color: #fff;
   display: grid; place-items: center;
-  font-family: var(--arabic);
-  font-size: 22px;
+  font-weight: 700;
+  font-size: 18px;
 }
 .name { font-weight: 600; font-size: 16px; }
 .ver {
@@ -180,13 +168,14 @@ p { margin: 0; line-height: 1.55; color: var(--fg); }
 .muted { color: var(--fg-faint); font-size: var(--fs-small); font-family: var(--mono); }
 .btn {
   height: 28px;
-  padding: 0 12px;
-  background: var(--ink);
-  color: var(--paper);
+  padding: 0 14px;
+  background: var(--accent);
+  color: #fff;
   border: none;
   border-radius: 6px;
   font: inherit;
   font-size: var(--fs-small);
+  font-weight: 500;
   cursor: pointer;
 }
 .btn:hover { opacity: 0.9; }

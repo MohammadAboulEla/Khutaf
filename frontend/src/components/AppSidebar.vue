@@ -71,12 +71,12 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
   grid-template-rows: 1fr auto;
   background: var(--bg-elev);
   border-right: 1px solid var(--border);
-  width: 210px;
+  width: 180px;
   overflow: hidden;
   transition: width 0.15s ease;
 }
 .sidebar[data-collapsed="true"] {
-  width: 48px;
+  width: 50px;
 }
 .sidebar[data-side="right"] {
   border-right: none;
@@ -86,7 +86,7 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
   display: flex;
   flex-direction: column;
   padding: 8px;
-  gap: 2px;
+  gap: 4px;
   overflow-y: auto;
 }
 .nav-tip {
@@ -98,7 +98,7 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 8px 8px;
   background: transparent;
   border: none;
   border-radius: 6px;
