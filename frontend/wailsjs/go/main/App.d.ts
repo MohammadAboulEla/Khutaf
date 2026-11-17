@@ -37,6 +37,8 @@ export function RemoveSavedGameHook(arg1:string,arg2:string,arg3:number,arg4:num
 
 export function SaveConfig(arg1:config.Config):Promise<void>;
 
+export function SaveGamePipeline(arg1:string,arg2:config.PipelineSettings):Promise<void>;
+
 export function SavedGames():Promise<Array<session.SavedGame>>;
 
 export function SetDebugMode(arg1:boolean,arg2:boolean):Promise<void>;

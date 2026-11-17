@@ -66,6 +66,10 @@ export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
 }
 
+export function SaveGamePipeline(arg1, arg2) {
+  return window['go']['main']['App']['SaveGamePipeline'](arg1, arg2);
+}
+
 export function SavedGames() {
   return window['go']['main']['App']['SavedGames']();
 }

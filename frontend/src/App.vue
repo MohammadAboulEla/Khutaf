@@ -22,7 +22,12 @@ const {
   toggleCollapsed: toggleSidebarCollapsed,
 } = useSidebar();
 
-const { status, logs, errorBanner, clearError, appVersion } = useSession();
+const { status, logs, errorBanner, clearError, appVersion, pipelineTarget } = useSession();
+
+function onEditGameRules(exePath) {
+  pipelineTarget.value = exePath;
+  activeTab.value = "pipeline";
+}
 
 const activeTab = shallowRef("games");
 const aboutOpen = shallowRef(false);
@@ -70,7 +75,11 @@ const footerText = computed(() => {
         <span>{{ errorBanner }}</span>
         <button class="banner-close" type="button" @click="clearError">×</button>
       </div>
-      <GamesView v-if="activeTab === 'games'" @open-hooks="activeTab = 'hooks'" />
+      <GamesView
+        v-if="activeTab === 'games'"
+        @open-hooks="activeTab = 'hooks'"
+        @edit-rules="onEditGameRules"
+      />
       <HookConsoleView v-show="activeTab === 'hooks'" />
       <EmbedSettingsView v-if="activeTab === 'embed'" />
       <TranslatorsView v-if="activeTab === 'translators'" />

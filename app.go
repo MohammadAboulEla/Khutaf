@@ -114,6 +114,11 @@ func (a *App) RemoveSavedGameHook(exePath, hookCode string, ctx, ctx2 uint64) er
 	return a.session.RemoveSavedGameHook(exePath, hookCode, ctx, ctx2)
 }
 
+// SaveGamePipeline saves per-game pre/post rules.
+func (a *App) SaveGamePipeline(exePath string, p config.PipelineSettings) error {
+	return a.session.SaveGamePipeline(exePath, p)
+}
+
 // ClearTranslationCache clears the in-memory translation cache.
 func (a *App) ClearTranslationCache() int { return a.session.ClearTranslationCache() }
 

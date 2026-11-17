@@ -34,6 +34,7 @@ const debugTraces = ref([]);
 const savedGames = ref([]);
 const cacheCount = ref(0);
 const appVersion = ref("0.1.0");
+const pipelineTarget = ref("global");
 const config = ref(null);
 const errorBanner = shallowRef("");
 const saveState = shallowRef("");
@@ -263,6 +264,22 @@ async function clearTranslationCache() {
     errorBanner.value = String(e);
   }
 }
+
+async function saveGamePipeline(exePath, pipeline) {
+  errorBanner.value = "";
+  saveState.value = "saving";
+  try {
+    await call("SaveGamePipeline", exePath, pipeline);
+    await refreshSavedGames();
+    saveState.value = "saved";
+    setTimeout(() => {
+      if (saveState.value === "saved") saveState.value = "";
+    }, 1500);
+  } catch (e) {
+    saveState.value = "";
+    errorBanner.value = String(e);
+  }
+}
 const clearError = () => {
   errorBanner.value = "";
 };
@@ -280,6 +297,7 @@ export function useSession() {
     savedGames: readonly(savedGames),
     cacheCount: readonly(cacheCount),
     appVersion: readonly(appVersion),
+    pipelineTarget,
     config,
     errorBanner: readonly(errorBanner),
     saveState: readonly(saveState),
@@ -291,6 +309,7 @@ export function useSession() {
     setEmbed,
     insertHookCode,
     saveConfig,
+    saveGamePipeline,
     deleteSavedGame,
     clearSavedGameHooks,
     removeSavedGameHook,

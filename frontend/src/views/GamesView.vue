@@ -4,7 +4,7 @@ import Icon from "../components/Icon.vue";
 import Tooltip from "../components/Tooltip.vue";
 import { useSession } from "../composables/useSession.js";
 
-const emit = defineEmits(["open-hooks"]);
+const emit = defineEmits(["open-hooks", "edit-rules"]);
 
 const {
   savedGames,
@@ -15,6 +15,7 @@ const {
   deleteSavedGame,
   clearSavedGameHooks,
   removeSavedGameHook,
+  saveGamePipeline,
   clearTranslationCache,
 } = useSession();
 
@@ -57,6 +58,10 @@ function formatHookLabel(h, idx) {
 
 function hookTooltip(h) {
   return `${h.hookName || h.hookCode} · ctx ${h.ctx.toString(16)}`;
+}
+
+function ruleCount(g) {
+  return (g.pipeline?.preRules?.length || 0) + (g.pipeline?.postRules?.length || 0);
 }
 </script>
 
@@ -163,6 +168,33 @@ function hookTooltip(h) {
                 </button>
               </Tooltip>
             </div>
+          </div>
+        </div>
+
+        <div class="rules-bar">
+          <span class="hlbl">
+            Custom Rules:
+            <template v-if="ruleCount(g)">
+              {{ g.pipeline?.preRules?.length || 0 }} pre · {{ g.pipeline?.postRules?.length || 0 }} post
+            </template>
+            <template v-else>None</template>
+          </span>
+          <div class="rules-actions">
+            <button
+              v-if="ruleCount(g)"
+              class="link-btn"
+              type="button"
+              @click="saveGamePipeline(g.exePath, { preRules: [], postRules: [] })"
+            >
+              Clear Rules
+            </button>
+            <button
+              class="link-btn accent"
+              type="button"
+              @click="emit('edit-rules', g.exePath)"
+            >
+              {{ ruleCount(g) ? "Edit Rules" : "+ Add Rules" }}
+            </button>
           </div>
         </div>
       </div>
@@ -397,5 +429,23 @@ function hookTooltip(h) {
 }
 .del-hook:hover {
   color: #f87171;
+}
+.rules-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.rules-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.link-btn.accent {
+  color: var(--accent);
+  font-weight: 500;
 }
 </style>

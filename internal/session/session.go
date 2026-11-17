@@ -185,18 +185,37 @@ func (s *Session) SaveConfig(c config.Config) error {
 }
 
 func (s *Session) applyConfig(c config.Config) error {
-	pre, err := pipeline.Compile(c.Pipeline.PreRules)
-	if err != nil {
-		return fmt.Errorf("pre-processing: %w", err)
-	}
-	post, err := pipeline.Compile(c.Pipeline.PostRules)
-	if err != nil {
-		return fmt.Errorf("post-processing: %w", err)
+	s.mu.Lock()
+	gamePath := s.gamePath
+	s.mu.Unlock()
+	if err := s.rebuildRules(c.Pipeline, gamePath); err != nil {
+		return err
 	}
 	embed := c.Embed
 	s.embedCfg.Store(&embed)
-	s.rules.Store(&rules{pre: pre, post: post})
 	s.translator.Configure(c.Translator)
+	return nil
+}
+
+func (s *Session) rebuildRules(global config.PipelineSettings, gamePath string) error {
+	preList := make([]config.Rule, 0, len(global.PreRules))
+	preList = append(preList, global.PreRules...)
+	postList := make([]config.Rule, 0, len(global.PostRules))
+	postList = append(postList, global.PostRules...)
+	if gamePath != "" {
+		gp := s.store.Game(gamePath).Pipeline
+		preList = append(preList, gp.PreRules...)
+		postList = append(postList, gp.PostRules...)
+	}
+	pre, err := pipeline.Compile(preList)
+	if err != nil {
+		return fmt.Errorf("pre-processing: %w", err)
+	}
+	post, err := pipeline.Compile(postList)
+	if err != nil {
+		return fmt.Errorf("post-processing: %w", err)
+	}
+	s.rules.Store(&rules{pre: pre, post: post})
 	return nil
 }
 
@@ -260,11 +279,12 @@ func (s *Session) ListProcesses() ([]hook.ProcessInfo, error) { return hook.List
 
 // SavedGame describes a persisted game profile and whether it is currently running.
 type SavedGame struct {
-	ExePath    string             `json:"exePath"`
-	Title      string             `json:"title"`
-	EmbedHooks []config.EmbedHook `json:"embedHooks"`
-	RunningPID uint32             `json:"runningPid"`
-	Attached   bool               `json:"attached"`
+	ExePath    string                  `json:"exePath"`
+	Title      string                  `json:"title"`
+	EmbedHooks []config.EmbedHook      `json:"embedHooks"`
+	Pipeline   config.PipelineSettings `json:"pipeline"`
+	RunningPID uint32                  `json:"runningPid"`
+	Attached   bool                    `json:"attached"`
 }
 
 // SavedGames returns all saved game profiles with live running/attached status.
@@ -289,6 +309,7 @@ func (s *Session) SavedGames() []SavedGame {
 			ExePath:    exePath,
 			Title:      title,
 			EmbedHooks: prof.EmbedHooks,
+			Pipeline:   prof.Pipeline,
 			RunningPID: runningPID,
 			Attached:   isAttached && curPath == exePath,
 		})
@@ -340,6 +361,31 @@ func (s *Session) RemoveSavedGameHook(exePath, hookCode string, ctx, ctx2 uint64
 	})
 }
 
+// SaveGamePipeline validates, persists, and (if currently attached) applies per-game rules.
+func (s *Session) SaveGamePipeline(exePath string, p config.PipelineSettings) error {
+	if _, err := pipeline.Compile(p.PreRules); err != nil {
+		return fmt.Errorf("pre-processing: %w", err)
+	}
+	if _, err := pipeline.Compile(p.PostRules); err != nil {
+		return fmt.Errorf("post-processing: %w", err)
+	}
+	if err := s.store.UpdateGame(exePath, func(g *config.GameProfile) {
+		if g.Title == "" {
+			g.Title = strings.TrimSuffix(filepath.Base(exePath), filepath.Ext(exePath))
+		}
+		g.Pipeline = p
+	}); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	curPath := s.gamePath
+	s.mu.Unlock()
+	if curPath != "" && strings.EqualFold(filepath.Clean(curPath), filepath.Clean(exePath)) {
+		return s.rebuildRules(s.store.Config().Pipeline, curPath)
+	}
+	return nil
+}
+
 // ClearTranslationCache clears the in-memory translation cache and returns the count cleared.
 func (s *Session) ClearTranslationCache() int {
 	n := s.translator.ClearCache()
@@ -376,6 +422,7 @@ func (s *Session) Attach(pid uint32) error {
 	s.is64 = is64
 	s.engine = hook.DetectEngine(path)
 	s.mu.Unlock()
+	_ = s.rebuildRules(s.store.Config().Pipeline, path)
 
 	cfg := s.store.Config().Hook
 	s.host.Settings(hook.HostSettings{
@@ -411,6 +458,7 @@ func (s *Session) Detach() {
 	s.gamePath = ""
 	s.engine = ""
 	s.mu.Unlock()
+	_ = s.rebuildRules(s.store.Config().Pipeline, "")
 	if s.host != nil {
 		for _, pid := range pids {
 			s.host.DetachProcess(pid)

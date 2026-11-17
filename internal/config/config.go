@@ -90,8 +90,9 @@ type EmbedHook struct {
 
 // GameProfile stores per-game state keyed by executable path.
 type GameProfile struct {
-	Title      string      `json:"title"`
-	EmbedHooks []EmbedHook `json:"embedHooks"`
+	Title      string           `json:"title"`
+	EmbedHooks []EmbedHook      `json:"embedHooks"`
+	Pipeline   PipelineSettings `json:"pipeline,omitempty"`
 }
 
 // Default returns the factory configuration.

@@ -332,6 +332,7 @@ export namespace session {
 	    exePath: string;
 	    title: string;
 	    embedHooks: config.EmbedHook[];
+	    pipeline: config.PipelineSettings;
 	    runningPid: number;
 	    attached: boolean;
 	
@@ -344,6 +345,7 @@ export namespace session {
 	        this.exePath = source["exePath"];
 	        this.title = source["title"];
 	        this.embedHooks = this.convertValues(source["embedHooks"], config.EmbedHook);
+	        this.pipeline = this.convertValues(source["pipeline"], config.PipelineSettings);
 	        this.runningPid = source["runningPid"];
 	        this.attached = source["attached"];
 	    }
