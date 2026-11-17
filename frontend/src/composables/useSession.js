@@ -197,6 +197,11 @@ async function saveConfig(next) {
 const previewArabic = (text) => call("PreviewArabic", text);
 const testTranslate = (text) => call("TestTranslate", text);
 const listFonts = () => call("ListFonts");
+const startLlamaServer = (cfg) => call("StartLlamaServer", cfg);
+const stopLlamaServer = () => call("StopLlamaServer");
+const llamaServerStatus = () => call("LlamaServerStatus");
+const browseLlamaBinary = () => call("BrowseLlamaBinary");
+const browseGGUFModel = () => call("BrowseGGUFModel");
 const setDebugMode = (enabled, realTrans = false) => call("SetDebugMode", Boolean(enabled), Boolean(realTrans));
 const clearDebugTraces = () => {
   debugTraces.value = [];
@@ -361,6 +366,11 @@ export function useSession() {
     previewArabic,
     testTranslate,
     listFonts,
+    startLlamaServer,
+    stopLlamaServer,
+    llamaServerStatus,
+    browseLlamaBinary,
+    browseGGUFModel,
     setDebugMode,
     clearDebugTraces,
     clearError,

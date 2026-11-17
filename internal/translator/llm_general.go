@@ -65,27 +65,31 @@ func (l *LLM) Translate(ctx context.Context, text string) (string, error) {
 	if gp := GlossaryPromptFromContext(ctx); gp != "" {
 		prompt += "\n\n" + gp
 	}
+	return doChatCompletion(ctx, l.client, l.cfg.BaseURL, l.cfg.APIKey, l.cfg.Model, l.cfg.Temperature, []chatMessage{
+		{Role: "system", Content: prompt},
+		{Role: "user", Content: text},
+	})
+}
+
+func doChatCompletion(ctx context.Context, client *http.Client, baseURL, apiKey, model string, temp float64, messages []chatMessage) (string, error) {
 	body, err := json.Marshal(chatRequest{
-		Model: l.cfg.Model,
-		Messages: []chatMessage{
-			{Role: "system", Content: prompt},
-			{Role: "user", Content: text},
-		},
-		Temperature: l.cfg.Temperature,
+		Model:       model,
+		Messages:    messages,
+		Temperature: temp,
 	})
 	if err != nil {
 		return "", err
 	}
-	url := strings.TrimRight(l.cfg.BaseURL, "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	endpoint := strings.TrimRight(baseURL, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if l.cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+l.cfg.APIKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	resp, err := l.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}

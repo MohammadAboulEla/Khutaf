@@ -96,6 +96,7 @@ type rules struct {
 type Session struct {
 	store      *config.Store
 	translator *translator.Manager
+	llama      *translator.LlamaCppManager
 	host       *hook.Host
 	hostErr    error
 	runtimeDir string
@@ -132,6 +133,7 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 	s := &Session{
 		store:      store,
 		translator: translator.NewManager(cache),
+		llama:      translator.NewLlamaCppManager(),
 		runtimeDir: runtimeDir,
 		emit:       emit,
 		events:     make(chan func(), 4096),
@@ -147,8 +149,18 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 	if cacheErr != nil {
 		s.log("warn", "translation cache fallback to memory: "+cacheErr.Error())
 	}
-	if err := s.applyConfig(store.Config()); err != nil {
+	cfg := store.Config()
+	if err := s.applyConfig(cfg); err != nil {
 		s.log("warn", err.Error())
+	}
+	if cfg.Translator.LlamaCpp.AutoStart && cfg.Translator.LlamaCpp.BinaryPath != "" && cfg.Translator.LlamaCpp.ModelPath != "" {
+		go func(lcfg config.LlamaCppSettings) {
+			if err := s.llama.Start(lcfg); err != nil {
+				s.log("warn", "llama-server auto-start failed: "+err.Error())
+			} else {
+				s.log("info", fmt.Sprintf("llama-server ready on port %d", lcfg.Port))
+			}
+		}(cfg.Translator.LlamaCpp)
 	}
 	host, err := hook.NewHost(runtimeDir)
 	if err == nil {
@@ -164,10 +176,32 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 	return s
 }
 
-// Close detaches any active game and closes the translation cache database.
+// Close detaches any active game, stops llama-server, and closes the translation cache database.
 func (s *Session) Close() error {
 	s.Detach()
+	_ = s.llama.Close()
 	return s.translator.Cache().Close()
+}
+
+// StartLlamaServer starts (or restarts) the managed llama-server.exe process.
+func (s *Session) StartLlamaServer(cfg config.LlamaCppSettings) (translator.LlamaCppStatus, error) {
+	if err := s.llama.Start(cfg); err != nil {
+		return s.llama.Status(), err
+	}
+	st := s.llama.Status()
+	s.log("info", fmt.Sprintf("llama-server ready on port %d (pid %d)", st.Port, st.PID))
+	return st, nil
+}
+
+// StopLlamaServer terminates the managed llama-server.exe process.
+func (s *Session) StopLlamaServer() translator.LlamaCppStatus {
+	_ = s.llama.Stop()
+	return s.llama.Status()
+}
+
+// LlamaServerStatus returns the current llama-server status and logs.
+func (s *Session) LlamaServerStatus() translator.LlamaCppStatus {
+	return s.llama.Status()
 }
 
 // post queues UI work so native callbacks never block on the frontend.

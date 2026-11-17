@@ -51,11 +51,41 @@ type BingSettings struct {
 	TargetLang string `json:"targetLang"` // e.g. "ar"
 }
 
+// TraditionalSettings configures additional free traditional web translators.
+type TraditionalSettings struct {
+	SourceLang string `json:"sourceLang"` // e.g. "auto", "en", "ja"
+	TargetLang string `json:"targetLang"` // e.g. "ar"
+}
+
+// LlamaCppSettings configures the local llama-server.exe runner.
+type LlamaCppSettings struct {
+	BinaryPath string `json:"binaryPath"`
+	ModelPath  string `json:"modelPath"`
+	Port       int    `json:"port"`
+	GPULayers  int    `json:"gpuLayers"`
+	CtxSize    int    `json:"ctxSize"`
+	AutoStart  bool   `json:"autoStart"`
+	ExtraArgs  string `json:"extraArgs"`
+}
+
+// OfflineLLMSettings configures local offline translation GGUF prompt templates.
+type OfflineLLMSettings struct {
+	BaseURL     string  `json:"baseUrl"`
+	Model       string  `json:"model"`
+	Template    string  `json:"template"` // "auto" | "hymt2" | "translate_gemma" | "nllb_instruct"
+	SourceLang  string  `json:"sourceLang"`
+	TargetLang  string  `json:"targetLang"`
+	Temperature float64 `json:"temperature"`
+}
+
 // TranslatorSettings selects and configures the active provider.
 type TranslatorSettings struct {
-	Active string       `json:"active"` // "bing" | "llm" | "none"
-	Bing   BingSettings `json:"bing"`
-	LLM    LLMSettings  `json:"llm"`
+	Active      string              `json:"active"` // "bing" | "google" | ... | "llm" | "offline_llm" | "none"
+	Bing        BingSettings        `json:"bing"`
+	Traditional TraditionalSettings `json:"traditional"`
+	LLM         LLMSettings         `json:"llm"`
+	OfflineLLM  OfflineLLMSettings  `json:"offlineLlm"`
+	LlamaCpp    LlamaCppSettings    `json:"llamaCpp"`
 }
 
 // Rule is a text replacement applied before or after translation.
@@ -134,6 +164,10 @@ func Default() Config {
 				SourceLang: "auto-detect",
 				TargetLang: "ar",
 			},
+			Traditional: TraditionalSettings{
+				SourceLang: "auto",
+				TargetLang: "ar",
+			},
 			LLM: LLMSettings{
 				BaseURL:     "https://api.openai.com/v1",
 				Model:       "gpt-4o-mini",
@@ -142,6 +176,19 @@ func Default() Config {
 				TargetLang:  "Arabic",
 				SystemPrompt: "You are a professional video game localizer. Translate the user's {source} game text into natural, concise {target}. " +
 					"Keep every tag like <...>, [...], {...} and placeholders exactly unchanged. Output only the translation.",
+			},
+			OfflineLLM: OfflineLLMSettings{
+				BaseURL:     "http://127.0.0.1:8080/v1",
+				Model:       "local-model",
+				Template:    "auto",
+				SourceLang:  "English",
+				TargetLang:  "Arabic",
+				Temperature: 0.1,
+			},
+			LlamaCpp: LlamaCppSettings{
+				Port:      8080,
+				GPULayers: 99,
+				CtxSize:   4096,
 			},
 		},
 	}

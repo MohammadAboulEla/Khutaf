@@ -18,6 +18,7 @@ import (
 	"khutaf/internal/hook"
 	"khutaf/internal/pipeline"
 	"khutaf/internal/session"
+	"khutaf/internal/translator"
 )
 
 // AppVersion is the single source of truth for the application version.
@@ -144,6 +145,43 @@ func (a *App) DeleteCacheEntry(gameUID, provider, sourceText string) error {
 // ClearScopeCache clears cached entries for gamePath (or all games when empty).
 func (a *App) ClearScopeCache(gamePath string, includeManual bool) int {
 	return a.session.ClearScopeCache(gamePath, includeManual)
+}
+
+// StartLlamaServer starts the local llama-server.exe process.
+func (a *App) StartLlamaServer(cfg config.LlamaCppSettings) (translator.LlamaCppStatus, error) {
+	return a.session.StartLlamaServer(cfg)
+}
+
+// StopLlamaServer stops the local llama-server.exe process.
+func (a *App) StopLlamaServer() translator.LlamaCppStatus {
+	return a.session.StopLlamaServer()
+}
+
+// LlamaServerStatus returns the current llama-server status.
+func (a *App) LlamaServerStatus() translator.LlamaCppStatus {
+	return a.session.LlamaServerStatus()
+}
+
+// BrowseLlamaBinary opens a file picker for llama-server.exe.
+func (a *App) BrowseLlamaBinary() (string, error) {
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select llama-server.exe",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Executable (*.exe)", Pattern: "*.exe"},
+			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+		},
+	})
+}
+
+// BrowseGGUFModel opens a file picker for .gguf models.
+func (a *App) BrowseGGUFModel() (string, error) {
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select GGUF Model",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "GGUF Models (*.gguf)", Pattern: "*.gguf"},
+			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+		},
+	})
 }
 
 var (

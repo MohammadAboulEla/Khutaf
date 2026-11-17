@@ -8,6 +8,7 @@ import (
 
 	"khutaf/internal/config"
 	"khutaf/internal/pipeline"
+	"khutaf/internal/translator/traditional"
 )
 
 const maxConcurrentRequests = 4
@@ -80,6 +81,14 @@ func (m *Manager) Configure(cfg config.TranslatorSettings) {
 		p = NewBing(cfg.Bing)
 	case "llm":
 		p = NewLLM(cfg.LLM)
+	case "offline_llm":
+		p = NewOfflineLLM(cfg.OfflineLLM)
+	case "none", "":
+		p = nil
+	default:
+		if tp := traditional.New(cfg.Active, cfg.Traditional); tp != nil {
+			p = tp
+		}
 	}
 	m.mu.Lock()
 	m.cfg = cfg
