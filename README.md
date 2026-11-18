@@ -1,84 +1,84 @@
 <p align="center">
-  <img src="build/appicon.png" alt="شعار خُطّاف" width="220" />
+  <img src="build/appicon.png" alt="Khutaf Logo" width="220" />
 </p>
 
-<p align="center" style="font-size: 2em; font-weight: bold; margin: 15px 0 0 0;">خُطّاف — Khutaf</p>
+<p align="center" style="font-size: 2em; font-weight: bold; margin: 15px 0 0 0;">Khutaf — خُطّاف</p>
 
 <p align="center">
-  أداة خفيفة وسريعة لويندوز هدفها الأساسي <strong>تسهيل الترجمة الفورية (Live Translation) إلى اللغة العربية</strong> لألعاب <strong>Unity (64-bit Mono &amp; IL2CPP)</strong>، وحقن الترجمة مباشرة داخل واجهة اللعبة لحظياً بدون تعديل ملفات اللعبة، مبنية باستخدام <strong>Go</strong> و<strong>Wails v2</strong> و<strong>Vue 3</strong> و<strong>Rust</strong>.
+  A fast, lightweight Windows tool focused on making <strong>live Arabic translation</strong> effortless for <strong>64-bit Unity (Mono &amp; IL2CPP)</strong> games—hooking and embedding translations directly inside the game UI in real time without modifying game files. Powered by <strong>Go</strong>, <strong>Wails v2</strong>, <strong>Vue 3</strong>, and <strong>Rust</strong>.
 </p>
 
 <p align="center">
-  <strong>العربية</strong> | <a href="README.en.md">English</a>
+  <a href="README.md">العربية</a> | <strong>English</strong>
 </p>
 
-[![شاهد الفيديو](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)
+[![Watch the video](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)
 
 ---
 
-## المميزات الأساسية
+## Key Features
 
-### 🎯 التقاط النصوص وتضمينها داخل اللعبة
-* **مكتبة حقن أصلية بـ Rust:** اكتشاف عمليات ألعاب Unity (64-bit Mono وIL2CPP) وحقن `khutaf-hook64.dll` عبر `CreateRemoteThread` والتواصل ثنائي الاتجاه عبر الأنابيب المسماة (`Named Pipes`).
-* **تحديد الـ Hooks بمرونة:** عرض جميع الـ Hooks المكتشفة مصنفة حسب موقع الاستدعاء (`#ctx`) مع النص الملتقط لحظياً، وتفعيل خيار **Embed** لكل Hook أو مصدر نصوص، مع حفظ إعدادات كل لعبة تلقائياً في `games.json`.
-* **أوضاع عرض متعددة:** عرض الترجمة العربية فقط، أو النص الأصلي متبوعاً بالترجمة، أو العكس، مع خيار إزالة وسوم الشفافية للكتابة التدريجية (`<color=#00000000>`) لتحسين الأداء دون المساس بألوان النصوص الأخرى.
+### 🎯 In-Game Text Hooking & Embedding
+* **Self-Authored Rust Hook DLL:** Enumerates running 64-bit Unity (Mono & IL2CPP) games, injects `khutaf-hook64.dll` via `CreateRemoteThread(LoadLibraryW)`, and communicates over bidirectional overlapped named pipes.
+* **Live Hook Console:** Inspects discovered text hooks split by call-site `#ctx` with real-time captured text, per-hook **Embed** toggles, and per-game profile persistence (`games.json`).
+* **Flexible Display Modes:** Show Arabic translation only, original + translation, or translation + original, plus an optional toggle to strip invisible typewriter alpha tags (`<color=#00000000>`) while preserving visible text colors.
 
-### ✍️ محرك تشكيل العربية والـ BiDi وحقن الخطوط
-* **تشكيل سياقي كامل:** تحويل الحروف العربية إلى أشكالها السياقية (`U+FE80`–`U+FEFC` وForms-A) مع دمج اللام ألف (`لا`، `لأ`، `لإ`، `لآ`) والحفاظ على التشكيل.
-* **ترتيب بصري ذكي (BiDi):** عكس الأسطر للعرض من اليمين لليسار مع الحفاظ على الكلمات الإنجليزية والأرقام والمتغيرات (`[var]`، `{var}`) ووسوم التنسيق (`<color=...>...</color>`) سليمة، وعكس الأقواس تلقائياً.
-* **التفاف منطقي للأسطر:** تقسيم الجمل الطويلة على حدود الكلمات قبل عكس الترتيب البصري لتقرأ الصناديق الحوارية من الأعلى للأسفل بشكل صحيح.
-* **دعم خطوط Unity (Mono & IL2CPP):** إنشاء خطوط ديناميكية من خطوط النظام (`Tahoma` افتراضياً) أو تمرير حزم `TMP_Font_AssetBundles` تلقائياً لظهور الحروف العربية بوضوح بدلاً من المربعات.
+### ✍️ Arabic RTL Engine & Unity Font Injection
+* **Contextual Shaping:** Converts Arabic letters to Presentation Forms (`U+FE80`–`U+FEFC` & Forms-A), applies mandatory Lam-Alef ligatures, and preserves Tashkeel diacritics.
+* **BiDi Visual Ordering:** Reverses RTL lines for engines without native Arabic support while keeping Latin words, numbers, `[vars]`, `{vars}`, and paired rich-text tags (`<color=...>...</color>`) intact and mirroring brackets.
+* **Logical Line Wrapping:** Wraps text on word boundaries before visual reversal so multi-line dialogue boxes read top-to-bottom.
+* **Unity Mono & IL2CPP Font Fallback:** Dynamically creates OS TMP/UI fonts (`Tahoma` by default) and optionally loads `TMP_Font_AssetBundles` fallbacks so Arabic renders cleanly instead of missing-glyph boxes.
 
-### 🌐 مزوّدو الترجمة ومعالجة النصوص والكاش
-* **ترجمة Bing مجانية افتراضياً:** تعمل مباشرة بدون مفتاح API، مع دعم مزوّدين تقليديين إضافيين.
-* **دعم نماذج الذكاء الاصطناعي (OpenAI-Compatible):** جاهز للعمل مع OpenAI وGemini وDeepSeek وGroq وOpenRouter، بالإضافة إلى التشغيل المحلي عبر Ollama و`llama.cpp` وLM Studio.
-* **خط معالجة نصوص وكاش ثلاثي المستويات:** قواعد نصية وRegex قبل الترجمة وبعدها، وقاموس مصطلحات (عام ولكل لعبة)، وكاش SQLite (خاص باللعبة -> عام -> مشترك بين الألعاب) مع واجهة لإضافة وتعديل الترجمات يدوياً.
+### 🌐 Translation Providers, Pipeline & Cache
+* **Free Bing Translator (Default):** Works out of the box with no API key required, alongside additional traditional web translators.
+* **OpenAI-Compatible LLM Support:** Preconfigured presets for OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Ollama, LM Studio, and `llama.cpp`.
+* **Text Pipeline & 3-Tier Cache:** Pre/post literal & regex rules, global + per-game glossary, `[..]` / `{..}` placeholder safety checks, and SQLite translation cache (per-game -> global -> cross-game shared fallback) with a built-in manual cache editor.
 
 ---
 
-## التشغيل والبناء
+## Getting Started
 
-### المتطلبات
-* **Windows 10 / 11** (معمارية x64)
-* **Go** (1.23 أو أحدث)
-* **Rust** (Cargo + `msvc` toolchain) لبناء `runtime/khutaf-hook64.dll`
-* **Node.js** و**npm**
+### Prerequisites
+* **Windows 10 / 11** (x64)
+* **Go** (1.23 or later)
+* **Rust** (Cargo + `msvc` toolchain) to build `runtime/khutaf-hook64.dll`
+* **Node.js** & **npm**
 * **Wails CLI v2**
 
-### بناء مكتبة الحقن الأصلية
+### Build Native Hook DLL
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/build-native.ps1
 ```
 
-### التشغيل في وضع التطوير
+### Development Run
 ```bash
 wails dev
 ```
 
-### بناء نسخة الإنتاج
+### Production Build
 ```bash
 wails build
 ```
-> تأكد من وجود مجلد `runtime/` (يحتوي على `khutaf-hook64.dll`) بجانب الملف التنفيذي الناتج (`Khutaf.exe`).
+> Keep the `runtime/` directory (containing `khutaf-hook64.dll`) next to the compiled `Khutaf.exe` executable.
 
 ---
 
-## البنية التقنية
+## Technical Architecture
 
 ```mermaid
 graph TD
-    A[واجهة Vue 3] <-->|Wails IPC| B[App & Session]
+    A[Vue 3 Frontend] <-->|Wails IPC| B[App & Session]
     B <-->|Named Pipes| C[khutaf-hook64.dll Rust]
-    B --> D[معالجة النصوص والقاموس والكاش]
-    B --> E[مزوّد الترجمة Bing / LLM]
-    B --> F[محرك العربية Shaper & BiDi]
-    B --> G[تخزين الإعدادات JSON & SQLite]
+    B --> D[Pipeline, Glossary & Cache]
+    B --> E[Translator Bing / LLM]
+    B --> F[Arabic Shaper & BiDi]
+    B --> G[JSON Config & SQLite Cache]
 ```
 
 ---
 
-_انتظروا المزيد..._
+_Wait for more..._
 
-ادعمنا عبر PayPal
+Support me on PayPal
 
 [![Donate](https://img.shields.io/badge/Support-PayPal-blue.svg)](https://paypal.me/mohammadmoustafa1)
