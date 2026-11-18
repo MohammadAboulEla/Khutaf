@@ -13,7 +13,7 @@ const props = defineProps({
       { id: "hooks", name: "Hook Console", icon: "Code" },
       { id: "embed", name: "Embed & Arabic", icon: "BookOpen" },
       { id: "translators", name: "Translators", icon: "Quote" },
-      { id: "pipeline", name: "Text Pipeline", icon: "Cog" },
+      { id: "pipeline", name: "Text Pipeline", icon: "Workflow" },
       { id: "debug", name: "Debug", icon: "Activity" },
     ],
   },

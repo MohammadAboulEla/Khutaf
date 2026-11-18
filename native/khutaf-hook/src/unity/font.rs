@@ -481,10 +481,13 @@ fn create_tmp_font_asset(
     ensure_mobile_sdf_shader(rt, t_fa, donor_font);
 
     let m1 = rt.find_method_param0(t_fa, "CreateFontAsset", 1, "Font");
-    if let Some(fa) = rt.invoke(m1, std::ptr::null_mut(), &mut [os_font]) {
-        if !fa.is_null() {
-            return fa;
+    if !m1.is_null() {
+        if let Some(fa) = rt.invoke(m1, std::ptr::null_mut(), &mut [os_font]) {
+            if !fa.is_null() {
+                return fa;
+            }
         }
+        crate::log(level::WARN, "TMP_FontAsset.CreateFontAsset(Font) returned null");
     }
 
     let mut face_index: i32 = 0;
@@ -587,7 +590,27 @@ fn attach_fallback_to_asset(
     if m_get.is_null() {
         m_get = rt.find_method_in_hierarchy(t_fa, "get_fallbackFontAssets", 0);
     }
-    let fb_list = rt.invoke(m_get, target_font, &mut []).unwrap_or(std::ptr::null_mut());
+    let mut fb_list = rt.invoke(m_get, target_font, &mut []).unwrap_or(std::ptr::null_mut());
+    if fb_list.is_null() {
+        let t_settings = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_Settings");
+        let m_global_fb = rt.find_method(t_settings, "get_fallbackFontAssets", 0);
+        if let Some(global_list) = rt.invoke(m_global_fb, std::ptr::null_mut(), &mut []) {
+            let list_cls = rt.object_get_class(global_list);
+            let new_list = rt.object_new(list_cls);
+            if !new_list.is_null() {
+                let ctor = rt.find_method(list_cls, ".ctor", 0);
+                let _ = rt.invoke(ctor, new_list, &mut []);
+                let mut m_set = rt.find_method_in_hierarchy(t_fa, "set_fallbackFontAssetTable", 1);
+                if m_set.is_null() {
+                    m_set = rt.find_method_in_hierarchy(t_fa, "set_fallbackFontAssets", 1);
+                }
+                if !m_set.is_null() {
+                    let _ = rt.invoke(m_set, target_font, &mut [new_list]);
+                    fb_list = new_list;
+                }
+            }
+        }
+    }
     if !fb_list.is_null() {
         add_to_font_list(rt, fb_list, fallback);
     }

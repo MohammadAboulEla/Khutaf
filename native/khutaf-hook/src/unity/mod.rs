@@ -163,9 +163,37 @@ fn strip_tag_prefix(s: &str, prefix: &str) -> String {
     out
 }
 
-/// Strips non-semantic TextMeshPro layout tags (`<noparse>`, `<line-height=...>`, `<sprite anim=...>`).
+/// Strips `<color=#00000000>` and its matching `</color>` used by typewriter effects
+/// while leaving all visible `<color=...>` tags intact.
+fn strip_typewriter_alpha_tags(s: &str) -> String {
+    const TAG: &str = "<color=#00000000>";
+    const CLOSE: &str = "</color>";
+    if !s.contains(TAG) {
+        return s.to_owned();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find(TAG) {
+        out.push_str(&rest[..pos]);
+        rest = &rest[pos + TAG.len()..];
+        if let Some(end) = rest.find(CLOSE) {
+            out.push_str(&rest[..end]);
+            rest = &rest[end + CLOSE.len()..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Strips non-semantic TextMeshPro layout tags (`<noparse>`, `<line-height=...>`, `<sprite anim=...>`)
+/// and optionally typewriter alpha tags (`<color=#00000000>...</color>`).
 pub(crate) fn clean_tmp_tags(s: &str) -> String {
     let s = s.replace("<noparse>", "").replace("</noparse>", "");
+    let s = if embed::settings().strip_typewriter_tags {
+        strip_typewriter_alpha_tags(&s)
+    } else {
+        s
+    };
     let s = strip_tag_prefix(&s, "<line-height=");
     strip_tag_prefix(&s, "<sprite anim=")
 }

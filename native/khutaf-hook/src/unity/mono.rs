@@ -57,6 +57,8 @@ pub(crate) struct MonoApi {
     class_get_field_from_name: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void>,
     field_get_value: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
     field_set_value: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
+    field_get_parent: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
+    type_get_name: Option<unsafe extern "C" fn(*mut c_void) -> *const c_char>,
     class_vtable: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void>,
     field_static_set_value: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
     runtime_class_init: Option<unsafe extern "C" fn(*mut c_void)>,
@@ -133,6 +135,8 @@ impl MonoApi {
             class_get_field_from_name: proc_addr(m, "mono_class_get_field_from_name"),
             field_get_value: proc_addr(m, "mono_field_get_value"),
             field_set_value: proc_addr(m, "mono_field_set_value"),
+            field_get_parent: proc_addr(m, "mono_field_get_parent"),
+            type_get_name: proc_addr(m, "mono_type_get_name"),
             class_vtable: proc_addr(m, "mono_class_vtable"),
             field_static_set_value: proc_addr(m, "mono_field_static_set_value"),
             runtime_class_init: proc_addr(m, "mono_runtime_class_init"),
@@ -215,6 +219,12 @@ impl MonoApi {
     fn mono_type_class_name(&self, ty: *mut c_void) -> String {
         if ty.is_null() {
             return String::new();
+        }
+        if let Some(type_name_fn) = self.type_get_name {
+            let name = cstr_to_string(unsafe { type_name_fn(ty) });
+            if !name.is_empty() {
+                return name;
+            }
         }
         let (Some(from_type), Some(cls_name)) = (self.class_from_mono_type, self.class_get_name) else {
             return String::new();
@@ -490,15 +500,24 @@ impl UnityRuntime for MonoApi {
         }
     }
 
-    fn field_static_set_value(&self, field: *mut c_void, _val: *mut c_void) {
-        let (Some(vtable_fn), Some(set_fn)) = (self.class_vtable, self.field_static_set_value) else {
+    fn field_static_set_value(&self, field: *mut c_void, val: *mut c_void) {
+        let (Some(parent_fn), Some(vtable_fn), Some(set_fn)) =
+            (self.field_get_parent, self.class_vtable, self.field_static_set_value)
+        else {
             return;
         };
         let dom = self.root_domain();
         if dom.is_null() || field.is_null() {
             return;
         }
-        let _ = (vtable_fn, set_fn);
+        let parent = unsafe { parent_fn(field) };
+        if parent.is_null() {
+            return;
+        }
+        let vt = unsafe { vtable_fn(dom, parent) };
+        if !vt.is_null() {
+            unsafe { set_fn(vt, field, val) };
+        }
     }
 }
 

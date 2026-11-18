@@ -47,9 +47,10 @@ type EmbedSettings struct {
 	FontFamily       string // empty = keep game font
 	DisplayMode      DisplayMode
 	ClearText        bool
-	ChangeFontSize   bool
-	FontSizeRelative float32
-	UnityFontDir     string // folder with arialuni_sdf_u* bundles; empty disables
+	ChangeFontSize      bool
+	FontSizeRelative    float32
+	UnityFontDir        string // folder with arialuni_sdf_u* bundles; empty disables
+	StripTypewriterTags bool
 }
 
 // HostSettings is passed to Luna_Settings.

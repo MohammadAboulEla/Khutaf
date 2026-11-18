@@ -22,8 +22,9 @@ type EmbedSettings struct {
 	UseUnityBundle   bool    `json:"useUnityBundle"` // load arialuni_sdf_u* (overrides OS font when glyphs exist)
 	ChangeFontSize   bool    `json:"changeFontSize"`
 	FontSizeRelative float32 `json:"fontSizeRelative"`
-	LimitLineLength  bool    `json:"limitLineLength"` // wrap non-Arabic output too
-	MaxLineLength    int     `json:"maxLineLength"`
+	LimitLineLength     bool    `json:"limitLineLength"` // wrap non-Arabic output too
+	MaxLineLength       int     `json:"maxLineLength"`
+	StripTypewriterTags bool    `json:"stripTypewriterTags"` // strip <color=#00000000> typewriter tags
 }
 
 // HookSettings is passed to Luna_Settings.
@@ -149,8 +150,9 @@ func Default() Config {
 			ChangeFont:       true,
 			FontFamily:       "Tahoma",
 			UseUnityBundle:   false,
-			FontSizeRelative: 1,
-			MaxLineLength:    40,
+			FontSizeRelative:    1,
+			MaxLineLength:       40,
+			StripTypewriterTags: true,
 		},
 		Hook: HookSettings{
 			FlushDelayMs:   500,

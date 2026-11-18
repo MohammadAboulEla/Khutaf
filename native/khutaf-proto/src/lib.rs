@@ -43,6 +43,7 @@ pub struct Settings {
     pub clear_text: bool,
     pub change_font_size: bool,
     pub font_scale: f32,
+    pub strip_typewriter_tags: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,6 +141,7 @@ impl Msg {
                 e.bool(s.clear_text);
                 e.bool(s.change_font_size);
                 e.f32(s.font_scale);
+                e.bool(s.strip_typewriter_tags);
             }
             Msg::SetEmbed { hook_id, ctx, ctx2, on } => {
                 e.u64(*hook_id);
@@ -200,6 +202,7 @@ impl Msg {
                 clear_text: d.bool()?,
                 change_font_size: d.bool()?,
                 font_scale: f32::from_bits(d.u32()?),
+                strip_typewriter_tags: d.bool()?,
             }),
             kind::SET_EMBED => Msg::SetEmbed { hook_id: d.u64()?, ctx: d.u64()?, ctx2: d.u64()?, on: d.bool()? },
             kind::EMBED_RESPONSE => {
@@ -287,6 +290,7 @@ mod tests {
                 clear_text: true,
                 change_font_size: false,
                 font_scale: 1.5,
+                strip_typewriter_tags: true,
             }),
             Msg::SetEmbed { hook_id: 7, ctx: 0, ctx2: 0, on: true },
             Msg::EmbedResponse { req_id: 9, text: Some("ok".into()) },

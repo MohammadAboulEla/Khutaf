@@ -29,7 +29,7 @@ func TestProtoRoundTrip(t *testing.T) {
 		{Kind: msgText, HookID: 3, Ctx: 1, Ctx2: 2, Text: "Hello"},
 		{Kind: msgEmbedRequest, ReqID: 5, HookID: 3, Text: "مرحبا 😀"},
 		{Kind: msgLog, Level: logWarn, Text: "x"},
-		{Kind: msgSettings, Settings: wireSettings{WaitMs: 1000, DisplayMode: 1, FontFamily: "Arial", FontDir: `C:\f`, ClearText: true, FontScale: 1.5}},
+		{Kind: msgSettings, Settings: wireSettings{WaitMs: 1000, DisplayMode: 1, FontFamily: "Arial", FontDir: `C:\f`, ClearText: true, FontScale: 1.5, StripTypewriter: true}},
 		{Kind: msgSetEmbed, HookID: 3, On: true},
 		{Kind: msgEmbedResponse, ReqID: 5, HasText: true, Text: "ok"},
 		{Kind: msgEmbedResponse, ReqID: 5},

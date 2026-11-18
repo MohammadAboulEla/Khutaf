@@ -59,10 +59,10 @@ type wireMsg struct {
 }
 
 type wireSettings struct {
-	WaitMs, DisplayMode   uint32
-	FontFamily, FontDir   string
-	ClearText, ChangeSize bool
-	FontScale             float32
+	WaitMs, DisplayMode                     uint32
+	FontFamily, FontDir                     string
+	ClearText, ChangeSize, StripTypewriter  bool
+	FontScale                               float32
 }
 
 type encoder struct{ b []byte }
@@ -126,6 +126,7 @@ func (m *wireMsg) encode() []byte {
 		e.boolean(s.ClearText)
 		e.boolean(s.ChangeSize)
 		e.u32(math.Float32bits(s.FontScale))
+		e.boolean(s.StripTypewriter)
 	case msgSetEmbed:
 		e.u64(m.HookID)
 		e.u64(m.Ctx)
@@ -225,6 +226,7 @@ func decodeBody(body []byte) (*wireMsg, error) {
 		s.FontFamily, s.FontDir = d.str(), d.str()
 		s.ClearText, s.ChangeSize = d.boolean(), d.boolean()
 		s.FontScale = math.Float32frombits(d.u32())
+		s.StripTypewriter = d.boolean()
 	case msgSetEmbed:
 		m.HookID, m.Ctx, m.Ctx2 = d.u64(), d.u64(), d.u64()
 		m.On = d.boolean()

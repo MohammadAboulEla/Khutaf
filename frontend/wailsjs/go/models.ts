@@ -237,6 +237,7 @@ export namespace config {
 	    fontSizeRelative: number;
 	    limitLineLength: boolean;
 	    maxLineLength: number;
+	    stripTypewriterTags: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new EmbedSettings(source);
@@ -254,6 +255,7 @@ export namespace config {
 	        this.fontSizeRelative = source["fontSizeRelative"];
 	        this.limitLineLength = source["limitLineLength"];
 	        this.maxLineLength = source["maxLineLength"];
+	        this.stripTypewriterTags = source["stripTypewriterTags"];
 	    }
 	}
 	export class Config {

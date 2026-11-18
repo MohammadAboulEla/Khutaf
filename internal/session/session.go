@@ -638,8 +638,9 @@ func (s *Session) pushEmbedSettings(pid uint32) {
 		DisplayMode:      hook.DisplayMode(cfg.DisplayMode),
 		ClearText:        cfg.ClearText,
 		ChangeFontSize:   cfg.ChangeFontSize,
-		FontSizeRelative: cfg.FontSizeRelative,
-		UnityFontDir:     unityDir,
+		FontSizeRelative:    cfg.FontSizeRelative,
+		UnityFontDir:        unityDir,
+		StripTypewriterTags: cfg.StripTypewriterTags,
 	})
 }
 

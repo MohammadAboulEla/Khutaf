@@ -131,6 +131,16 @@ pub fn process(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize, text: &s
         ipc::send(&Msg::Text { hook_id, ctx, ctx2, text: text.to_owned() });
         return Some(" ".to_owned());
     }
+    if let Some(cached) = RECENT_TRANSLATIONS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(text)
+        .cloned()
+    {
+        let out = format_display(cfg.display_mode, text, &cached)?;
+        remember_output(&out);
+        return Some(out);
+    }
 
     let wait = Duration::from_millis(cfg.wait_ms.max(1) as u64);
     let req_id = NEXT_REQ.fetch_add(1, Ordering::Relaxed);

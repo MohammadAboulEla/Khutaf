@@ -22,6 +22,7 @@ const form = reactive({
   fontSizeRelative: 1.0,
   limitLineLength: false,
   maxLineLength: 40,
+  stripTypewriterTags: true,
   flushDelayMs: 500,
   codepage: 932,
 });
@@ -53,6 +54,7 @@ function onSave() {
       fontSizeRelative: Number(form.fontSizeRelative) || 1.0,
       limitLineLength: form.limitLineLength,
       maxLineLength: Number(form.maxLineLength) || 40,
+      stripTypewriterTags: form.stripTypewriterTags,
     },
     hook: {
       ...config.value.hook,
@@ -133,6 +135,10 @@ function onSave() {
         <label class="chk">
           <input v-model="form.limitLineLength" type="checkbox" />
           <span>Force Line Wrap on Non-Arabic Output Too</span>
+        </label>
+        <label class="chk" title="Strips invisible &lt;color=#00000000&gt; typewriter tags while preserving visible text colors. Improves performance and prevents lag in animated dialogue.">
+          <input v-model="form.stripTypewriterTags" type="checkbox" />
+          <span>Strip Typewriter Alpha Tags (&lt;color=#00000000&gt;) — may improve performance</span>
         </label>
       </div>
 

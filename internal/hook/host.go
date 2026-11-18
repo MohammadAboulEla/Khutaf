@@ -202,9 +202,10 @@ func (h *Host) SettingsEx(pid uint32, s EmbedSettings) {
 		DisplayMode: uint32(s.DisplayMode),
 		FontFamily:  s.FontFamily,
 		FontDir:     s.UnityFontDir,
-		ClearText:   s.ClearText,
-		ChangeSize:  s.ChangeFontSize,
-		FontScale:   relative,
+		ClearText:       s.ClearText,
+		ChangeSize:      s.ChangeFontSize,
+		FontScale:       relative,
+		StripTypewriter: s.StripTypewriterTags,
 	}
 	ps.mu.Lock()
 	ps.lastSettings = &ws
