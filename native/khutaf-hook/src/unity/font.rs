@@ -317,9 +317,9 @@ fn load_os_fonts(
     }
 
     let names: Vec<&str> = if family.is_empty() {
-        vec!["Arial", "Tahoma", "Segoe UI"]
+        vec!["Tahoma", "Arial", "Segoe UI"]
     } else {
-        vec![family, "Arial", "Tahoma", "Segoe UI"]
+        vec![family, "Tahoma", "Arial", "Segoe UI"]
     };
     let names_arr = rt.string_array_new(&names);
 
@@ -371,8 +371,8 @@ fn load_os_fonts(
             let f: unsafe extern "C" fn(*mut c_void, *mut c_void) =
                 unsafe { std::mem::transmute_copy(&icall) };
             for ttf in [
-                r"C:\Windows\Fonts\arial.ttf",
                 r"C:\Windows\Fonts\tahoma.ttf",
+                r"C:\Windows\Fonts\arial.ttf",
                 r"C:\Windows\Fonts\segoeui.ttf",
             ] {
                 if !Path::new(ttf).exists() {
