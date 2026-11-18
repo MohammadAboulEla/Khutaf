@@ -116,6 +116,9 @@ type Session struct {
 	pids      map[uint32]bool
 	hooks     map[string]hook.HookInfo
 	embedding map[string]bool
+
+	unityFontMu    sync.Mutex
+	unityFontState UnityFontStatus
 }
 
 // New loads the native host from runtimeDir (failure is non-fatal: the UI still
@@ -620,8 +623,8 @@ func (s *Session) pushEmbedSettings(pid uint32) {
 }
 
 func (s *Session) unityFontDir() string {
-	dir := filepath.Join(s.runtimeDir, "TMP_Font_AssetBundles")
-	if matches, _ := filepath.Glob(filepath.Join(dir, "arialuni_sdf*")); len(matches) > 0 {
+	dir, count := s.unityFontMatches()
+	if count > 0 {
 		return dir
 	}
 	return ""

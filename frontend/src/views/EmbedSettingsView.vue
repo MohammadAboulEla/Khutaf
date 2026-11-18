@@ -2,11 +2,13 @@
 import { reactive, shallowRef, watch, onMounted } from "vue";
 import { useSession } from "../composables/useSession.js";
 
-const { config, saveConfig, saveState, listFonts } = useSession();
+const { config, saveConfig, saveState, listFonts, unityFontStatus, refreshUnityFontStatus, downloadUnityFonts } =
+  useSession();
 
 const fonts = shallowRef(["Tahoma", "Arial", "Segoe UI"]);
 
 onMounted(async () => {
+  refreshUnityFontStatus();
   const list = await listFonts();
   if (list?.length) fonts.value = list;
 });
@@ -124,6 +126,39 @@ function onSave() {
         </label>
       </div>
 
+      <div class="bundle-box">
+        <div class="bundle-row">
+          <div class="bundle-info">
+            <span class="bundle-title">Unity TMP Font AssetBundles</span>
+            <span class="badge" :class="unityFontStatus.installed ? 'ok' : 'missing'">
+              {{ unityFontStatus.installed ? `Installed (${unityFontStatus.count})` : "Not Installed" }}
+            </span>
+          </div>
+          <button
+            class="btn secondary"
+            type="button"
+            :disabled="unityFontStatus.downloading"
+            @click="downloadUnityFonts"
+          >
+            {{
+              unityFontStatus.downloading
+                ? "Downloading…"
+                : unityFontStatus.installed
+                  ? "Re-download Bundles"
+                  : "Download Bundles"
+            }}
+          </button>
+        </div>
+        <div v-if="unityFontStatus.downloading || unityFontStatus.error" class="bundle-progress">
+          <div v-if="unityFontStatus.downloading" class="progress-track">
+            <div class="progress-fill" :style="{ width: `${unityFontStatus.progress}%` }"></div>
+          </div>
+          <span class="bundle-msg" :class="{ err: unityFontStatus.error }">
+            {{ unityFontStatus.error || unityFontStatus.message }}
+          </span>
+        </div>
+      </div>
+
       <div class="actions">
         <button class="btn primary" type="button" @click="onSave">
           {{ saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : "Apply & Save" }}
@@ -202,6 +237,81 @@ function onSave() {
 .actions {
   display: flex;
   justify-content: flex-end;
+}
+.bundle-box {
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bundle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bundle-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.bundle-title {
+  font-weight: 500;
+}
+.badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.badge.ok {
+  color: #3fb950;
+  border-color: rgba(63, 185, 80, 0.35);
+}
+.badge.missing {
+  color: var(--fg-muted);
+}
+.btn.secondary {
+  height: 28px;
+  padding: 0 12px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn.secondary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.bundle-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.progress-track {
+  height: 6px;
+  background: var(--bg-elev);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 150ms ease;
+}
+.bundle-msg {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.bundle-msg.err {
+  color: #f85149;
 }
 .btn.primary {
   height: 32px;

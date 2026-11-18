@@ -36,6 +36,15 @@ const cacheCount = ref(0);
 const appVersion = ref("0.1.0");
 const pipelineTarget = ref("global");
 const config = ref(null);
+const unityFontStatus = ref({
+  installed: false,
+  count: 0,
+  dir: "",
+  downloading: false,
+  progress: 0,
+  message: "",
+  error: "",
+});
 const errorBanner = shallowRef("");
 const saveState = shallowRef("");
 
@@ -47,6 +56,10 @@ function init() {
 
   on("session:status", (st) => {
     if (st) status.value = st;
+  });
+
+  on("unityfonts:progress", (st) => {
+    if (st) unityFontStatus.value = st;
   });
 
   on("hook:new", (h) => {
@@ -319,6 +332,23 @@ const clearError = () => {
   errorBanner.value = "";
 };
 
+async function refreshUnityFontStatus() {
+  const st = await call("UnityFontStatus");
+  if (st) unityFontStatus.value = st;
+  return st;
+}
+
+async function downloadUnityFonts() {
+  errorBanner.value = "";
+  try {
+    await call("DownloadUnityFonts");
+  } catch (e) {
+    errorBanner.value = String(e);
+  } finally {
+    await refreshUnityFontStatus();
+  }
+}
+
 export function useSession() {
   init();
   return {
@@ -334,6 +364,7 @@ export function useSession() {
     appVersion: readonly(appVersion),
     pipelineTarget,
     config,
+    unityFontStatus: readonly(unityFontStatus),
     errorBanner: readonly(errorBanner),
     saveState: readonly(saveState),
     refreshProcesses,
@@ -360,6 +391,8 @@ export function useSession() {
     llamaServerStatus,
     browseLlamaBinary,
     browseGGUFModel,
+    refreshUnityFontStatus,
+    downloadUnityFonts,
     setDebugMode,
     clearDebugTraces,
     clearError,

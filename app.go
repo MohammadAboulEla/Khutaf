@@ -181,6 +181,16 @@ func (a *App) BrowseGGUFModel() (string, error) {
 	})
 }
 
+// UnityFontStatus returns whether TMP_Font_AssetBundles are installed and any active download progress.
+func (a *App) UnityFontStatus() session.UnityFontStatus {
+	return a.session.UnityFontStatus()
+}
+
+// DownloadUnityFonts downloads and extracts TMP_Font_AssetBundles into runtime/TMP_Font_AssetBundles.
+func (a *App) DownloadUnityFonts() error {
+	return a.session.DownloadUnityFonts(a.ctx)
+}
+
 var (
 	user32DLL             = syscall.NewLazyDLL("user32.dll")
 	gdi32DLL              = syscall.NewLazyDLL("gdi32.dll")
