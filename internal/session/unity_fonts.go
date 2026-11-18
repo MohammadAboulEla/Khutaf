@@ -14,7 +14,7 @@ import (
 )
 
 // UnityFontBundleURL is the release asset URL for TMP_Font_AssetBundles.zip.
-var UnityFontBundleURL = "https://github.com/MohammadAboulEla/Khutaf/releases/latest/download/TMP_Font_AssetBundles.zip"
+var UnityFontBundleURL = "https://github.com/MohammadAboulEla/Khutaf/releases/download/unity-fonts/TMP_Font_AssetBundles.zip"
 
 // UnityFontStatus describes the installation and download state of Unity TMP font bundles.
 type UnityFontStatus struct {
