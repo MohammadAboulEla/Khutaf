@@ -1,5 +1,6 @@
 <script setup>
 import Icon from "../components/Icon.vue";
+import Tooltip from "../components/Tooltip.vue";
 
 defineProps({
   theme: { type: String, default: "light" },
@@ -24,28 +25,40 @@ const close = () => wails()?.Quit();
 
     <div class="actions no-drag">
       <slot name="actions" />
-      <button class="btn" title="theme" @click="$emit('toggle-theme')">
-        <Icon :name="theme === 'dark' ? 'Sun' : 'Moon'" :size="14" />
-      </button>
-      <button class="btn" title="toggle sidebar side" @click="$emit('toggle-sidebar')">
-        <span class="panel-icon" :class="{ flipped: sidebar === 'left' }">
-          <Icon name="PanelLeft" :size="14" />
-        </span>
-      </button>
+      <Tooltip text="Toggle theme" placement="bottom">
+        <button class="btn" @click="$emit('toggle-theme')">
+          <Icon :name="theme === 'dark' ? 'Sun' : 'Moon'" :size="14" />
+        </button>
+      </Tooltip>
+      <Tooltip text="Toggle sidebar side" placement="bottom">
+        <button class="btn" @click="$emit('toggle-sidebar')">
+          <span class="panel-icon" :class="{ flipped: sidebar === 'left' }">
+            <Icon name="PanelLeft" :size="14" />
+          </span>
+        </button>
+      </Tooltip>
       <span class="vdivider" />
-      <button class="btn" type="button" @click="$emit('open-about')">
-        <Icon name="Info" :size="12" />
-      </button>
+      <Tooltip text="About" placement="bottom">
+        <button class="btn" type="button" @click="$emit('open-about')">
+          <Icon name="Info" :size="12" />
+        </button>
+      </Tooltip>
       <span class="vdivider" />
-      <button class="btn wctl" title="minimize" @click="minimize">
-        <Icon name="Minus" :size="14" />
-      </button>
-      <button class="btn wctl" title="maximize" @click="toggleMax">
-        <Icon name="Square" :size="12" />
-      </button>
-      <button class="btn wctl close" title="close" @click="close">
-        <Icon name="X" :size="14" />
-      </button>
+      <Tooltip text="Minimize" placement="bottom">
+        <button class="btn wctl" @click="minimize">
+          <Icon name="Minus" :size="14" />
+        </button>
+      </Tooltip>
+      <Tooltip text="Maximize" placement="bottom">
+        <button class="btn wctl" @click="toggleMax">
+          <Icon name="Square" :size="12" />
+        </button>
+      </Tooltip>
+      <Tooltip text="Close" placement="bottom">
+        <button class="btn wctl close" @click="close">
+          <Icon name="X" :size="14" />
+        </button>
+      </Tooltip>
     </div>
   </header>
 </template>

@@ -1,5 +1,6 @@
 <script setup>
 import Icon from "../components/Icon.vue";
+import Tooltip from "../components/Tooltip.vue";
 
 defineProps({
   collapsed: { type: Boolean, default: false },
@@ -15,22 +16,26 @@ defineEmits(["toggle-collapsed"]);
     </nav>
 
     <div class="bottom">
-      <button
-        class="item"
-        type="button"
-        :title="collapsed ? 'Expand sidebar' : 'Collapse sidebar'"
-        @click="$emit('toggle-collapsed')"
-      >
-        <span class="chev" :class="{ flip: collapsed }">
-          <Icon name="PanelLeft" :size="18" />
-        </span>
-        <span class="label">Collapse</span>
-      </button>
+      <Tooltip :text="collapsed ? 'Expand sidebar' : 'Collapse sidebar'" placement="right" class="collapse-tip">
+        <button
+          class="item"
+          type="button"
+          @click="$emit('toggle-collapsed')"
+        >
+          <span class="chev" :class="{ flip: collapsed }">
+            <Icon name="PanelLeft" :size="18" />
+          </span>
+          <span class="label">Collapse</span>
+        </button>
+      </Tooltip>
     </div>
   </aside>
 </template>
 
 <style scoped>
+.collapse-tip {
+  width: 100%;
+}
 .shell-sidebar {
   display: grid;
   grid-template-rows: 1fr auto;

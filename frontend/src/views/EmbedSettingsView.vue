@@ -1,5 +1,6 @@
 <script setup>
 import { reactive, ref, shallowRef, watch, onMounted } from "vue";
+import Tooltip from "../components/Tooltip.vue";
 import { useSession } from "../composables/useSession.js";
 
 const { config, saveConfig, saveState, listFonts, unityFontStatus, refreshUnityFontStatus, downloadUnityFonts } =
@@ -143,15 +144,17 @@ function onSave() {
       </div>
 
       <div class="grid-2">
-        <label class="field" title="Takes effect on next game launch">
-          <span class="lbl">Override Game Font Family <span class="hint">(next game launch)</span></span>
-          <select v-model="form.fontFamily" class="input">
-            <option v-if="form.fontFamily && !fonts.includes(form.fontFamily)" :value="form.fontFamily">
-              {{ form.fontFamily }}
-            </option>
-            <option v-for="f in fonts" :key="f" :value="f">{{ f }}</option>
-          </select>
-        </label>
+        <Tooltip text="Takes effect on next game launch" class="field-tip">
+          <label class="field">
+            <span class="lbl">Override Game Font Family <span class="hint">(next game launch)</span></span>
+            <select v-model="form.fontFamily" class="input">
+              <option v-if="form.fontFamily && !fonts.includes(form.fontFamily)" :value="form.fontFamily">
+                {{ form.fontFamily }}
+              </option>
+              <option v-for="f in fonts" :key="f" :value="f">{{ f }}</option>
+            </select>
+          </label>
+        </Tooltip>
 
         <label class="field">
           <span class="lbl">Relative Font Scale</span>
@@ -180,10 +183,12 @@ function onSave() {
           <input v-model="form.limitLineLength" type="checkbox" />
           <span>Force Line Wrap on Non-Arabic Output Too</span>
         </label>
-        <label class="chk" title="Strips invisible &lt;color=#00000000&gt; typewriter tags while preserving visible text colors. Improves performance and prevents lag in animated dialogue.">
-          <input v-model="form.stripTypewriterTags" type="checkbox" />
-          <span>Strip Typewriter Alpha Tags — may improve performance</span>
-        </label>
+        <Tooltip text="Strips invisible <color=#00000000> typewriter tags while preserving visible text colors. Improves performance and prevents lag in animated dialogue.">
+          <label class="chk">
+            <input v-model="form.stripTypewriterTags" type="checkbox" />
+            <span>Strip Typewriter Alpha Tags — may improve performance</span>
+          </label>
+        </Tooltip>
       </div>
 
       <div class="actions">
@@ -245,11 +250,15 @@ function onSave() {
 .hint {
   opacity: 0.7;
 }
+.field-tip {
+  width: 100%;
+}
 .field {
   display: flex;
   flex-direction: column;
   gap: 5px;
   min-width: 0;
+  flex: 1;
 }
 .lbl {
   font-size: 11px;

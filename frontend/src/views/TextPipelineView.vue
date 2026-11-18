@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, shallowRef, watch } from "vue";
 import Icon from "../components/Icon.vue";
+import Tooltip from "../components/Tooltip.vue";
 import { useSession } from "../composables/useSession.js";
 
 const {
@@ -240,7 +241,9 @@ function formatScopeName(gameUid) {
 
         <div v-if="!preRules.length" class="empty">No pre-translation rules configured for this scope.</div>
         <div v-for="(r, idx) in preRules" :key="'pre-' + idx" class="rule-row">
-          <input v-model="r.enabled" type="checkbox" title="Enable rule" />
+          <Tooltip text="Enable rule">
+            <input v-model="r.enabled" type="checkbox" />
+          </Tooltip>
           <button
             type="button"
             class="mode-chip"
@@ -272,7 +275,9 @@ function formatScopeName(gameUid) {
 
         <div v-if="!glossary.length" class="empty">No glossary terms configured for this scope.</div>
         <div v-for="(g, idx) in glossary" :key="'gloss-' + idx" class="rule-row">
-          <input v-model="g.enabled" type="checkbox" title="Enable term" />
+          <Tooltip text="Enable term">
+            <input v-model="g.enabled" type="checkbox" />
+          </Tooltip>
           <button
             type="button"
             class="mode-chip"
@@ -304,7 +309,9 @@ function formatScopeName(gameUid) {
 
         <div v-if="!postRules.length" class="empty">No post-translation rules configured for this scope.</div>
         <div v-for="(r, idx) in postRules" :key="'post-' + idx" class="rule-row">
-          <input v-model="r.enabled" type="checkbox" title="Enable rule" />
+          <Tooltip text="Enable rule">
+            <input v-model="r.enabled" type="checkbox" />
+          </Tooltip>
           <button
             type="button"
             class="mode-chip"
@@ -403,18 +410,24 @@ function formatScopeName(gameUid) {
         <div v-else class="cache-list">
           <div v-for="entry in cacheEntries" :key="rowKey(entry)" class="cache-row">
             <div class="cache-meta">
-              <span class="tag" :title="entry.gameUid">{{ formatScopeName(entry.gameUid) }}</span>
+              <Tooltip :text="entry.gameUid" mono>
+                <span class="tag">{{ formatScopeName(entry.gameUid) }}</span>
+              </Tooltip>
               <span class="tag">{{ entry.provider || "manual" }}</span>
               <span v-if="entry.manual" class="tag manual">Manual</span>
             </div>
-            <div class="cache-src" dir="auto" :title="entry.sourceText">{{ entry.sourceText }}</div>
+            <Tooltip :text="entry.sourceText" class="cache-src-tip">
+              <div class="cache-src" dir="auto">{{ entry.sourceText }}</div>
+            </Tooltip>
             <input v-model="entry.translated" class="input ar" dir="rtl" placeholder="Arabic translation…" />
             <button class="btn" type="button" @click="onSaveCacheRow(entry)">
               {{ savedRowKey === rowKey(entry) ? "Saved ✓" : "Save" }}
             </button>
-            <button class="icon-btn" type="button" title="Delete entry" @click="onDeleteCacheRow(entry)">
-              <Icon name="Trash" :size="13" />
-            </button>
+            <Tooltip text="Delete entry">
+              <button class="icon-btn" type="button" @click="onDeleteCacheRow(entry)">
+                <Icon name="Trash" :size="13" />
+              </button>
+            </Tooltip>
           </div>
         </div>
       </div>
@@ -729,6 +742,10 @@ function formatScopeName(gameUid) {
   border-color: var(--accent);
   color: var(--accent);
   font-weight: 600;
+}
+.cache-src-tip {
+  width: 100%;
+  min-width: 0;
 }
 .cache-src {
   font-size: 12px;
