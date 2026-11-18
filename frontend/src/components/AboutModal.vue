@@ -27,7 +27,7 @@ const sections = [
   },
   {
     heading: "Unity & Native Hooks",
-    body: "Supports Unity Mono and IL2CPP TextMeshPro/UI.Text dynamic OS font loading and fallback SDF asset bundles, plus Win32 GDI text hooks via KhutafHook32/64.",
+    body: "Supports Unity Mono and IL2CPP TextMeshPro/UI.Text dynamic OS font loading and fallback SDF asset bundles via custom Rust khutaf-hook64.",
   },
   {
     heading: "Translators & Pipeline",

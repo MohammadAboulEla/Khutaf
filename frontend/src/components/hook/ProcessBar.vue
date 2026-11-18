@@ -7,21 +7,17 @@ const props = defineProps({
   processes: { type: Array, required: true },
 });
 
-const emit = defineEmits(["attach", "detach", "refresh", "insert-code"]);
+const emit = defineEmits(["attach", "detach", "refresh"]);
 
 const selectedPid = shallowRef("");
-const hookCode = shallowRef("");
 
-const canAttach = computed(() => Boolean(selectedPid.value));
+const selectedProcess = computed(
+  () => props.processes.find((p) => Number(p.pid) === Number(selectedPid.value)) || null,
+);
+const canAttach = computed(() => Boolean(selectedProcess.value && selectedProcess.value.supported));
 
 function onAttach() {
-  if (selectedPid.value) emit("attach", Number(selectedPid.value));
-}
-
-function onInsert() {
-  if (!hookCode.value.trim()) return;
-  emit("insert-code", hookCode.value.trim());
-  hookCode.value = "";
+  if (canAttach.value) emit("attach", Number(selectedPid.value));
 }
 </script>
 
@@ -33,6 +29,7 @@ function onInsert() {
         <option v-for="p in props.processes" :key="p.pid" :value="p.pid">
           [{{ p.pid }}] {{ p.name }} — {{ p.title }}
           {{ p.engine ? `(${p.engine})` : "" }}
+          {{ !p.is64 ? "[x86 - unsupported]" : !p.supported ? "[unsupported engine]" : "" }}
         </option>
       </select>
 
@@ -63,16 +60,6 @@ function onInsert() {
       <span v-if="props.status.engine" class="badge">{{ props.status.engine }}</span>
       <span class="badge">{{ props.status.is64 ? "x64" : "x86" }}</span>
       <span class="muted">PIDs: {{ props.status.pids?.join(", ") }}</span>
-
-      <div class="spacer" />
-
-      <input
-        v-model="hookCode"
-        class="input code-input"
-        placeholder="Insert H-code (e.g. /HS-4@1234:game.exe)"
-        @keyup.enter="onInsert"
-      />
-      <button class="btn" type="button" @click="onInsert">Insert Hook</button>
     </div>
   </section>
 </template>

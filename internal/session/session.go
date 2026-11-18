@@ -481,7 +481,7 @@ func (s *Session) ClearScopeCache(gamePath string, includeManual bool) int {
 
 // ---- attach / detach ----
 
-// Attach connects to every running instance of pid's executable and injects LunaHook.
+// Attach connects to every running instance of pid's executable and injects khutaf-hook64.dll.
 func (s *Session) Attach(pid uint32) error {
 	if s.host == nil {
 		return fmt.Errorf("hook host unavailable: %v", s.hostErr)
@@ -494,6 +494,13 @@ func (s *Session) Attach(pid uint32) error {
 	if err != nil {
 		return fmt.Errorf("query process %d: %w", pid, err)
 	}
+	if !is64 {
+		return errors.New("32-bit games are not supported yet (x64 Unity only)")
+	}
+	engine := hook.DetectEngine(path)
+	if !strings.HasPrefix(engine, "unity") {
+		return fmt.Errorf("unsupported engine for %s: only 64-bit Unity games are supported yet", filepath.Base(path))
+	}
 	pids := hook.PIDsByPath(path)
 	if len(pids) == 0 {
 		pids = []uint32{pid}
@@ -503,7 +510,7 @@ func (s *Session) Attach(pid uint32) error {
 	s.mu.Lock()
 	s.gamePath = path
 	s.is64 = is64
-	s.engine = hook.DetectEngine(path)
+	s.engine = engine
 	s.mu.Unlock()
 	_ = s.rebuildRules(s.store.Config().Pipeline, path)
 	s.translator.SetGame(path)
@@ -525,6 +532,9 @@ func (s *Session) Attach(pid uint32) error {
 	}
 	s.log("info", fmt.Sprintf("attaching to %s (pids %v, %s)", filepath.Base(path), pids, archName(is64)))
 	if err := hook.Inject(s.runtimeDir, needInject, is64); err != nil {
+		for _, p := range pids {
+			s.host.DetachProcess(p)
+		}
 		s.log("error", err.Error())
 		return err
 	}
@@ -917,7 +927,7 @@ func ResolveRuntimeDir() string {
 		candidates = append(candidates, filepath.Join(wd, "runtime"))
 	}
 	for _, c := range candidates {
-		if _, err := os.Stat(filepath.Join(c, "KhutafHost64.dll")); err == nil {
+		if _, err := os.Stat(filepath.Join(c, "khutaf-hook64.dll")); err == nil {
 			abs, _ := filepath.Abs(c)
 			return abs
 		}

@@ -15,7 +15,6 @@ const {
   attach,
   detach,
   setEmbed,
-  insertHookCode,
   previewArabic,
   testTranslate,
 } = useSession();
@@ -65,7 +64,6 @@ onUnmounted(() => {
       @refresh="refreshProcesses"
       @attach="attach"
       @detach="detach"
-      @insert-code="insertHookCode"
     />
 
     <HookTable

@@ -6,67 +6,131 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-// Inject loads LunaHook{32,64}.dll into pids via LunaSubprocess{32,64}.exe.
-// If the normal run fails (typically access denied) it retries elevated (UAC).
+const nativeHookDLL = "khutaf-hook64.dll"
+
+var (
+	kernel32               = windows.NewLazySystemDLL("kernel32.dll")
+	procLoadLibraryW       = kernel32.NewProc("LoadLibraryW")
+	procVirtualAllocEx     = kernel32.NewProc("VirtualAllocEx")
+	procVirtualFreeEx      = kernel32.NewProc("VirtualFreeEx")
+	procCreateRemoteThread = kernel32.NewProc("CreateRemoteThread")
+)
+
+// Inject loads khutaf-hook64.dll into every target pid via CreateRemoteThread(LoadLibraryW).
 func Inject(runtimeDir string, pids []uint32, is64 bool) error {
 	if len(pids) == 0 {
 		return nil
 	}
-	arch := "32"
-	if is64 {
-		arch = "64"
+	if !is64 {
+		return errors.New("32-bit games are not supported yet (x64 Unity only)")
 	}
-	exe := filepath.Join(runtimeDir, "KhutafSubprocess"+arch+".exe")
-	dll := filepath.Join(runtimeDir, "KhutafHook"+arch+".dll")
-	for _, p := range []string{exe, dll} {
-		if _, err := os.Stat(p); err != nil {
-			return fmt.Errorf("missing runtime file: %w", err)
-		}
+	dllPath := filepath.Join(runtimeDir, nativeHookDLL)
+	if _, err := os.Stat(dllPath); err != nil {
+		return fmt.Errorf("missing runtime file: %w", err)
 	}
-
-	args := []string{"dllinject"}
-	for _, pid := range pids {
-		args = append(args, strconv.FormatUint(uint64(pid), 10))
-	}
-	args = append(args, dll)
-
-	cmd := exec.Command(exe, args...)
-	cmd.Dir = runtimeDir
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
-	err := cmd.Run()
-	// dllinject returns 1 on success, 0 when OpenProcess/VirtualAllocEx failed.
+	absDLL, err := filepath.Abs(dllPath)
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return nil
-		}
+		return fmt.Errorf("resolve runtime path: %w", err)
 	}
-	return injectElevated(exe, args, runtimeDir)
-}
+	if err := procLoadLibraryW.Find(); err != nil {
+		return fmt.Errorf("resolve LoadLibraryW: %w", err)
+	}
+	loadLibAddr := procLoadLibraryW.Addr()
 
-func injectElevated(exe string, args []string, dir string) error {
-	quoted := make([]string, len(args))
-	for i, a := range args {
-		quoted[i] = syscall.EscapeArg(a)
-	}
-	verb, _ := windows.UTF16PtrFromString("runas")
-	file, _ := windows.UTF16PtrFromString(exe)
-	params, _ := windows.UTF16PtrFromString(strings.Join(quoted, " "))
-	wd, _ := windows.UTF16PtrFromString(dir)
-	if err := windows.ShellExecute(0, verb, file, params, wd, windows.SW_HIDE); err != nil {
-		if errors.Is(err, windows.ERROR_CANCELLED) || errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-			return errors.New("injection needs administrator rights; run Khutaf as administrator")
+	for _, pid := range pids {
+		if isModuleLoaded(pid, nativeHookDLL) {
+			continue
 		}
-		return fmt.Errorf("elevated injection: %w", err)
+		if err := injectPID(pid, absDLL, loadLibAddr); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func injectPID(pid uint32, dllPath string, loadLibAddr uintptr) error {
+	const access = windows.PROCESS_CREATE_THREAD |
+		windows.PROCESS_QUERY_INFORMATION |
+		windows.PROCESS_VM_OPERATION |
+		windows.PROCESS_VM_WRITE |
+		windows.PROCESS_VM_READ
+
+	proc, err := windows.OpenProcess(access, false, pid)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return errors.New("access denied opening game process; please run Khutaf as administrator")
+		}
+		return fmt.Errorf("open process %d: %w", pid, err)
+	}
+	defer windows.CloseHandle(proc)
+
+	utf16, err := windows.UTF16FromString(dllPath)
+	if err != nil {
+		return fmt.Errorf("encode dll path: %w", err)
+	}
+	byteLen := uintptr(len(utf16) * 2)
+
+	remoteBuf, _, allocErr := procVirtualAllocEx.Call(
+		uintptr(proc),
+		0,
+		byteLen,
+		windows.MEM_COMMIT|windows.MEM_RESERVE,
+		windows.PAGE_READWRITE,
+	)
+	if remoteBuf == 0 {
+		return fmt.Errorf("VirtualAllocEx(%d): %w", pid, allocErr)
+	}
+	defer procVirtualFreeEx.Call(uintptr(proc), remoteBuf, 0, windows.MEM_RELEASE)
+
+	var written uintptr
+	if err := windows.WriteProcessMemory(proc, remoteBuf, (*byte)(unsafe.Pointer(&utf16[0])), byteLen, &written); err != nil {
+		return fmt.Errorf("WriteProcessMemory(%d): %w", pid, err)
+	}
+
+	thread, _, threadErr := procCreateRemoteThread.Call(
+		uintptr(proc),
+		0,
+		0,
+		loadLibAddr,
+		remoteBuf,
+		0,
+		0,
+	)
+	if thread == 0 {
+		return fmt.Errorf("CreateRemoteThread(%d): %w", pid, threadErr)
+	}
+	defer windows.CloseHandle(windows.Handle(thread))
+
+	event, err := windows.WaitForSingleObject(windows.Handle(thread), 5000)
+	if err != nil {
+		return fmt.Errorf("wait LoadLibraryW(%d): %w", pid, err)
+	}
+	if event != windows.WAIT_OBJECT_0 {
+		return fmt.Errorf("LoadLibraryW(%d) timed out (wait status %d)", pid, event)
+	}
+	return nil
+}
+
+func isModuleLoaded(pid uint32, moduleName string) bool {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPMODULE|windows.TH32CS_SNAPMODULE32, pid)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(snap)
+
+	var me windows.ModuleEntry32
+	me.Size = uint32(unsafe.Sizeof(me))
+	for err = windows.Module32First(snap, &me); err == nil; err = windows.Module32Next(snap, &me) {
+		if strings.EqualFold(windows.UTF16ToString(me.Module[:]), moduleName) {
+			return true
+		}
+	}
+	return false
 }

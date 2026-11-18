@@ -28,7 +28,7 @@ const close = () => wails()?.Quit();
 
     <div class="crumbs">
       <span class="dot" :class="{ ok: hostReady }" />
-      <span>{{ hostReady ? "KhutafHost64 Ready" : "Host Offline" }}</span>
+      <span>{{ hostReady ? "khutaf-hook64 Ready" : "Host Offline" }}</span>
     </div>
 
     <div class="header-actions no-drag">

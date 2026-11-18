@@ -331,6 +331,7 @@ export namespace hook {
 	    title: string;
 	    is64: boolean;
 	    engine: string;
+	    supported: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProcessInfo(source);
@@ -344,6 +345,7 @@ export namespace hook {
 	        this.title = source["title"];
 	        this.is64 = source["is64"];
 	        this.engine = source["engine"];
+	        this.supported = source["supported"];
 	    }
 	}
 

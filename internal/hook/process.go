@@ -16,12 +16,13 @@ import (
 
 // ProcessInfo describes a running process with a visible top-level window.
 type ProcessInfo struct {
-	PID    uint32 `json:"pid"`
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	Title  string `json:"title"`
-	Is64   bool   `json:"is64"`
-	Engine string `json:"engine"` // "unity-il2cpp", "unity-mono", "unity", or ""
+	PID       uint32 `json:"pid"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Title     string `json:"title"`
+	Is64      bool   `json:"is64"`
+	Engine    string `json:"engine"` // "unity-il2cpp", "unity-mono", "unity", or ""
+	Supported bool   `json:"supported"`
 }
 
 var (
@@ -86,13 +87,15 @@ func ListProcesses() ([]ProcessInfo, error) {
 			continue
 		}
 		is64, _ := Is64Bit(pid)
+		engine := DetectEngine(path)
 		list = append(list, ProcessInfo{
-			PID:    pid,
-			Name:   filepath.Base(path),
-			Path:   path,
-			Title:  title,
-			Is64:   is64,
-			Engine: DetectEngine(path),
+			PID:       pid,
+			Name:      filepath.Base(path),
+			Path:      path,
+			Title:     title,
+			Is64:      is64,
+			Engine:    engine,
+			Supported: is64 && strings.HasPrefix(engine, "unity"),
 		})
 	}
 	sort.Slice(list, func(i, j int) bool { return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name) })
@@ -167,4 +170,27 @@ func DetectEngine(exePath string) string {
 		return "unity-mono"
 	}
 	return "unity"
+}
+
+// IsAdmin reports whether the current process is running with elevated privileges.
+func IsAdmin() bool {
+	return windows.GetCurrentProcessToken().IsElevated()
+}
+
+// RestartAsAdmin launches a new elevated instance of the current executable.
+func RestartAsAdmin() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	wd, _ := os.Getwd()
+	quoted := make([]string, 0, len(os.Args)-1)
+	for _, a := range os.Args[1:] {
+		quoted = append(quoted, syscall.EscapeArg(a))
+	}
+	verb, _ := windows.UTF16PtrFromString("runas")
+	file, _ := windows.UTF16PtrFromString(exe)
+	params, _ := windows.UTF16PtrFromString(strings.Join(quoted, " "))
+	workDir, _ := windows.UTF16PtrFromString(wd)
+	return windows.ShellExecute(0, verb, file, params, workDir, windows.SW_SHOWNORMAL)
 }

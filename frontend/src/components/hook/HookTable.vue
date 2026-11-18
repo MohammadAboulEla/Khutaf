@@ -18,9 +18,11 @@ const filteredHooks = computed(() => {
     if (embedOnly.value && !h.embeddable) return false;
     if (!q) return true;
     const sample = (props.outputs[h.key] || "").toLowerCase();
+    const ctxHex = h.ctx ? h.ctx.toString(16).toLowerCase() : "";
     return (
       h.hookName.toLowerCase().includes(q) ||
       h.hookCode.toLowerCase().includes(q) ||
+      ctxHex.includes(q) ||
       sample.includes(q)
     );
   });
@@ -79,7 +81,8 @@ const filteredHooks = computed(() => {
             </td>
             <td class="col-name">
               <div class="name-cell">
-                <span class="name">{{ h.hookName }}</span>
+                <span class="name" :title="h.hookName">{{ h.hookName }}</span>
+                <span v-if="h.ctx" class="ctx-tag">#{{ h.ctx.toString(16) }}</span>
                 <span v-if="h.embeddable" class="tag">embed</span>
               </div>
             </td>
@@ -173,7 +176,7 @@ const filteredHooks = computed(() => {
   text-align: center;
 }
 .col-name {
-  width: 180px;
+  width: 240px;
   font-family: var(--mono);
 }
 .name-cell {
@@ -206,6 +209,14 @@ const filteredHooks = computed(() => {
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.ctx-tag {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--fg) 10%, transparent);
+  color: var(--fg-muted);
+  font-size: 10px;
 }
 .tag {
   flex: 0 0 auto;
