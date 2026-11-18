@@ -46,16 +46,16 @@ export function Detach() {
   return window['go']['main']['App']['Detach']();
 }
 
+export function DownloadUnityFonts() {
+  return window['go']['main']['App']['DownloadUnityFonts']();
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
 
 export function Hooks() {
   return window['go']['main']['App']['Hooks']();
-}
-
-export function InsertHookCode(arg1) {
-  return window['go']['main']['App']['InsertHookCode'](arg1);
 }
 
 export function ListCacheEntries(arg1, arg2, arg3, arg4) {
@@ -124,4 +124,8 @@ export function StopLlamaServer() {
 
 export function TestTranslate(arg1) {
   return window['go']['main']['App']['TestTranslate'](arg1);
+}
+
+export function UnityFontStatus() {
+  return window['go']['main']['App']['UnityFontStatus']();
 }

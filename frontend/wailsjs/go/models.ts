@@ -208,24 +208,6 @@ export namespace config {
 		    return a;
 		}
 	}
-	export class HookSettings {
-	    flushDelayMs: number;
-	    codepage: number;
-	    maxBufferSize: number;
-	    maxHistorySize: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new HookSettings(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.flushDelayMs = source["flushDelayMs"];
-	        this.codepage = source["codepage"];
-	        this.maxBufferSize = source["maxBufferSize"];
-	        this.maxHistorySize = source["maxHistorySize"];
-	    }
-	}
 	export class EmbedSettings {
 	    timeoutMs: number;
 	    displayMode: number;
@@ -260,7 +242,6 @@ export namespace config {
 	}
 	export class Config {
 	    embed: EmbedSettings;
-	    hook: HookSettings;
 	    translator: TranslatorSettings;
 	    pipeline: PipelineSettings;
 	
@@ -271,7 +252,6 @@ export namespace config {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.embed = this.convertValues(source["embed"], EmbedSettings);
-	        this.hook = this.convertValues(source["hook"], HookSettings);
 	        this.translator = this.convertValues(source["translator"], TranslatorSettings);
 	        this.pipeline = this.convertValues(source["pipeline"], PipelineSettings);
 	    }
@@ -312,7 +292,6 @@ export namespace config {
 	        this.ctx2 = source["ctx2"];
 	    }
 	}
-	
 	
 	
 	
@@ -519,6 +498,30 @@ export namespace session {
 	        this.provider = source["provider"];
 	        this.debugMode = source["debugMode"];
 	        this.debugRealTrans = source["debugRealTrans"];
+	    }
+	}
+	export class UnityFontStatus {
+	    installed: boolean;
+	    count: number;
+	    dir: string;
+	    downloading: boolean;
+	    progress: number;
+	    message: string;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UnityFontStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.installed = source["installed"];
+	        this.count = source["count"];
+	        this.dir = source["dir"];
+	        this.downloading = source["downloading"];
+	        this.progress = source["progress"];
+	        this.message = source["message"];
+	        this.error = source["error"];
 	    }
 	}
 

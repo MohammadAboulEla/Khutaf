@@ -29,11 +29,11 @@ export function DeleteSavedGame(arg1:string):Promise<void>;
 
 export function Detach():Promise<void>;
 
+export function DownloadUnityFonts():Promise<void>;
+
 export function GetConfig():Promise<config.Config>;
 
 export function Hooks():Promise<Array<session.HookView>>;
-
-export function InsertHookCode(arg1:string):Promise<void>;
 
 export function ListCacheEntries(arg1:string,arg2:string,arg3:boolean,arg4:number):Promise<Array<pipeline.CacheEntry>>;
 
@@ -68,3 +68,5 @@ export function Status():Promise<session.Status>;
 export function StopLlamaServer():Promise<translator.LlamaCppStatus>;
 
 export function TestTranslate(arg1:string):Promise<main.TranslateResult>;
+
+export function UnityFontStatus():Promise<session.UnityFontStatus>;

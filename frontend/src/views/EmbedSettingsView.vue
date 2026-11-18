@@ -1,17 +1,27 @@
 <script setup>
-import { reactive, shallowRef, watch, onMounted } from "vue";
+import { reactive, ref, shallowRef, watch, onMounted } from "vue";
 import { useSession } from "../composables/useSession.js";
 
 const { config, saveConfig, saveState, listFonts, unityFontStatus, refreshUnityFontStatus, downloadUnityFonts } =
   useSession();
 
 const fonts = shallowRef(["Tahoma", "Arial", "Segoe UI"]);
+const confirmRedownload = ref(false);
 
 onMounted(async () => {
   refreshUnityFontStatus();
   const list = await listFonts();
   if (list?.length) fonts.value = list;
 });
+
+function onDownloadClick() {
+  if (unityFontStatus.value.installed && !confirmRedownload.value) {
+    confirmRedownload.value = true;
+    return;
+  }
+  confirmRedownload.value = false;
+  downloadUnityFonts();
+}
 
 const form = reactive({
   timeoutMs: 2000,
@@ -59,10 +69,58 @@ function onSave() {
 
 <template>
   <div class="page">
+    <div class="card compact-card">
+      <div class="bundle-row">
+        <div class="bundle-header">
+          <div class="bundle-title-row">
+            <h2 class="h2">Unity TMP Font AssetBundles</h2>
+            <span class="badge" :class="unityFontStatus.installed ? 'ok' : 'missing'">
+              {{ unityFontStatus.installed ? `Installed (${unityFontStatus.count})` : "Not Installed" }}
+            </span>
+          </div>
+          <p class="bundle-desc">
+            Optional ~139 MB fallback font pack for Unity games when OS dynamic font creation fails.
+          </p>
+        </div>
+
+        <div class="bundle-actions">
+          <template v-if="unityFontStatus.installed && confirmRedownload && !unityFontStatus.downloading">
+            <span class="confirm-hint">Re-download ~139 MB?</span>
+            <button class="btn secondary" type="button" @click="confirmRedownload = false">Cancel</button>
+            <button class="btn secondary warn" type="button" @click="onDownloadClick">Confirm</button>
+          </template>
+          <button
+            v-else
+            class="btn secondary"
+            type="button"
+            :disabled="unityFontStatus.downloading"
+            @click="onDownloadClick"
+          >
+            {{
+              unityFontStatus.downloading
+                ? "Downloading…"
+                : unityFontStatus.installed
+                  ? "Re-download"
+                  : "Download Bundles (~139 MB)"
+            }}
+          </button>
+        </div>
+      </div>
+
+      <div v-if="unityFontStatus.downloading || unityFontStatus.error" class="bundle-progress">
+        <div v-if="unityFontStatus.downloading" class="progress-track">
+          <div class="progress-fill" :style="{ width: `${unityFontStatus.progress}%` }"></div>
+        </div>
+        <span class="bundle-msg" :class="{ err: unityFontStatus.error }">
+          {{ unityFontStatus.error || unityFontStatus.message }}
+        </span>
+      </div>
+    </div>
+
     <div class="card">
       <h2 class="h2">In-Game Embedded Arabic Settings</h2>
 
-      <div class="grid">
+      <div class="grid-3">
         <label class="field">
           <span class="lbl">Display Mode</span>
           <select v-model.number="form.displayMode" class="input">
@@ -82,9 +140,11 @@ function onSave() {
           <span class="lbl">Logical Line Wrap Length (chars)</span>
           <input v-model.number="form.maxLineLength" type="number" min="15" max="120" class="input" />
         </label>
+      </div>
 
-        <label class="field">
-          <span class="lbl">Override Game Font Family (takes effect on next game launch)</span>
+      <div class="grid-2">
+        <label class="field" title="Takes effect on next game launch">
+          <span class="lbl">Override Game Font Family <span class="hint">(next game launch)</span></span>
           <select v-model="form.fontFamily" class="input">
             <option v-if="form.fontFamily && !fonts.includes(form.fontFamily)" :value="form.fontFamily">
               {{ form.fontFamily }}
@@ -122,41 +182,8 @@ function onSave() {
         </label>
         <label class="chk" title="Strips invisible &lt;color=#00000000&gt; typewriter tags while preserving visible text colors. Improves performance and prevents lag in animated dialogue.">
           <input v-model="form.stripTypewriterTags" type="checkbox" />
-          <span>Strip Typewriter Alpha Tags (&lt;color=#00000000&gt;) — may improve performance</span>
+          <span>Strip Typewriter Alpha Tags — may improve performance</span>
         </label>
-      </div>
-
-      <div class="bundle-box">
-        <div class="bundle-row">
-          <div class="bundle-info">
-            <span class="bundle-title">Unity TMP Font AssetBundles</span>
-            <span class="badge" :class="unityFontStatus.installed ? 'ok' : 'missing'">
-              {{ unityFontStatus.installed ? `Installed (${unityFontStatus.count})` : "Not Installed" }}
-            </span>
-          </div>
-          <button
-            class="btn secondary"
-            type="button"
-            :disabled="unityFontStatus.downloading"
-            @click="downloadUnityFonts"
-          >
-            {{
-              unityFontStatus.downloading
-                ? "Downloading…"
-                : unityFontStatus.installed
-                  ? "Re-download Bundles"
-                  : "Download Bundles"
-            }}
-          </button>
-        </div>
-        <div v-if="unityFontStatus.downloading || unityFontStatus.error" class="bundle-progress">
-          <div v-if="unityFontStatus.downloading" class="progress-track">
-            <div class="progress-fill" :style="{ width: `${unityFontStatus.progress}%` }"></div>
-          </div>
-          <span class="bundle-msg" :class="{ err: unityFontStatus.error }">
-            {{ unityFontStatus.error || unityFontStatus.message }}
-          </span>
-        </div>
       </div>
 
       <div class="actions">
@@ -173,9 +200,12 @@ function onSave() {
   padding: 16px;
   overflow: auto;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 .card {
-  max-width: 780px;
+  width: 100%;
   padding: 16px 18px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -184,15 +214,36 @@ function onSave() {
   flex-direction: column;
   gap: 14px;
 }
+.compact-card {
+  padding: 12px 18px;
+  gap: 10px;
+}
+.bundle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
 .h2 {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
 }
-.grid {
+.grid-3 {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+  align-items: end;
+}
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.hint {
+  opacity: 0.7;
 }
 .field {
   display: flex;
@@ -223,9 +274,9 @@ function onSave() {
 }
 .checks {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding-top: 4px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 24px;
+  padding-top: 6px;
 }
 .chk {
   display: flex;
@@ -238,29 +289,29 @@ function onSave() {
   display: flex;
   justify-content: flex-end;
 }
-.bundle-box {
-  padding: 10px 12px;
-  background: var(--paper);
-  border: 1px solid var(--border);
-  border-radius: 5px;
+.bundle-header {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
-.bundle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.bundle-info {
+.bundle-title-row {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.bundle-desc {
+  margin: 0;
   font-size: 12px;
+  color: var(--fg-muted);
 }
-.bundle-title {
-  font-weight: 500;
+.bundle-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.confirm-hint {
+  font-size: 12px;
+  color: var(--fg-muted);
 }
 .badge {
   font-size: 11px;
@@ -278,13 +329,17 @@ function onSave() {
 .btn.secondary {
   height: 28px;
   padding: 0 12px;
-  background: var(--bg-elev);
+  background: var(--paper);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 5px;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
+}
+.btn.secondary.warn {
+  border-color: rgba(248, 81, 73, 0.45);
+  color: #f85149;
 }
 .btn.secondary:disabled {
   opacity: 0.6;
