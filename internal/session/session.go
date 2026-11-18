@@ -111,7 +111,7 @@ type Session struct {
 
 	mu        sync.Mutex
 	gamePath  string
-	engine    string // engine reported by LunaHook or detected from files
+	engine    string // engine reported by khutaf-hook64 or detected from files
 	is64      bool
 	pids      map[uint32]bool
 	hooks     map[string]hook.HookInfo
@@ -515,14 +515,6 @@ func (s *Session) Attach(pid uint32) error {
 	_ = s.rebuildRules(s.store.Config().Pipeline, path)
 	s.translator.SetGame(path)
 
-	cfg := s.store.Config().Hook
-	s.host.Settings(hook.HostSettings{
-		FlushDelayMs:   int32(cfg.FlushDelayMs),
-		Codepage:       int32(cfg.Codepage),
-		MaxBufferSize:  int32(cfg.MaxBufferSize),
-		MaxHistorySize: int32(cfg.MaxHistorySize),
-	})
-
 	var needInject []uint32
 	for _, p := range pids {
 		s.host.ConnectProcess(p)
@@ -597,23 +589,6 @@ func (s *Session) SetEmbed(key string, enabled bool) error {
 			g.Title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 		}
 	})
-}
-
-// InsertHookCode inserts a manual H-code into all connected processes.
-func (s *Session) InsertHookCode(code string) error {
-	if s.host == nil {
-		return errors.New("hook host unavailable")
-	}
-	s.mu.Lock()
-	pids := s.pidList()
-	s.mu.Unlock()
-	if len(pids) == 0 {
-		return errors.New("not attached")
-	}
-	for _, pid := range pids {
-		s.host.InsertHookCode(pid, code)
-	}
-	return nil
 }
 
 func (s *Session) pushEmbedSettings(pid uint32) {

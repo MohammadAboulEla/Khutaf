@@ -168,16 +168,6 @@ async function setEmbed(key, enabled) {
   }
 }
 
-async function insertHookCode(code) {
-  if (!code?.trim()) return;
-  errorBanner.value = "";
-  try {
-    await call("InsertHookCode", code.trim());
-  } catch (e) {
-    errorBanner.value = String(e);
-  }
-}
-
 async function saveConfig(next) {
   errorBanner.value = "";
   saveState.value = "saving";
@@ -352,7 +342,6 @@ export function useSession() {
     quickAttach,
     detach,
     setEmbed,
-    insertHookCode,
     saveConfig,
     saveGamePipeline,
     deleteSavedGame,

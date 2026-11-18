@@ -23,18 +23,13 @@ const form = reactive({
   limitLineLength: false,
   maxLineLength: 40,
   stripTypewriterTags: true,
-  flushDelayMs: 500,
-  codepage: 932,
 });
 
 watch(
   config,
   (cfg) => {
     if (!cfg) return;
-    Object.assign(form, cfg.embed, {
-      flushDelayMs: cfg.hook.flushDelayMs,
-      codepage: cfg.hook.codepage,
-    });
+    Object.assign(form, cfg.embed);
   },
   { immediate: true },
 );
@@ -55,11 +50,6 @@ function onSave() {
       limitLineLength: form.limitLineLength,
       maxLineLength: Number(form.maxLineLength) || 40,
       stripTypewriterTags: form.stripTypewriterTags,
-    },
-    hook: {
-      ...config.value.hook,
-      flushDelayMs: Number(form.flushDelayMs) || 500,
-      codepage: Number(form.codepage) || 932,
     },
   });
 }
@@ -104,14 +94,6 @@ function onSave() {
         <label class="field">
           <span class="lbl">Relative Font Scale</span>
           <input v-model.number="form.fontSizeRelative" type="number" min="0.5" max="2.5" step="0.05" class="input" />
-        </label>
-
-        <label class="field">
-          <span class="lbl">Hook Flush Delay (ms) / Legacy Codepage</span>
-          <div class="inline">
-            <input v-model.number="form.flushDelayMs" type="number" min="50" max="2000" class="input" />
-            <input v-model.number="form.codepage" type="number" class="input" />
-          </div>
         </label>
       </div>
 

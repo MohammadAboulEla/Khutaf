@@ -1,7 +1,7 @@
 //go:build windows
 
-// Package hook is a pure-Go (no CGo) bridge to LunaHost64.dll plus Win32
-// process discovery and DLL injection through LunaSubprocess{32,64}.exe.
+// Package hook provides the pure-Go overlapped named-pipe host for khutaf-hook64.dll,
+// Win32 process discovery, and CreateRemoteThread(LoadLibraryW) DLL injection.
 package hook
 
 import "fmt"
@@ -41,25 +41,16 @@ const (
 	DisplayOri
 )
 
-// EmbedSettings is pushed into the game's shared memory via Luna_SettingsEx.
+// EmbedSettings is pushed into the game's hook DLL over named-pipe IPC.
 type EmbedSettings struct {
-	WaitTimeMs       uint32
-	FontFamily       string // empty = keep game font
-	DisplayMode      DisplayMode
-	ClearText        bool
+	WaitTimeMs          uint32
+	FontFamily          string // empty = keep game font
+	DisplayMode         DisplayMode
+	ClearText           bool
 	ChangeFontSize      bool
 	FontSizeRelative    float32
 	UnityFontDir        string // folder with arialuni_sdf_u* bundles; empty disables
 	StripTypewriterTags bool
-}
-
-// HostSettings is passed to Luna_Settings.
-type HostSettings struct {
-	FlushDelayMs   int32
-	Codepage       int32
-	MaxBufferSize  int32
-	MaxHistorySize int32
-	EnablePCHooks  bool
 }
 
 // HookInfo describes a discovered text thread.

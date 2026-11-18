@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// DisplayMode mirrors LunaHook's Displaymode enum.
+// DisplayMode mirrors khutaf-hook64's display mode enum.
 type DisplayMode int
 
 const (

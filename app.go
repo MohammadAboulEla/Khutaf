@@ -83,9 +83,6 @@ func (a *App) Hooks() []session.HookView { return a.session.Hooks() }
 // SetEmbed toggles in-game embedding for a hook.
 func (a *App) SetEmbed(key string, enabled bool) error { return a.session.SetEmbed(key, enabled) }
 
-// InsertHookCode inserts a manual hook code.
-func (a *App) InsertHookCode(code string) error { return a.session.InsertHookCode(code) }
-
 // GetConfig returns settings.
 func (a *App) GetConfig() config.Config { return a.session.Config() }
 

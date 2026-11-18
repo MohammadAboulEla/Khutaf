@@ -27,14 +27,6 @@ type EmbedSettings struct {
 	StripTypewriterTags bool    `json:"stripTypewriterTags"` // strip <color=#00000000> typewriter tags
 }
 
-// HookSettings is passed to Luna_Settings.
-type HookSettings struct {
-	FlushDelayMs   int `json:"flushDelayMs"`
-	Codepage       int `json:"codepage"`
-	MaxBufferSize  int `json:"maxBufferSize"`
-	MaxHistorySize int `json:"maxHistorySize"`
-}
-
 // LLMSettings configures an OpenAI-compatible chat completion endpoint.
 type LLMSettings struct {
 	BaseURL      string  `json:"baseUrl"`
@@ -121,7 +113,6 @@ type PipelineSettings struct {
 // Config is the root of config.json.
 type Config struct {
 	Embed      EmbedSettings      `json:"embed"`
-	Hook       HookSettings       `json:"hook"`
 	Translator TranslatorSettings `json:"translator"`
 	Pipeline   PipelineSettings   `json:"pipeline"`
 }
@@ -153,12 +144,6 @@ func Default() Config {
 			FontSizeRelative:    1,
 			MaxLineLength:       40,
 			StripTypewriterTags: true,
-		},
-		Hook: HookSettings{
-			FlushDelayMs:   500,
-			Codepage:       932,
-			MaxBufferSize:  3000,
-			MaxHistorySize: 1000000,
 		},
 		Translator: TranslatorSettings{
 			Active: "bing",

@@ -90,9 +90,6 @@ func (h *Host) currentHandler() Handler {
 	return h.handler
 }
 
-// Settings is retained for compatibility with HostSettings.
-func (h *Host) Settings(HostSettings) {}
-
 // ConnectProcess creates the host-side named pipes for pid before DLL injection.
 func (h *Host) ConnectProcess(pid uint32) {
 	h.mu.Lock()
@@ -270,13 +267,6 @@ func (h *Host) EmbedCallback(tp ThreadParam, text, trans string) {
 		HasText: trans != "",
 		Text:    trans,
 	})
-}
-
-// InsertHookCode is unsupported by the native Unity hook backend.
-func (h *Host) InsertHookCode(pid uint32, code string) {
-	if hd := h.currentHandler(); hd != nil {
-		hd.OnHostInfo(HostInfoWarning, "manual H-codes are not supported by the native Unity hook")
-	}
 }
 
 func (h *Host) getProc(pid uint32) *procSession {
