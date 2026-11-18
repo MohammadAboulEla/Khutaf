@@ -603,21 +603,19 @@ fn emit_hook(hook_id: u64, code: &str, name: &str) {
 
 fn handle_il2cpp_text(api: &Il2CppApi, this: *mut c_void, text: *mut c_void, hook_id: u64) -> *mut c_void {
     if text.is_null() {
-        font::on_text(api, this, hook_id, "");
         return text;
     }
     let raw = api.string_to_rust(text);
     let cleaned = if is_tmp_hook(hook_id) { clean_tmp_tags(&raw) } else { raw };
     let ctx = caller_rel_ctx();
-    let (next, final_str) = match embed::process(hook_id, ctx, 0, this as usize, &cleaned) {
+    match embed::process(hook_id, ctx, 0, this as usize, &cleaned) {
         Some(replaced) => {
+            font::on_text(api, this, hook_id, &replaced);
             let new_str = api.string_new(&replaced);
-            if new_str.is_null() { (text, cleaned) } else { (new_str, replaced) }
+            if new_str.is_null() { text } else { new_str }
         }
-        None => (text, cleaned),
-    };
-    font::on_text(api, this, hook_id, &final_str);
-    next
+        None => text,
+    }
 }
 
 unsafe fn load_fn<F: Copy>(slot: &AtomicPtr<c_void>) -> F {

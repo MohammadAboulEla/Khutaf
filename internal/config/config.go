@@ -140,7 +140,7 @@ func Default() Config {
 			DisplayMode:      1,
 			ChangeFont:       true,
 			FontFamily:       "Tahoma",
-			UseUnityBundle:   false,
+			UseUnityBundle:   true,
 			FontSizeRelative:    1,
 			MaxLineLength:       40,
 			StripTypewriterTags: true,

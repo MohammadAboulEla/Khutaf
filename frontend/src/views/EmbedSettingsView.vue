@@ -1,5 +1,6 @@
 <script setup>
 import { reactive, ref, shallowRef, watch, onMounted } from "vue";
+import Icon from "../components/Icon.vue";
 import Tooltip from "../components/Tooltip.vue";
 import { useSession } from "../composables/useSession.js";
 
@@ -8,12 +9,22 @@ const { config, saveConfig, saveState, listFonts, unityFontStatus, refreshUnityF
 
 const fonts = shallowRef(["Tahoma", "Arial", "Segoe UI"]);
 const confirmRedownload = ref(false);
+const showBundleModal = ref(false);
 
 onMounted(async () => {
-  refreshUnityFontStatus();
+  const st = await refreshUnityFontStatus();
+  if (st && !st.installed && !st.downloading && !localStorage.getItem("khutaf.unityBundlePrompted")) {
+    localStorage.setItem("khutaf.unityBundlePrompted", "1");
+    showBundleModal.value = true;
+  }
   const list = await listFonts();
   if (list?.length) fonts.value = list;
 });
+
+function onDownloadFromModal() {
+  showBundleModal.value = false;
+  downloadUnityFonts();
+}
 
 function onDownloadClick() {
   if (unityFontStatus.value.installed && !confirmRedownload.value) {
@@ -30,7 +41,7 @@ const form = reactive({
   clearText: false,
   changeFont: true,
   fontFamily: "Tahoma",
-  useUnityBundle: false,
+  useUnityBundle: true,
   changeFontSize: false,
   fontSizeRelative: 1.0,
   limitLineLength: false,
@@ -204,6 +215,33 @@ function onSave() {
         </button>
       </div>
     </div>
+
+    <Teleport to="body">
+      <Transition name="fade">
+        <div v-if="showBundleModal" class="modal-overlay" @click.self="showBundleModal = false">
+          <div class="modal-box" role="dialog" aria-modal="true" aria-label="Unity TMP Font AssetBundles">
+            <header class="modal-head">
+              <span class="modal-title">Unity TMP Font AssetBundles Recommended</span>
+              <button class="modal-close" type="button" aria-label="Close" @click="showBundleModal = false">
+                <Icon name="X" :size="14" />
+              </button>
+            </header>
+            <div class="modal-body">
+              <p>
+                <strong>Use Unity Arial SDF Bundle</strong> is enabled by default for Unity games. Downloading the
+                optional <strong>~139 MB</strong> font bundle pack is recommended so Arabic text renders cleanly when
+                dynamic OS font creation fails.
+              </p>
+              <p class="modal-sub">You can also download or re-download it anytime from the top of this tab.</p>
+            </div>
+            <footer class="modal-foot">
+              <button class="btn secondary" type="button" @click="showBundleModal = false">Later</button>
+              <button class="btn primary" type="button" @click="onDownloadFromModal">Download Now (~139 MB)</button>
+            </footer>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -398,5 +436,65 @@ function onSave() {
   font: inherit;
   font-size: 12px;
   cursor: pointer;
+}
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.modal-box {
+  width: 100%;
+  max-width: 440px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+}
+.modal-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.modal-body p {
+  margin: 0;
+}
+.modal-sub {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
 }
 </style>

@@ -69,4 +69,6 @@ export function StopLlamaServer():Promise<translator.LlamaCppStatus>;
 
 export function TestTranslate(arg1:string):Promise<main.TranslateResult>;
 
+export function TestTranslateWithConfig(arg1:string,arg2:config.TranslatorSettings):Promise<main.TranslateResult>;
+
 export function UnityFontStatus():Promise<session.UnityFontStatus>;

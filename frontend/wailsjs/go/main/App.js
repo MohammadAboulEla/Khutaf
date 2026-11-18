@@ -126,6 +126,10 @@ export function TestTranslate(arg1) {
   return window['go']['main']['App']['TestTranslate'](arg1);
 }
 
+export function TestTranslateWithConfig(arg1, arg2) {
+  return window['go']['main']['App']['TestTranslateWithConfig'](arg1, arg2);
+}
+
 export function UnityFontStatus() {
   return window['go']['main']['App']['UnityFontStatus']();
 }
