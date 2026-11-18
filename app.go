@@ -271,10 +271,22 @@ type TranslateResult struct {
 
 // TestTranslate runs the full translation + shaping pipeline on text.
 func (a *App) TestTranslate(text string) (TranslateResult, error) {
+	return a.runTestTranslate(text, a.session.Translate)
+}
+
+// TestTranslateWithConfig runs the translation + shaping pipeline using cfg without saving it.
+func (a *App) TestTranslateWithConfig(text string, cfg config.TranslatorSettings) (TranslateResult, error) {
+	return a.runTestTranslate(text, func(ctx context.Context, s string) (string, bool, error) {
+		out, err := a.session.TranslateWithConfig(ctx, cfg, s)
+		return out, false, err
+	})
+}
+
+func (a *App) runTestTranslate(text string, fn func(context.Context, string) (string, bool, error)) (TranslateResult, error) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(a.ctx, 60*time.Second)
 	defer cancel()
-	trans, cached, err := a.session.Translate(ctx, text)
+	trans, cached, err := fn(ctx, text)
 	if err != nil {
 		return TranslateResult{}, err
 	}

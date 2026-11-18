@@ -6,7 +6,7 @@ const {
   config,
   saveConfig,
   saveState,
-  testTranslate,
+  testTranslateWithConfig,
   startLlamaServer,
   stopLlamaServer,
   llamaServerStatus,
@@ -193,12 +193,11 @@ async function onSave() {
 }
 
 async function onTest() {
-  await onSave();
   testing.value = true;
   testErr.value = "";
   testResult.value = null;
   try {
-    testResult.value = await testTranslate(testInput.value);
+    testResult.value = await testTranslateWithConfig(testInput.value, buildTranslatorConfig());
   } catch (e) {
     testErr.value = String(e);
   } finally {
@@ -397,7 +396,7 @@ async function onStopLlama() {
         <div class="test-row">
           <input v-model="testInput" class="input flex1" />
           <button class="btn" type="button" :disabled="testing" @click="onTest">
-            {{ testing ? "Testing…" : "Save & Test Translate" }}
+            {{ testing ? "Testing…" : "Test Translate" }}
           </button>
           <button class="btn primary" type="button" @click="onSave">
             {{ saveState === "saved" ? "Saved ✓" : "Save" }}

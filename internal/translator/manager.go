@@ -66,6 +66,25 @@ func (m *Manager) SetGame(gamePath string) {
 // Cache returns the underlying translation cache.
 func (m *Manager) Cache() *pipeline.Cache { return m.cache }
 
+// BuildProvider constructs a Provider from the given TranslatorSettings without mutating Manager state.
+func BuildProvider(cfg config.TranslatorSettings) Provider {
+	switch cfg.Active {
+	case "bing":
+		return NewBing(cfg.Bing)
+	case "llm":
+		return NewLLM(cfg.LLM)
+	case "offline_llm":
+		return NewOfflineLLM(cfg.OfflineLLM)
+	case "none", "":
+		return nil
+	default:
+		if tp := traditional.New(cfg.Active, cfg.Traditional); tp != nil {
+			return tp
+		}
+		return nil
+	}
+}
+
 // Configure (re)builds the active provider when translator settings change.
 func (m *Manager) Configure(cfg config.TranslatorSettings) {
 	m.mu.RLock()
@@ -75,21 +94,7 @@ func (m *Manager) Configure(cfg config.TranslatorSettings) {
 		return
 	}
 
-	var p Provider
-	switch cfg.Active {
-	case "bing":
-		p = NewBing(cfg.Bing)
-	case "llm":
-		p = NewLLM(cfg.LLM)
-	case "offline_llm":
-		p = NewOfflineLLM(cfg.OfflineLLM)
-	case "none", "":
-		p = nil
-	default:
-		if tp := traditional.New(cfg.Active, cfg.Traditional); tp != nil {
-			p = tp
-		}
-	}
+	p := BuildProvider(cfg)
 	m.mu.Lock()
 	m.cfg = cfg
 	m.hasCfg = true

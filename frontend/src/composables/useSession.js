@@ -199,6 +199,7 @@ async function saveConfig(next) {
 
 const previewArabic = (text) => call("PreviewArabic", text);
 const testTranslate = (text) => call("TestTranslate", text);
+const testTranslateWithConfig = (text, cfg) => call("TestTranslateWithConfig", text, cfg);
 const listFonts = () => call("ListFonts");
 const startLlamaServer = (cfg) => call("StartLlamaServer", cfg);
 const stopLlamaServer = () => call("StopLlamaServer");
@@ -385,6 +386,7 @@ export function useSession() {
     clearScopeCache,
     previewArabic,
     testTranslate,
+    testTranslateWithConfig,
     listFonts,
     startLlamaServer,
     stopLlamaServer,

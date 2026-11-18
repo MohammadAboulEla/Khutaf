@@ -635,13 +635,30 @@ func (s *Session) unityFontDir() string {
 // Translate runs the full pipeline (pre-rules, glossary, translator, post-rules,
 // placeholder check) and returns the logical (unshaped) translation.
 func (s *Session) Translate(ctx context.Context, text string) (string, bool, error) {
+	return s.translateWith(ctx, text, s.translator.Translate)
+}
+
+// TranslateWithConfig runs the full pipeline using cfg without mutating saved settings or cache.
+func (s *Session) TranslateWithConfig(ctx context.Context, cfg config.TranslatorSettings, text string) (string, error) {
+	p := translator.BuildProvider(cfg)
+	if p == nil {
+		return "", errors.New("no translator provider selected")
+	}
+	trans, _, err := s.translateWith(ctx, text, func(c context.Context, in string) (string, bool, error) {
+		out, err := p.Translate(c, in)
+		return out, false, err
+	})
+	return trans, err
+}
+
+func (s *Session) translateWith(ctx context.Context, text string, fn func(context.Context, string) (string, bool, error)) (string, bool, error) {
 	r := s.rules.Load()
 	preText := r.pre.Apply(text)
 	if gp := r.glossary.PromptContext(preText); gp != "" {
 		ctx = translator.WithGlossaryPrompt(ctx, gp)
 	}
 	preText = r.glossary.Apply(preText)
-	trans, cached, err := s.translator.Translate(ctx, preText)
+	trans, cached, err := fn(ctx, preText)
 	if err != nil {
 		return "", false, err
 	}
