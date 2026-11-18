@@ -1,6 +1,9 @@
 package arabic
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func runes(rs ...rune) string { return string(rs) }
 
@@ -78,6 +81,18 @@ func TestWrapIsLogicalBeforeReversal(t *testing.T) {
 	want := VisualOrder(Shape("واحد اثنان")) + "\n" + VisualOrder(Shape("ثلاثة"))
 	if out != want {
 		t.Fatalf("Process = %q, want %q", out, want)
+	}
+}
+
+func TestWrapPreservesSpaceInsideRichTag(t *testing.T) {
+	in := `إذا كنت تبحث عن <font="HP_Normal_fnt" material=en_he:dialogues_accent_dynamic><color=#037AAB>الخشب</color></font> والحجر`
+	wrapped := Wrap(in, 25)
+	if strings.Contains(wrapped, "<font=\"HP_Normal_fnt\"\n") {
+		t.Fatalf("Wrap split inside <font ...> tag:\n%s", wrapped)
+	}
+	out := Process(in, Options{MaxLineLength: 25})
+	if !strings.Contains(out, `<font="HP_Normal_fnt" material=en_he:dialogues_accent_dynamic>`) {
+		t.Fatalf("Process mangled multi-attr <font> tag:\n%s", out)
 	}
 }
 

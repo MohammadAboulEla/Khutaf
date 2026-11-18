@@ -1,7 +1,7 @@
 //! Unity font injection (TMP asset bundles + OS dynamic fonts) and size scaling.
 //! Runs exclusively on the Unity main thread from inside hooked text setters.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::{LazyLock, Mutex};
@@ -24,6 +24,8 @@ struct FontState {
     os_font: *mut c_void,
     tried_tmp_retry: bool,
     scaled: HashSet<usize>,
+    bundle_checked: HashMap<u32, bool>,
+    fallback_attached: HashSet<usize>,
 }
 
 unsafe impl Send for FontState {}
@@ -38,6 +40,8 @@ static STATE: LazyLock<Mutex<FontState>> = LazyLock::new(|| {
         os_font: std::ptr::null_mut(),
         tried_tmp_retry: false,
         scaled: HashSet::new(),
+        bundle_checked: HashMap::new(),
+        fallback_attached: HashSet::new(),
     })
 });
 
@@ -77,7 +81,7 @@ pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text
     }
 
     if !component.is_null() {
-        apply_component_font(rt, &st, component, hook_id, text);
+        apply_component_font(rt, &mut st, component, hook_id, text);
         if settings.change_font_size
             && settings.font_scale > 0.0
             && (settings.font_scale - 1.0).abs() > 0.001
@@ -124,6 +128,10 @@ fn reload_fonts(
     st.loaded_family = family.to_owned();
     st.tried_tmp_retry = false;
     st.scaled.clear();
+    if dir_changed {
+        st.bundle_checked.clear();
+    }
+    st.fallback_attached.clear();
 
     if dir.is_empty() && family.is_empty() {
         st.bundle_font = std::ptr::null_mut();
@@ -645,15 +653,30 @@ fn register_global_fallbacks(
     }
 }
 
-fn has_all_non_ascii(rt: &dyn UnityRuntime, t_fa: *mut c_void, font_asset: *mut c_void, text: &str) -> bool {
-    let m_has = rt.find_method_in_hierarchy(t_fa, "HasCharacter", 1);
-    if m_has.is_null() {
-        return true;
-    }
+fn has_all_non_ascii(
+    rt: &dyn UnityRuntime,
+    t_fa: *mut c_void,
+    font_asset: *mut c_void,
+    cache: &mut HashMap<u32, bool>,
+    text: &str,
+) -> bool {
+    let mut m_has: *mut c_void = std::ptr::null_mut();
     for ch in text.chars() {
         let code = ch as u32;
         if code < 0x0080 || code > 0xFFFF {
             continue;
+        }
+        if let Some(&ok) = cache.get(&code) {
+            if !ok {
+                return false;
+            }
+            continue;
+        }
+        if m_has.is_null() {
+            m_has = rt.find_method_in_hierarchy(t_fa, "HasCharacter", 1);
+            if m_has.is_null() {
+                return true;
+            }
         }
         let mut c16 = code as u16;
         let mut args = [&mut c16 as *mut u16 as *mut c_void];
@@ -661,7 +684,11 @@ fn has_all_non_ascii(rt: &dyn UnityRuntime, t_fa: *mut c_void, font_asset: *mut 
             return true;
         };
         let ptr = rt.unbox(boxed) as *const u8;
-        if ptr.is_null() || unsafe { *ptr } == 0 {
+        let ok = ptr.is_null() || unsafe { *ptr } != 0;
+        if cache.len() < MAX_SCALED_CACHE {
+            cache.insert(code, ok);
+        }
+        if !ok {
             return false;
         }
     }
@@ -670,7 +697,7 @@ fn has_all_non_ascii(rt: &dyn UnityRuntime, t_fa: *mut c_void, font_asset: *mut 
 
 fn apply_component_font(
     rt: &dyn UnityRuntime,
-    st: &FontState,
+    st: &mut FontState,
     component: *mut c_void,
     hook_id: u64,
     text: &str,
@@ -707,7 +734,7 @@ fn apply_component_font(
     let mut target = if !st.bundle_font.is_null() { st.bundle_font } else { st.dyn_font };
     if !st.bundle_font.is_null()
         && !st.dyn_font.is_null()
-        && !has_all_non_ascii(rt, t_fa, st.bundle_font, text)
+        && !has_all_non_ascii(rt, t_fa, st.bundle_font, &mut st.bundle_checked, text)
     {
         target = st.dyn_font;
     }
@@ -722,7 +749,14 @@ fn apply_component_font(
         rt.field_get_value(component, f_font, &mut cur_font as *mut *mut c_void as *mut c_void);
     }
 
-    if !cur_font.is_null() && cur_font != st.bundle_font && cur_font != st.dyn_font {
+    if !cur_font.is_null()
+        && cur_font != st.bundle_font
+        && cur_font != st.dyn_font
+        && st.fallback_attached.insert(cur_font as usize)
+    {
+        if st.fallback_attached.len() > MAX_SCALED_CACHE {
+            st.fallback_attached.clear();
+        }
         attach_fallback_to_asset(rt, t_fa, cur_font, st.dyn_font);
         attach_fallback_to_asset(rt, t_fa, cur_font, st.bundle_font);
     }

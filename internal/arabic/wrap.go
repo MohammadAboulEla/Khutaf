@@ -55,14 +55,15 @@ func Process(text string, opts Options) string {
 }
 
 // Wrap splits each line on spaces into lines of at most maxLen visible characters.
-// Words longer than maxLen are kept whole on their own line.
+// Spaces inside <...> rich-text tags are never split, and words longer than maxLen
+// are kept whole on their own line.
 func Wrap(text string, maxLen int) string {
 	if maxLen <= 0 {
 		maxLen = DefaultLineLength
 	}
 	var out []string
 	for _, line := range strings.Split(text, "\n") {
-		words := strings.Split(line, " ")
+		words := splitWords(line)
 		current := words[0]
 		currentLen := visibleLen(words[0])
 		for _, w := range words[1:] {
@@ -78,6 +79,28 @@ func Wrap(text string, maxLen int) string {
 		out = append(out, current)
 	}
 	return strings.Join(out, "\n")
+}
+
+// splitWords splits line on spaces outside <...> tags so multi-attribute tags stay intact.
+func splitWords(line string) []string {
+	var words []string
+	start := 0
+	inTag := false
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '<':
+			inTag = true
+		case '>':
+			inTag = false
+		case ' ':
+			if !inTag {
+				words = append(words, line[start:i])
+				start = i + 1
+			}
+		}
+	}
+	words = append(words, line[start:])
+	return words
 }
 
 // visibleLen counts characters excluding diacritics and rich-text tags.
