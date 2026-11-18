@@ -134,4 +134,16 @@ func TestSQLiteCachePersistenceAndManualOverride(t *testing.T) {
 	if c2.Count() != 0 {
 		t.Fatalf("Count after Delete = %d, want 0", c2.Count())
 	}
+
+	// Cross-game fallback: Game B reuses Game A's translation unless Game B overrides it.
+	const gameA = `C:\Games\GameA\a.exe`
+	const gameB = `C:\Games\GameB\b.exe`
+	c2.PutAuto(gameA, "bing", "Why?", "لماذا؟")
+	if got, ok := c2.Get(gameB, "bing", "Why?"); !ok || got != "لماذا؟" {
+		t.Fatalf("Get cross-game fallback = (%q, %v), want لماذا؟", got, ok)
+	}
+	c2.PutAuto(gameB, "bing", "Why?", "لمَ؟")
+	if got, ok := c2.Get(gameB, "bing", "Why?"); !ok || got != "لمَ؟" {
+		t.Fatalf("Get game-specific override = (%q, %v), want لمَ؟", got, ok)
+	}
 }

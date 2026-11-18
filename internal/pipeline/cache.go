@@ -46,6 +46,11 @@ type manualKey struct {
 	sourceText string
 }
 
+type sharedKey struct {
+	provider   string
+	sourceText string
+}
+
 type sqliteLib struct {
 	dll             *syscall.LazyDLL
 	procOpen16      *syscall.LazyProc
@@ -110,6 +115,7 @@ type Cache struct {
 	db     uintptr
 	mem    map[cacheKey]CacheEntry
 	manual map[manualKey]string
+	shared map[sharedKey]string
 }
 
 // NormalizeGameUID normalizes a game executable path into a cache scope key.
@@ -126,6 +132,7 @@ func NewMemoryCache() *Cache {
 	return &Cache{
 		mem:    make(map[cacheKey]CacheEntry),
 		manual: make(map[manualKey]string),
+		shared: make(map[sharedKey]string),
 	}
 }
 
@@ -165,6 +172,7 @@ func OpenCache(dbPath string) (*Cache, error) {
 		db:     db,
 		mem:    make(map[cacheKey]CacheEntry),
 		manual: make(map[manualKey]string),
+		shared: make(map[sharedKey]string),
 	}
 	const schemaSQL = `
 PRAGMA journal_mode=WAL;
@@ -207,7 +215,7 @@ func (c *Cache) Close() error {
 }
 
 // Get looks up a cached translation, preferring manual overrides before
-// provider-specific entries, and falling back to the global scope.
+// provider-specific entries, falling back to "global" and any prior game.
 func (c *Cache) Get(gameUID, provider, sourceText string) (string, bool) {
 	if c == nil {
 		return "", false
@@ -231,6 +239,9 @@ func (c *Cache) Get(gameUID, provider, sourceText string) (string, bool) {
 		if entry, ok := c.mem[cacheKey{gameUID: "global", provider: provider, sourceText: sourceText}]; ok {
 			return entry.Translated, true
 		}
+	}
+	if val, ok := c.shared[sharedKey{provider: provider, sourceText: sourceText}]; ok {
+		return val, true
 	}
 	return "", false
 }
@@ -258,6 +269,7 @@ func (c *Cache) PutAuto(gameUID, provider, sourceText, translated string) {
 		Manual:     false,
 		UpdatedAt:  now,
 	}
+	c.shared[sharedKey{provider: provider, sourceText: sourceText}] = translated
 	if c.db != 0 {
 		_ = c.execUpsertAutoLocked(g, provider, sourceText, translated, now)
 	}
@@ -292,6 +304,7 @@ func (c *Cache) PutManual(gameUID, provider, sourceText, translated string) erro
 		UpdatedAt:  now,
 	}
 	c.manual[manualKey{gameUID: g, sourceText: sourceText}] = translated
+	c.shared[sharedKey{provider: provider, sourceText: sourceText}] = translated
 	return nil
 }
 
@@ -312,6 +325,7 @@ func (c *Cache) Delete(gameUID, provider, sourceText string) error {
 	}
 	delete(c.mem, cacheKey{gameUID: g, provider: provider, sourceText: sourceText})
 	c.refreshManualKeyLocked(g, sourceText)
+	c.refreshSharedKeyLocked(provider, sourceText)
 	return nil
 }
 
@@ -339,6 +353,7 @@ func (c *Cache) Clear(gameUID string, includeManual bool) int {
 		removed++
 	}
 	c.rebuildManualIndexLocked()
+	c.rebuildSharedIndexLocked()
 
 	if c.db != 0 {
 		if all {
@@ -447,6 +462,39 @@ func (c *Cache) rebuildManualIndexLocked() {
 	}
 }
 
+func (c *Cache) refreshSharedKeyLocked(provider, sourceText string) {
+	sk := sharedKey{provider: provider, sourceText: sourceText}
+	var bestUpdated int64 = -1
+	bestVal := ""
+	found := false
+	for _, e := range c.mem {
+		if e.Provider == provider && e.SourceText == sourceText {
+			if !found || e.UpdatedAt >= bestUpdated {
+				found = true
+				bestUpdated = e.UpdatedAt
+				bestVal = e.Translated
+			}
+		}
+	}
+	if found {
+		c.shared[sk] = bestVal
+	} else {
+		delete(c.shared, sk)
+	}
+}
+
+func (c *Cache) rebuildSharedIndexLocked() {
+	c.shared = make(map[sharedKey]string)
+	bestTs := make(map[sharedKey]int64)
+	for _, e := range c.mem {
+		sk := sharedKey{provider: e.Provider, sourceText: e.SourceText}
+		if prev, exists := bestTs[sk]; !exists || e.UpdatedAt >= prev {
+			bestTs[sk] = e.UpdatedAt
+			c.shared[sk] = e.Translated
+		}
+	}
+}
+
 func (c *Cache) preload() error {
 	stmt, err := c.prepare("SELECT game_uid, provider, source_text, translated, manual, updated_at FROM translations;")
 	if err != nil {
@@ -469,6 +517,7 @@ func (c *Cache) preload() error {
 			c.mem[cacheKey{gameUID: entry.GameUID, provider: entry.Provider, sourceText: entry.SourceText}] = entry
 		case sqliteDone:
 			c.rebuildManualIndexLocked()
+			c.rebuildSharedIndexLocked()
 			return nil
 		default:
 			return fmt.Errorf("sqlite3_step preload: %s (%d)", c.api.lastErr(c.db), int32(r))
