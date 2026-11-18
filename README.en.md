@@ -5,12 +5,14 @@
 <p align="center" style="font-size: 2em; font-weight: bold; margin: 15px 0 0 0;">Khutaf — خُطّاف</p>
 
 <p align="center">
-  A fast, lightweight Windows tool for hooking text in <strong>64-bit Unity (Mono &amp; IL2CPP)</strong> games and embedding Arabic translations directly inside the game UI, powered by <strong>Go</strong>, <strong>Wails v2</strong>, <strong>Vue 3</strong>, and <strong>Rust</strong>.
+  A fast, lightweight Windows tool focused on making <strong>live Arabic translation</strong> effortless for <strong>64-bit Unity (Mono &amp; IL2CPP)</strong> games—hooking and embedding translations directly inside the game UI in real time without modifying game files. Powered by <strong>Go</strong>, <strong>Wails v2</strong>, <strong>Vue 3</strong>, and <strong>Rust</strong>.
 </p>
 
 <p align="center">
   <a href="README.md">العربية</a> | <strong>English</strong>
 </p>
+
+[![Watch the video](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)
 
 ---
 

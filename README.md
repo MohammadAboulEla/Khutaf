@@ -5,12 +5,14 @@
 <p align="center" style="font-size: 2em; font-weight: bold; margin: 15px 0 0 0;">خُطّاف — Khutaf</p>
 
 <p align="center">
-  أداة خفيفة وسريعة لويندوز لترجمة ألعاب <strong>Unity (64-bit Mono &amp; IL2CPP)</strong> إلى العربية وحقن الترجمة مباشرة داخل واجهة اللعبة نفسها، مبنية باستخدام <strong>Go</strong> و<strong>Wails v2</strong> و<strong>Vue 3</strong> و<strong>Rust</strong>.
+  أداة خفيفة وسريعة لويندوز هدفها الأساسي <strong>تسهيل الترجمة الفورية (Live Translation) إلى اللغة العربية</strong> لألعاب <strong>Unity (64-bit Mono &amp; IL2CPP)</strong>، وحقن الترجمة مباشرة داخل واجهة اللعبة لحظياً بدون تعديل ملفات اللعبة، مبنية باستخدام <strong>Go</strong> و<strong>Wails v2</strong> و<strong>Vue 3</strong> و<strong>Rust</strong>.
 </p>
 
 <p align="center">
   <strong>العربية</strong> | <a href="README.en.md">English</a>
 </p>
+
+[![شاهد الفيديو](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)
 
 ---
 
