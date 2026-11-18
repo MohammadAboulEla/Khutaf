@@ -1,6 +1,7 @@
 <script setup>
 import { shallowRef, computed } from "vue";
 import Icon from "../Icon.vue";
+import Tooltip from "../Tooltip.vue";
 
 const props = defineProps({
   hooks: { type: Array, required: true },
@@ -81,7 +82,13 @@ const filteredHooks = computed(() => {
             </td>
             <td class="col-name">
               <div class="name-cell">
-                <span class="name" :title="h.hookName">{{ h.hookName }}</span>
+                <Tooltip
+                  :text="`${h.hookName}${h.ctx ? ' #' + h.ctx.toString(16) : ''} (${h.hookCode})`"
+                  placement="top"
+                  mono
+                >
+                  <span class="name">{{ h.hookName }}</span>
+                </Tooltip>
                 <span v-if="h.ctx" class="ctx-tag">#{{ h.ctx.toString(16) }}</span>
                 <span v-if="h.embeddable" class="tag">embed</span>
               </div>

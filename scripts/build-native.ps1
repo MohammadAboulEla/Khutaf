@@ -13,7 +13,17 @@ try {
 
     $srcDll = Join-Path $repoRoot "native\target\release\khutaf_hook.dll"
     $dstDll = Join-Path $runtimeDir "khutaf-hook64.dll"
-    Copy-Item -Force $srcDll $dstDll
+    $oldDll = "$dstDll.old"
+    Remove-Item -Force $oldDll -ErrorAction SilentlyContinue
+
+    try {
+        Copy-Item -Force $srcDll $dstDll
+    } catch {
+        if (Test-Path $dstDll) {
+            Move-Item -Force $dstDll $oldDll
+        }
+        Copy-Item -Force $srcDll $dstDll
+    }
     Write-Host "Built $dstDll"
 } finally {
     Pop-Location

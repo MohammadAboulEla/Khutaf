@@ -90,6 +90,15 @@ fn resolve_component_ctx(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize
     raw_ctx
 }
 
+fn format_display(mode: u32, orig: &str, trans: &str) -> Option<String> {
+    match mode {
+        1 => Some(format!("{orig} {trans}")),
+        2 => Some(format!("{trans} {orig}")),
+        3 => None,
+        _ => Some(trans.to_owned()),
+    }
+}
+
 /// Reports hooked text to the host and, when embedding is enabled for the
 /// thread, blocks up to `wait_ms` for a replacement. `None` = keep original.
 pub fn process(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize, text: &str) -> Option<String> {
@@ -101,18 +110,29 @@ pub fn process(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize, text: &s
         return None;
     }
 
+    let cfg = settings();
     let ctx = resolve_component_ctx(hook_id, raw_ctx, ctx2, component);
+    if cfg.display_mode == 3 {
+        ipc::send(&Msg::Text { hook_id, ctx, ctx2, text: text.to_owned() });
+        return None;
+    }
     if !is_enabled(hook_id, ctx, ctx2) {
         ipc::send(&Msg::Text { hook_id, ctx, ctx2, text: text.to_owned() });
         let cached = RECENT_TRANSLATIONS
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .get(text)
-            .cloned();
-        return cached;
+            .cloned()?;
+        let out = format_display(cfg.display_mode, text, &cached)?;
+        remember_output(&out);
+        return Some(out);
+    }
+    if cfg.clear_text {
+        ipc::send(&Msg::Text { hook_id, ctx, ctx2, text: text.to_owned() });
+        return Some(" ".to_owned());
     }
 
-    let wait = Duration::from_millis(SETTINGS.read().unwrap_or_else(|p| p.into_inner()).wait_ms.max(1) as u64);
+    let wait = Duration::from_millis(cfg.wait_ms.max(1) as u64);
     let req_id = NEXT_REQ.fetch_add(1, Ordering::Relaxed);
     PENDING.lock().unwrap_or_else(|p| p.into_inner()).insert(req_id, None);
     if !ipc::send(&Msg::EmbedRequest { req_id, hook_id, ctx, ctx2, text: text.to_owned() }) {
@@ -143,8 +163,9 @@ pub fn process(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize, text: &s
         }
         recent.insert(text.to_owned(), reply.clone());
     }
-    remember_output(&reply);
-    Some(reply)
+    let out = format_display(cfg.display_mode, text, &reply)?;
+    remember_output(&out);
+    Some(out)
 }
 
 pub fn complete(req_id: u64, text: Option<String>) {
