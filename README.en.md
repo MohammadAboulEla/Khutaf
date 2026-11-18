@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.webp" alt="Khutaf Logo" width="220" />
+  <img src="build/appicon.png" alt="Khutaf Logo" width="220" />
 </p>
 
 <p align="center" style="font-size: 2em; font-weight: bold; margin: 15px 0 0 0;">Khutaf — خُطّاف</p>

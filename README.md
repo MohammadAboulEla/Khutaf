@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.webp" alt="شعار خُطّاف" width="220" />
+  <img src="build/appicon.png" alt="شعار خُطّاف" width="220" />
 </p>
 
 <p align="center" style="font-size: 2em; font-weight: bold; margin: 15px 0 0 0;">خُطّاف — Khutaf</p>
