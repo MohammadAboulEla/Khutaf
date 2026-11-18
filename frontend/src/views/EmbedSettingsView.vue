@@ -116,6 +116,17 @@ function onSave() {
           {{ unityFontStatus.error || unityFontStatus.message }}
         </span>
       </div>
+
+      <Tooltip :text="unityFontStatus.installed ? '' : 'Download bundles first to enable this fallback'">
+        <label class="chk" :class="{ disabled: !unityFontStatus.installed }">
+          <input
+            v-model="form.useUnityBundle"
+            type="checkbox"
+            :disabled="!unityFontStatus.installed"
+          />
+          <span>Use Unity Arial SDF Bundle (fallback if OS font fails)</span>
+        </label>
+      </Tooltip>
     </div>
 
     <div class="card">
@@ -166,10 +177,6 @@ function onSave() {
         <label class="chk">
           <input v-model="form.changeFont" type="checkbox" />
           <span>Override Game Font (OS Font / Unity Dynamic TMP)</span>
-        </label>
-        <label class="chk">
-          <input v-model="form.useUnityBundle" type="checkbox" />
-          <span>Use Unity Arial SDF Bundle (fallback if OS font fails)</span>
         </label>
         <label class="chk">
           <input v-model="form.changeFontSize" type="checkbox" />
@@ -293,6 +300,10 @@ function onSave() {
   gap: 8px;
   font-size: 12px;
   cursor: pointer;
+}
+.chk.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .actions {
   display: flex;
