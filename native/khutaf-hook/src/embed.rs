@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Condvar, LazyLock, Mutex, RwLock};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use khutaf_proto::{Msg, Settings};
@@ -16,12 +16,19 @@ const OWN_OUTPUT_HISTORY: usize = 256;
 const MAX_COMPONENT_CTX: usize = 4096;
 const MAX_RECENT_TRANS: usize = 512;
 
-static SETTINGS: LazyLock<RwLock<Settings>> =
-    LazyLock::new(|| RwLock::new(Settings { wait_ms: DEFAULT_WAIT_MS, font_scale: 1.0, ..Default::default() }));
+#[derive(Default)]
+struct OwnOutputs {
+    queue: VecDeque<String>,
+    set: HashSet<String>,
+}
+
+static SETTINGS: LazyLock<RwLock<Arc<Settings>>> = LazyLock::new(|| {
+    RwLock::new(Arc::new(Settings { wait_ms: DEFAULT_WAIT_MS, font_scale: 1.0, ..Default::default() }))
+});
 static ENABLED: LazyLock<Mutex<HashSet<(u64, u64, u64)>>> = LazyLock::new(Default::default);
 static COMPONENT_CTX: LazyLock<Mutex<HashMap<(u64, usize), u64>>> = LazyLock::new(Default::default);
 static RECENT_TRANSLATIONS: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default::default);
-static OWN_OUTPUTS: LazyLock<Mutex<VecDeque<String>>> = LazyLock::new(Default::default);
+static OWN_OUTPUTS: LazyLock<Mutex<OwnOutputs>> = LazyLock::new(Default::default);
 
 /// req_id -> None while waiting, Some(reply) once answered.
 static PENDING: LazyLock<Mutex<HashMap<u64, Option<Option<String>>>>> = LazyLock::new(Default::default);
@@ -30,13 +37,13 @@ static NEXT_REQ: AtomicU64 = AtomicU64::new(1);
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 pub fn set_settings(s: Settings) {
-    *SETTINGS.write().unwrap_or_else(|p| p.into_inner()) = s;
+    *SETTINGS.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(s);
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
-pub fn settings() -> Settings {
-    SETTINGS.read().unwrap_or_else(|p| p.into_inner()).clone()
+pub fn settings() -> Arc<Settings> {
+    Arc::clone(&SETTINGS.read().unwrap_or_else(|p| p.into_inner()))
 }
 
 pub fn set_enabled(hook_id: u64, ctx: u64, ctx2: u64, on: bool) {
@@ -60,40 +67,55 @@ pub fn is_enabled(hook_id: u64, ctx: u64, ctx2: u64) -> bool {
 }
 
 fn is_own_output(text: &str) -> bool {
-    OWN_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner()).iter().any(|t| t == text)
+    OWN_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner()).set.contains(text)
 }
 
 fn remember_output(text: &str) {
-    let mut q = OWN_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner());
-    if q.len() >= OWN_OUTPUT_HISTORY {
-        q.pop_front();
+    let mut o = OWN_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner());
+    if o.set.contains(text) {
+        return;
     }
-    q.push_back(text.to_owned());
+    if o.queue.len() >= OWN_OUTPUT_HISTORY {
+        if let Some(old) = o.queue.pop_front() {
+            o.set.remove(&old);
+        }
+    }
+    let owned = text.to_owned();
+    o.set.insert(owned.clone());
+    o.queue.push_back(owned);
 }
 
 fn resolve_component_ctx(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize) -> u64 {
     if component == 0 {
         return raw_ctx;
     }
-    let mut map = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(&existing) = map.get(&(hook_id, component)) {
+    let existing = {
+        let mut map = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(&existing) = map.get(&(hook_id, component)) {
+            Some(existing)
+        } else {
+            if map.len() >= MAX_COMPONENT_CTX {
+                map.clear();
+            }
+            map.insert((hook_id, component), raw_ctx);
+            return raw_ctx;
+        }
+    };
+    if let Some(existing) = existing {
         if existing != raw_ctx && is_enabled(hook_id, raw_ctx, ctx2) && !is_enabled(hook_id, existing, ctx2) {
+            let mut map = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
             map.insert((hook_id, component), raw_ctx);
             return raw_ctx;
         }
         return existing;
     }
-    if map.len() >= MAX_COMPONENT_CTX {
-        map.clear();
-    }
-    map.insert((hook_id, component), raw_ctx);
     raw_ctx
 }
 
 fn format_display(mode: u32, orig: &str, trans: &str) -> Option<String> {
     match mode {
-        1 => Some(format!("{orig} {trans}")),
-        2 => Some(format!("{trans} {orig}")),
+        1 => Some(format!("{orig}\n{trans}")),
+        2 => Some(format!("{trans}\n{orig}")),
         3 => None,
         _ => Some(trans.to_owned()),
     }
@@ -118,14 +140,7 @@ pub fn process(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize, text: &s
     }
     if !is_enabled(hook_id, ctx, ctx2) {
         ipc::send(&Msg::Text { hook_id, ctx, ctx2, text: text.to_owned() });
-        let cached = RECENT_TRANSLATIONS
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get(text)
-            .cloned()?;
-        let out = format_display(cfg.display_mode, text, &cached)?;
-        remember_output(&out);
-        return Some(out);
+        return None;
     }
     if cfg.clear_text {
         ipc::send(&Msg::Text { hook_id, ctx, ctx2, text: text.to_owned() });

@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import (
@@ -6,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -216,6 +219,18 @@ type logFontW struct {
 	FaceName       [32]uint16
 }
 
+var (
+	fontEnumMu   sync.Mutex
+	fontEnumSeen map[string]bool
+	enumFontProc = syscall.NewCallback(func(lf *logFontW, _ uintptr, _ uintptr, _ uintptr) uintptr {
+		name := windows.UTF16ToString(lf.FaceName[:])
+		if name != "" && !strings.HasPrefix(name, "@") {
+			fontEnumSeen[name] = true
+		}
+		return 1
+	})
+)
+
 // ListFonts returns installed Windows font family names.
 func (a *App) ListFonts() []string {
 	hdc, _, _ := procGetDC.Call(0)
@@ -224,21 +239,17 @@ func (a *App) ListFonts() []string {
 	}
 	defer procReleaseDC.Call(0, hdc)
 
-	seen := map[string]bool{}
-	cb := syscall.NewCallback(func(lf *logFontW, _ uintptr, _ uintptr, _ uintptr) uintptr {
-		name := windows.UTF16ToString(lf.FaceName[:])
-		if name != "" && !strings.HasPrefix(name, "@") {
-			seen[name] = true
-		}
-		return 1
-	})
+	fontEnumMu.Lock()
+	fontEnumSeen = map[string]bool{}
 	lf := logFontW{CharSet: 1} // DEFAULT_CHARSET
-	procEnumFontFamiliesW.Call(hdc, uintptr(unsafe.Pointer(&lf)), cb, 0, 0)
-
-	out := make([]string, 0, len(seen))
-	for n := range seen {
+	procEnumFontFamiliesW.Call(hdc, uintptr(unsafe.Pointer(&lf)), enumFontProc, 0, 0)
+	out := make([]string, 0, len(fontEnumSeen))
+	for n := range fontEnumSeen {
 		out = append(out, n)
 	}
+	fontEnumSeen = nil
+	fontEnumMu.Unlock()
+
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
 	return out
 }

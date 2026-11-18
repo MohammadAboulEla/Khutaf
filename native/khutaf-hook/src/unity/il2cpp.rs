@@ -3,7 +3,6 @@
 use std::collections::HashSet;
 use std::ffi::{c_char, c_void, CString};
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::OnceLock;
 
 use khutaf_proto::{level, Msg};
 
@@ -44,6 +43,7 @@ pub(crate) struct Il2CppApi {
     string_new_utf16: unsafe extern "C" fn(*const u16, i32) -> *mut c_void,
     array_new: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
     gchandle_new: Option<unsafe extern "C" fn(*mut c_void, u8) -> u32>,
+    gchandle_free: Option<unsafe extern "C" fn(u32)>,
     object_new: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
     class_get_field_from_name: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void>,
     field_get_value: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
@@ -53,7 +53,8 @@ pub(crate) struct Il2CppApi {
     resolve_icall_fn: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
 }
 
-static IL2CPP: OnceLock<Option<Il2CppApi>> = OnceLock::new();
+static IL2CPP: AtomicPtr<Il2CppApi> = AtomicPtr::new(std::ptr::null_mut());
+static IL2CPP_INIT_MU: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 static ORIG_TMP_SET_TEXT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_TMP_SETTEXT_1: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
@@ -71,7 +72,19 @@ static ORIG_NGUILABEL_SET_TEXT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::nul
 
 impl Il2CppApi {
     pub(crate) fn get() -> Option<&'static Il2CppApi> {
-        IL2CPP.get_or_init(|| Self::load()).as_ref()
+        let p = IL2CPP.load(Ordering::Acquire);
+        if !p.is_null() {
+            return Some(unsafe { &*p });
+        }
+        let _guard = IL2CPP_INIT_MU.lock().unwrap_or_else(|e| e.into_inner());
+        let p = IL2CPP.load(Ordering::Acquire);
+        if !p.is_null() {
+            return Some(unsafe { &*p });
+        }
+        let api = Self::load()?;
+        let leaked = Box::into_raw(Box::new(api));
+        IL2CPP.store(leaked, Ordering::Release);
+        Some(unsafe { &*leaked })
     }
 
     fn load() -> Option<Il2CppApi> {
@@ -105,6 +118,7 @@ impl Il2CppApi {
             string_new_utf16: proc_addr(m, "il2cpp_string_new_utf16")?,
             array_new: proc_addr(m, "il2cpp_array_new"),
             gchandle_new: proc_addr(m, "il2cpp_gchandle_new"),
+            gchandle_free: proc_addr(m, "il2cpp_gchandle_free"),
             object_new: proc_addr(m, "il2cpp_object_new"),
             class_get_field_from_name: proc_addr(m, "il2cpp_class_get_field_from_name"),
             field_get_value: proc_addr(m, "il2cpp_field_get_value"),
@@ -384,10 +398,19 @@ impl UnityRuntime for Il2CppApi {
         (0..len).map(|i| unsafe { *vec_base.add(i) }).collect()
     }
 
-    fn gchandle_pin(&self, obj: *mut c_void) {
+    fn gchandle_pin(&self, obj: *mut c_void) -> u32 {
         if let Some(f) = self.gchandle_new {
             if !obj.is_null() {
-                unsafe { f(obj, 1) };
+                return unsafe { f(obj, 1) };
+            }
+        }
+        0
+    }
+
+    fn gchandle_free(&self, handle: u32) {
+        if handle != 0 {
+            if let Some(f) = self.gchandle_free {
+                unsafe { f(handle) };
             }
         }
     }
@@ -630,10 +653,16 @@ macro_rules! il2cpp_detour_1 {
             let Some(_guard) = hooks::Enter::try_new() else {
                 return orig(this, text, method);
             };
-            let Some(api) = Il2CppApi::get() else {
-                return orig(this, text, method);
+            let next = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                Il2CppApi::get().map(|api| handle_il2cpp_text(api, this, text, $hook_id))
+            })) {
+                Ok(Some(n)) => n,
+                Ok(None) => text,
+                Err(_) => {
+                    crate::log(level::ERROR, "panic in il2cpp detour");
+                    text
+                }
             };
-            let next = handle_il2cpp_text(api, this, text, $hook_id);
             orig(this, next, method);
         }
     };
@@ -646,10 +675,16 @@ macro_rules! il2cpp_detour_2 {
             let Some(_guard) = hooks::Enter::try_new() else {
                 return orig(this, text, sync, method);
             };
-            let Some(api) = Il2CppApi::get() else {
-                return orig(this, text, sync, method);
+            let next = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                Il2CppApi::get().map(|api| handle_il2cpp_text(api, this, text, $hook_id))
+            })) {
+                Ok(Some(n)) => n,
+                Ok(None) => text,
+                Err(_) => {
+                    crate::log(level::ERROR, "panic in il2cpp detour");
+                    text
+                }
             };
-            let next = handle_il2cpp_text(api, this, text, $hook_id);
             orig(this, next, sync, method);
         }
     };

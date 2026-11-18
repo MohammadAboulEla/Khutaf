@@ -43,15 +43,7 @@ func Process(text string, opts Options) string {
 	for i, line := range lines {
 		lines[i] = VisualOrder(Shape(line))
 	}
-	text = strings.Join(lines, "\n")
-	if opts.DisplayMode == DisplayOriTrans && !strings.HasPrefix(text, "\n") {
-		// Start Arabic on a fresh line below the original text.
-		text = "\n" + text
-	} else if opts.DisplayMode == DisplayTransOri && !strings.HasSuffix(text, "\n") {
-		// Put the original text on a fresh line below the Arabic translation.
-		text += "\n"
-	}
-	return text
+	return strings.Join(lines, "\n")
 }
 
 // Wrap splits each line on spaces into lines of at most maxLen visible characters.
@@ -64,6 +56,7 @@ func Wrap(text string, maxLen int) string {
 	var out []string
 	for _, line := range strings.Split(text, "\n") {
 		words := splitWords(line)
+		var para []string
 		current := words[0]
 		currentLen := visibleLen(words[0])
 		for _, w := range words[1:] {
@@ -73,12 +66,86 @@ func Wrap(text string, maxLen int) string {
 				currentLen += 1 + wl
 				continue
 			}
-			out = append(out, current)
+			para = append(para, current)
 			current, currentLen = w, wl
 		}
-		out = append(out, current)
+		para = append(para, current)
+		if len(para) > 1 {
+			balanceRichTextTags(para)
+		}
+		out = append(out, para...)
 	}
 	return strings.Join(out, "\n")
+}
+
+type richTag struct {
+	name    string
+	openTag string
+}
+
+var voidRichTags = map[string]bool{
+	"br":     true,
+	"sprite": true,
+	"space":  true,
+	"page":   true,
+}
+
+// balanceRichTextTags closes any open rich-text tags at the end of a wrapped line
+// and reopens them at the beginning of the next line so BiDi reordering per line
+// always sees matched tag pairs.
+func balanceRichTextTags(lines []string) {
+	var stack []richTag
+	for idx, line := range lines {
+		var prefix strings.Builder
+		for _, t := range stack {
+			prefix.WriteString(t.openTag)
+		}
+
+		for i := 0; i < len(line); i++ {
+			if line[i] != '<' {
+				continue
+			}
+			end := strings.IndexByte(line[i:], '>')
+			if end <= 1 {
+				continue
+			}
+			full := line[i : i+end+1]
+			inner := line[i+1 : i+end]
+			i += end
+
+			if inner[0] == '/' {
+				name := tagName(inner[1:])
+				for s := len(stack) - 1; s >= 0; s-- {
+					if stack[s].name == name || name == "" {
+						stack = stack[:s]
+						break
+					}
+				}
+				continue
+			}
+			if inner[len(inner)-1] == '/' {
+				continue
+			}
+			name := tagName(inner)
+			if name == "" || voidRichTags[name] {
+				continue
+			}
+			stack = append(stack, richTag{name: name, openTag: full})
+		}
+
+		var suffix strings.Builder
+		if idx < len(lines)-1 {
+			for s := len(stack) - 1; s >= 0; s-- {
+				suffix.WriteString("</")
+				suffix.WriteString(stack[s].name)
+				suffix.WriteByte('>')
+			}
+		}
+
+		if prefix.Len() > 0 || suffix.Len() > 0 {
+			lines[idx] = prefix.String() + line + suffix.String()
+		}
+	}
 }
 
 // splitWords splits line on spaces outside <...> tags so multi-attribute tags stay intact.
@@ -89,7 +156,9 @@ func splitWords(line string) []string {
 	for i := 0; i < len(line); i++ {
 		switch line[i] {
 		case '<':
-			inTag = true
+			if strings.IndexByte(line[i:], '>') > 0 {
+				inTag = true
+			}
 		case '>':
 			inTag = false
 		case ' ':
@@ -107,10 +176,14 @@ func splitWords(line string) []string {
 func visibleLen(s string) int {
 	n := 0
 	inTag := false
-	for _, r := range s {
+	for i, r := range s {
 		switch {
 		case r == '<':
-			inTag = true
+			if strings.IndexByte(s[i:], '>') > 0 {
+				inTag = true
+			} else {
+				n++
+			}
 		case r == '>' && inTag:
 			inTag = false
 		case inTag, IsDiacritic(r):

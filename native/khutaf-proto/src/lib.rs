@@ -213,6 +213,9 @@ impl Msg {
             kind::DETACH => Msg::Detach,
             other => return Err(invalid(format!("unknown message type 0x{other:02x}"))),
         };
+        if d.pos != d.buf.len() {
+            return Err(invalid(format!("trailing {} bytes in frame", d.buf.len() - d.pos)));
+        }
         Ok(msg)
     }
 }

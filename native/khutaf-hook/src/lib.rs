@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use khutaf_proto::{Msg, PROTO_VERSION};
 use windows_sys::Win32::Foundation::{CloseHandle, HMODULE, TRUE};
-use windows_sys::Win32::System::LibraryLoader::{DisableThreadLibraryCalls, FreeLibraryAndExitThread};
+use windows_sys::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
 use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows_sys::Win32::System::Threading::{CreateThread, GetCurrentProcessId};
 
@@ -38,7 +38,7 @@ pub unsafe extern "system" fn DllMain(module: HMODULE, reason: u32, _reserved: *
 
 unsafe extern "system" fn init_thread(_: *mut c_void) -> u32 {
     let _ = std::panic::catch_unwind(run);
-    FreeLibraryAndExitThread(MODULE.load(Ordering::SeqCst), 0);
+    0
 }
 
 fn run() {

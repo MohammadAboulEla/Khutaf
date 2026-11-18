@@ -41,7 +41,7 @@ func TestShapeKeepsTashkeelAndJoining(t *testing.T) {
 
 func TestVisualOrderPreservesLTRRuns(t *testing.T) {
 	got := VisualOrder(Shape("مرحبا Ahmed 123"))
-	want := "123 Ahmed " + runes(0xFE8E, 0xFE92, 0xFEA3, 0xFEAE, 0xFEE3)
+	want := "Ahmed 123 " + runes(0xFE8E, 0xFE92, 0xFEA3, 0xFEAE, 0xFEE3)
 	if got != want {
 		t.Fatalf("VisualOrder = %q, want %q", got, want)
 	}
@@ -96,10 +96,10 @@ func TestWrapPreservesSpaceInsideRichTag(t *testing.T) {
 	}
 }
 
-func TestProcessOriTransPrefix(t *testing.T) {
+func TestProcessOriTransNoExtraNewline(t *testing.T) {
 	out := Process("بب", Options{DisplayMode: DisplayOriTrans})
-	if out[0] != '\n' {
-		t.Fatalf("expected leading newline, got %q", out)
+	if strings.HasPrefix(out, "\n") || strings.HasSuffix(out, "\n") {
+		t.Fatalf("unexpected leading/trailing newline: %q", out)
 	}
 }
 

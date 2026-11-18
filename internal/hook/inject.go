@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unsafe"
 
@@ -44,15 +45,16 @@ func Inject(runtimeDir string, pids []uint32, is64 bool) error {
 	}
 	loadLibAddr := procLoadLibraryW.Addr()
 
+	var errs []error
 	for _, pid := range pids {
 		if isModuleLoaded(pid, nativeHookDLL) {
 			continue
 		}
 		if err := injectPID(pid, absDLL, loadLibAddr); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func injectPID(pid uint32, dllPath string, loadLibAddr uintptr) error {
@@ -87,10 +89,17 @@ func injectPID(pid uint32, dllPath string, loadLibAddr uintptr) error {
 	if remoteBuf == 0 {
 		return fmt.Errorf("VirtualAllocEx(%d): %w", pid, allocErr)
 	}
-	defer procVirtualFreeEx.Call(uintptr(proc), remoteBuf, 0, windows.MEM_RELEASE)
+	freeRemote := true
+	defer func() {
+		if freeRemote {
+			_, _, _ = procVirtualFreeEx.Call(uintptr(proc), remoteBuf, 0, windows.MEM_RELEASE)
+		}
+	}()
 
 	var written uintptr
-	if err := windows.WriteProcessMemory(proc, remoteBuf, (*byte)(unsafe.Pointer(&utf16[0])), byteLen, &written); err != nil {
+	err = windows.WriteProcessMemory(proc, remoteBuf, (*byte)(unsafe.Pointer(&utf16[0])), byteLen, &written)
+	runtime.KeepAlive(utf16)
+	if err != nil {
 		return fmt.Errorf("WriteProcessMemory(%d): %w", pid, err)
 	}
 
@@ -110,10 +119,15 @@ func injectPID(pid uint32, dllPath string, loadLibAddr uintptr) error {
 
 	event, err := windows.WaitForSingleObject(windows.Handle(thread), 5000)
 	if err != nil {
+		freeRemote = false
 		return fmt.Errorf("wait LoadLibraryW(%d): %w", pid, err)
 	}
 	if event != windows.WAIT_OBJECT_0 {
+		freeRemote = false
 		return fmt.Errorf("LoadLibraryW(%d) timed out (wait status %d)", pid, event)
+	}
+	if !isModuleLoaded(pid, nativeHookDLL) {
+		return fmt.Errorf("LoadLibraryW(%d) failed to load %s", pid, nativeHookDLL)
 	}
 	return nil
 }

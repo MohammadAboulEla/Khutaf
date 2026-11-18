@@ -153,6 +153,30 @@ func PIDsByPath(path string) []uint32 {
 	return pids
 }
 
+// RunningPathsMap takes a single process snapshot and maps normalized lowercase
+// executable paths to their first running PID, without requiring a visible window.
+func RunningPathsMap() map[string]uint32 {
+	out := make(map[string]uint32)
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return out
+	}
+	defer windows.CloseHandle(snap)
+	var entry windows.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	for err = windows.Process32First(snap, &entry); err == nil; err = windows.Process32Next(snap, &entry) {
+		p, perr := ProcessPath(entry.ProcessID)
+		if perr != nil || p == "" {
+			continue
+		}
+		norm := strings.ToLower(filepath.Clean(p))
+		if _, exists := out[norm]; !exists {
+			out[norm] = entry.ProcessID
+		}
+	}
+	return out
+}
+
 // DetectEngine inspects the game folder for Unity markers.
 func DetectEngine(exePath string) string {
 	dir := filepath.Dir(exePath)

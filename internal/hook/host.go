@@ -37,6 +37,11 @@ type pendingKey struct {
 	text  string
 }
 
+type pendingEntry struct {
+	id uint64
+	at time.Time
+}
+
 type procSession struct {
 	host      *Host
 	pid       uint32
@@ -53,7 +58,7 @@ type procSession struct {
 	threads      map[string]HookInfo
 	embedEnabled map[string]bool
 	lastSettings *wireSettings
-	pending      map[pendingKey][]uint64 // FIFO queue of reqIDs waiting for EmbedCallback
+	pending      map[pendingKey][]pendingEntry // FIFO queue of reqIDs waiting for EmbedCallback
 
 	wg sync.WaitGroup
 }
@@ -135,7 +140,7 @@ func (h *Host) ConnectProcess(pid uint32) {
 		hooks:        map[uint64]hookMeta{},
 		threads:      map[string]HookInfo{},
 		embedEnabled: map[string]bool{},
-		pending:      map[pendingKey][]uint64{},
+		pending:      map[pendingKey][]pendingEntry{},
 	}
 
 	h.mu.Lock()
@@ -288,6 +293,9 @@ func (ps *procSession) serve() {
 	go func() { downCh <- ps.down.connect() }()
 
 	upErr := ps.up.connect()
+	if upErr != nil {
+		_ = windows.SetEvent(ps.stopEvent)
+	}
 	downErr := <-downCh
 	if upErr != nil || downErr != nil {
 		ps.cleanupUnexpected()
@@ -431,8 +439,25 @@ func (ps *procSession) ensureThread(hookID, ctx, ctx2 uint64, hd Handler) HookIn
 
 func (ps *procSession) pushPending(tpKey, text string, reqID uint64) {
 	k := pendingKey{tpKey: tpKey, text: text}
+	now := time.Now()
 	ps.mu.Lock()
-	ps.pending[k] = append(ps.pending[k], reqID)
+	if len(ps.pending) >= 64 {
+		cutoff := now.Add(-30 * time.Second)
+		for pk, list := range ps.pending {
+			kept := list[:0]
+			for _, e := range list {
+				if e.at.After(cutoff) {
+					kept = append(kept, e)
+				}
+			}
+			if len(kept) == 0 {
+				delete(ps.pending, pk)
+			} else {
+				ps.pending[pk] = kept
+			}
+		}
+	}
+	ps.pending[k] = append(ps.pending[k], pendingEntry{id: reqID, at: now})
 	ps.mu.Unlock()
 }
 
@@ -444,7 +469,7 @@ func (ps *procSession) popPending(tpKey, text string) (uint64, bool) {
 	if len(q) == 0 {
 		return 0, false
 	}
-	id := q[0]
+	id := q[0].id
 	if len(q) == 1 {
 		delete(ps.pending, k)
 	} else {
@@ -467,9 +492,13 @@ func (ps *procSession) sendWithTimeout(m *wireMsg, timeout time.Duration) error 
 }
 
 func (ps *procSession) closeHandles() {
+	ps.mu.Lock()
+	ps.pending = map[pendingKey][]pendingEntry{}
+	ps.mu.Unlock()
 	if ps.up != nil {
 		ps.up.close()
 	}
+	ps.writeMu.Lock()
 	if ps.down != nil {
 		ps.down.close()
 	}
@@ -477,6 +506,7 @@ func (ps *procSession) closeHandles() {
 		_ = windows.CloseHandle(ps.stopEvent)
 		ps.stopEvent = 0
 	}
+	ps.writeMu.Unlock()
 }
 
 // ---- overlapped Windows named pipe wrapper ----
@@ -492,10 +522,11 @@ func createOverlappedPipe(name string, openMode uint32, stopEvent windows.Handle
 	if err != nil {
 		return nil, err
 	}
+	const pipeRejectRemoteClients = 0x00000008
 	h, err := windows.CreateNamedPipe(
 		wname,
-		openMode,
-		windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT,
+		openMode|windows.FILE_FLAG_FIRST_PIPE_INSTANCE,
+		windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT|pipeRejectRemoteClients,
 		1,
 		pipeBufSize,
 		pipeBufSize,

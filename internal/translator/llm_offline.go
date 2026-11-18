@@ -5,14 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"khutaf/internal/config"
 )
-
-var reThinkBlock = regexp.MustCompile(`(?s)<think>.*?</think>\s*`)
 
 // OfflineLLM translates using preconfigured prompt templates tailored to local
 // offline translation GGUF models served via llama-server or Ollama.
@@ -39,7 +37,12 @@ func (o *OfflineLLM) Name() string {
 	if model == "" {
 		model = "local-model"
 	}
-	return "offline_llm:" + tpl + ":" + model
+	return "offline_llm:" + tpl + ":" + model + ":" + settingsHash(
+		o.cfg.BaseURL,
+		o.cfg.SourceLang,
+		o.cfg.TargetLang,
+		strconv.FormatFloat(o.cfg.Temperature, 'f', 3, 64),
+	)
 }
 
 func (o *OfflineLLM) resolvedTemplate() string {
@@ -71,11 +74,7 @@ func (o *OfflineLLM) Translate(ctx context.Context, text string) (string, error)
 		model = "local-model"
 	}
 	msgs := o.buildMessages(text, GlossaryPromptFromContext(ctx))
-	out, err := doChatCompletion(ctx, o.client, baseURL, "", model, o.cfg.Temperature, msgs)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(reThinkBlock.ReplaceAllString(out, "")), nil
+	return doChatCompletion(ctx, o.client, baseURL, "", model, o.cfg.Temperature, msgs)
 }
 
 func (o *OfflineLLM) buildMessages(text, glossaryPrompt string) []chatMessage {

@@ -7,7 +7,7 @@ import (
 
 // ltrRun matches runs that must keep their internal left-to-right order:
 // rich-text tags, [vars], {vars}, Latin words and numbers (ASCII or Arabic-Indic).
-var ltrRun = regexp.MustCompile(`<[^>]+>|\[[^\]]+\]|\{[^\}]+\}|[A-Za-z0-9\x{0660}-\x{0669}]+(?:[.,:/'-][A-Za-z0-9\x{0660}-\x{0669}]+)*`)
+var ltrRun = regexp.MustCompile(`<[^>]+>|\[[^\]]+\]|\{[^\}]+\}|[A-Za-z0-9\x{0660}-\x{0669}]+(?:[.,:/' -]+[A-Za-z0-9\x{0660}-\x{0669}]+)*`)
 
 var mirror = map[rune]rune{
 	'(': ')', ')': '(',

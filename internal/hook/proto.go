@@ -244,6 +244,9 @@ func decodeBody(body []byte) (*wireMsg, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
+	if len(d.b) != 0 {
+		return nil, fmt.Errorf("trailing %d bytes in frame", len(d.b))
+	}
 	return m, nil
 }
 

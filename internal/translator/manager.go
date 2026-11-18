@@ -1,8 +1,11 @@
+//go:build windows
+
 package translator
 
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,6 +128,12 @@ func (m *Manager) ClearCache() int {
 // Translate returns a cached translation or queries the provider.
 // Concurrent requests for the same text share one in-flight call.
 func (m *Manager) Translate(ctx context.Context, text string) (string, bool, error) {
+	return m.TranslateValidated(ctx, text, nil)
+}
+
+// TranslateValidated behaves like Translate, but runs valid (if non-nil) on
+// fresh provider outputs before persisting them to the cache.
+func (m *Manager) TranslateValidated(ctx context.Context, text string, valid func(string) error) (string, bool, error) {
 	m.mu.RLock()
 	p := m.provider
 	gameUID := m.gameUID
@@ -152,7 +161,7 @@ func (m *Manager) Translate(ctx context.Context, text string) (string, bool, err
 		m.mu.Unlock()
 		select {
 		case <-call.done:
-			return call.val, call.err == nil, call.err
+			return call.val, false, call.err
 		case <-ctx.Done():
 			return "", false, ctx.Err()
 		}
@@ -161,25 +170,44 @@ func (m *Manager) Translate(ctx context.Context, text string) (string, bool, err
 	m.inflight[infKey] = call
 	m.mu.Unlock()
 
-	var out string
-	var err error
+	go func() {
+		reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+
+		var out string
+		var err error
+		select {
+		case m.sem <- struct{}{}:
+			out, err = p.Translate(reqCtx, text)
+			<-m.sem
+		case <-reqCtx.Done():
+			err = reqCtx.Err()
+		}
+
+		if err == nil && strings.TrimSpace(out) != "" {
+			if valid != nil {
+				if verr := valid(out); verr != nil {
+					err = verr
+					out = ""
+				}
+			}
+			if err == nil {
+				m.cache.PutAuto(gameUID, provName, text, out)
+			}
+		}
+
+		m.mu.Lock()
+		delete(m.inflight, infKey)
+		m.mu.Unlock()
+
+		call.val, call.err = out, err
+		close(call.done)
+	}()
+
 	select {
-	case m.sem <- struct{}{}:
-		out, err = p.Translate(ctx, text)
-		<-m.sem
+	case <-call.done:
+		return call.val, false, call.err
 	case <-ctx.Done():
-		err = ctx.Err()
+		return "", false, ctx.Err()
 	}
-
-	if err == nil {
-		m.cache.PutAuto(gameUID, provName, text, out)
-	}
-
-	m.mu.Lock()
-	delete(m.inflight, infKey)
-	m.mu.Unlock()
-
-	call.val, call.err = out, err
-	close(call.done)
-	return out, false, err
 }

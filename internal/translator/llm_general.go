@@ -3,16 +3,22 @@ package translator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"khutaf/internal/config"
 )
+
+var reThinkBlock = regexp.MustCompile(`(?s)<think>.*?(?:</think>|$)\s*`)
 
 // LLM is an OpenAI-compatible chat completions client
 // (OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Ollama, LM Studio, llama-server).
@@ -33,7 +39,24 @@ func NewLLM(cfg config.LLMSettings) *LLM {
 }
 
 // Name implements Provider.
-func (l *LLM) Name() string { return "llm:" + l.cfg.Model }
+func (l *LLM) Name() string {
+	return "llm:" + l.cfg.Model + ":" + settingsHash(
+		l.cfg.BaseURL,
+		l.cfg.SystemPrompt,
+		l.cfg.SourceLang,
+		l.cfg.TargetLang,
+		strconv.FormatFloat(l.cfg.Temperature, 'f', 3, 64),
+	)
+}
+
+func settingsHash(parts ...string) string {
+	h := sha256.New()
+	for _, p := range parts {
+		_, _ = h.Write([]byte(p))
+		_, _ = h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))[:8]
+}
 
 type chatMessage struct {
 	Role    string `json:"role"`
@@ -108,5 +131,5 @@ func doChatCompletion(ctx context.Context, client *http.Client, baseURL, apiKey,
 	if resp.StatusCode != http.StatusOK || len(parsed.Choices) == 0 {
 		return "", fmt.Errorf("HTTP %d: empty response", resp.StatusCode)
 	}
-	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
+	return strings.TrimSpace(reThinkBlock.ReplaceAllString(parsed.Choices[0].Message.Content, "")), nil
 }

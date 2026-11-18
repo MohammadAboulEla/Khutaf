@@ -145,10 +145,19 @@ pub(crate) fn caller_rel_ctx() -> u64 {
     0
 }
 
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    let hb = haystack.as_bytes();
+    let nb = needle.as_bytes();
+    if nb.is_empty() || nb.len() > hb.len() {
+        return None;
+    }
+    hb.windows(nb.len()).position(|w| w.eq_ignore_ascii_case(nb))
+}
+
 fn strip_tag_prefix(s: &str, prefix: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
-    while let Some(start) = rest.find(prefix) {
+    while let Some(start) = find_ascii_ci(rest, prefix) {
         out.push_str(&rest[..start]);
         let after = &rest[start + prefix.len()..];
         if let Some(end) = after.find('>') {
@@ -163,20 +172,58 @@ fn strip_tag_prefix(s: &str, prefix: &str) -> String {
     out
 }
 
+fn strip_exact_ci(s: &str, needle: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = find_ascii_ci(rest, needle) {
+        out.push_str(&rest[..pos]);
+        rest = &rest[pos + needle.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Strips `<color=#00000000>` and its matching `</color>` used by typewriter effects
 /// while leaving all visible `<color=...>` tags intact.
 fn strip_typewriter_alpha_tags(s: &str) -> String {
     const TAG: &str = "<color=#00000000>";
     const CLOSE: &str = "</color>";
-    if !s.contains(TAG) {
+    if find_ascii_ci(s, TAG).is_none() {
         return s.to_owned();
     }
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
-    while let Some(pos) = rest.find(TAG) {
+    while let Some(pos) = find_ascii_ci(rest, TAG) {
         out.push_str(&rest[..pos]);
         rest = &rest[pos + TAG.len()..];
-        if let Some(end) = rest.find(CLOSE) {
+
+        let mut depth = 1usize;
+        let mut cursor = 0usize;
+        let mut matched_end = None;
+        while cursor < rest.len() {
+            let sub = &rest[cursor..];
+            let next_open = find_ascii_ci(sub, "<color").filter(|&i| {
+                let after = &sub[i + 6..];
+                after.starts_with('=') || after.starts_with('>')
+            });
+            let next_close = find_ascii_ci(sub, CLOSE);
+            match (next_open, next_close) {
+                (Some(o), Some(c)) if o < c => {
+                    depth += 1;
+                    cursor += o + 6;
+                }
+                (_, Some(c)) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        matched_end = Some(cursor + c);
+                        break;
+                    }
+                    cursor += c + CLOSE.len();
+                }
+                _ => break,
+            }
+        }
+        if let Some(end) = matched_end {
             out.push_str(&rest[..end]);
             rest = &rest[end + CLOSE.len()..];
         }
@@ -188,7 +235,8 @@ fn strip_typewriter_alpha_tags(s: &str) -> String {
 /// Strips non-semantic TextMeshPro layout tags (`<noparse>`, `<line-height=...>`, `<sprite anim=...>`)
 /// and optionally typewriter alpha tags (`<color=#00000000>...</color>`).
 pub(crate) fn clean_tmp_tags(s: &str) -> String {
-    let s = s.replace("<noparse>", "").replace("</noparse>", "");
+    let s = strip_exact_ci(s, "<noparse>");
+    let s = strip_exact_ci(&s, "</noparse>");
     let s = if embed::settings().strip_typewriter_tags {
         strip_typewriter_alpha_tags(&s)
     } else {
@@ -279,7 +327,8 @@ pub trait UnityRuntime {
     fn string_to_rust(&self, s: *mut c_void) -> String;
     fn string_array_new(&self, items: &[&str]) -> *mut c_void;
     fn array_elements(&self, arr: *mut c_void) -> Vec<*mut c_void>;
-    fn gchandle_pin(&self, obj: *mut c_void);
+    fn gchandle_pin(&self, obj: *mut c_void) -> u32;
+    fn gchandle_free(&self, handle: u32);
     fn object_new(&self, klass: *mut c_void) -> *mut c_void;
     fn field_from_name(&self, klass: *mut c_void, name: &str) -> *mut c_void;
     fn field_get_value(&self, obj: *mut c_void, field: *mut c_void, out: *mut c_void);

@@ -86,6 +86,11 @@ type EmbedLine struct {
 	ElapsedMs  int64  `json:"elapsedMs"`
 }
 
+type embedJob struct {
+	text string
+	tp   hook.ThreadParam
+}
+
 type rules struct {
 	pre      *pipeline.RuleSet
 	post     *pipeline.RuleSet
@@ -102,6 +107,9 @@ type Session struct {
 	runtimeDir string
 	emit       Emitter
 	events     chan func()
+	embedCh    chan embedJob
+	eventStop  chan struct{}
+	closeOnce  sync.Once
 
 	rules          atomic.Pointer[rules]
 	embedCfg       atomic.Pointer[config.EmbedSettings]
@@ -124,9 +132,12 @@ type Session struct {
 // New loads the native host from runtimeDir (failure is non-fatal: the UI still
 // works for previews and settings) and starts the event dispatcher.
 func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
+	if store == nil {
+		store = config.NewMemoryStore()
+	}
 	var cache *pipeline.Cache
 	var cacheErr error
-	if store != nil {
+	if store.Dir() != "" {
 		cache, cacheErr = pipeline.OpenCache(filepath.Join(store.Dir(), "cache.db"))
 	}
 	if cache == nil {
@@ -140,15 +151,41 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 		runtimeDir: runtimeDir,
 		emit:       emit,
 		events:     make(chan func(), 4096),
+		embedCh:    make(chan embedJob, 256),
+		eventStop:  make(chan struct{}),
 		pids:       map[uint32]bool{},
 		hooks:      map[string]hook.HookInfo{},
 		embedding:  map[string]bool{},
 	}
+	s.rules.Store(&rules{
+		pre:      &pipeline.RuleSet{},
+		post:     &pipeline.RuleSet{},
+		glossary: &pipeline.Glossary{},
+	})
+	defEmbed := config.Default().Embed
+	s.embedCfg.Store(&defEmbed)
 	go func() {
-		for fn := range s.events {
-			fn()
+		for {
+			select {
+			case <-s.eventStop:
+				return
+			case fn := <-s.events:
+				fn()
+			}
 		}
 	}()
+	for range 8 {
+		go func() {
+			for {
+				select {
+				case <-s.eventStop:
+					return
+				case job := <-s.embedCh:
+					s.handleEmbed(job.text, job.tp)
+				}
+			}
+		}()
+	}
 	if cacheErr != nil {
 		s.log("warn", "translation cache fallback to memory: "+cacheErr.Error())
 	}
@@ -183,7 +220,9 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 func (s *Session) Close() error {
 	s.Detach()
 	_ = s.llama.Close()
-	return s.translator.Cache().Close()
+	err := s.translator.Cache().Close()
+	s.closeOnce.Do(func() { close(s.eventStop) })
+	return err
 }
 
 // StartLlamaServer starts (or restarts) the managed llama-server.exe process.
@@ -209,7 +248,11 @@ func (s *Session) LlamaServerStatus() translator.LlamaCppStatus {
 
 // post queues UI work so native callbacks never block on the frontend.
 func (s *Session) post(name string, data any) {
+	if s.emit == nil {
+		return
+	}
 	select {
+	case <-s.eventStop:
 	case s.events <- func() { s.emit(name, data) }:
 	default: // UI is overwhelmed; drop rather than stall the game thread
 	}
@@ -224,13 +267,16 @@ func (s *Session) log(level, msg string) {
 // Config returns the current settings.
 func (s *Session) Config() config.Config { return s.store.Config() }
 
-// SaveConfig validates, applies and persists settings, then pushes embed
+// SaveConfig validates, persists and applies settings, then pushes embed
 // settings to every connected process.
 func (s *Session) SaveConfig(c config.Config) error {
+	c = normalizeConfig(c)
+	prev := s.store.Config()
 	if err := s.applyConfig(c); err != nil {
 		return err
 	}
 	if err := s.store.SaveConfig(c); err != nil {
+		_ = s.applyConfig(prev)
 		return err
 	}
 	s.mu.Lock()
@@ -241,6 +287,21 @@ func (s *Session) SaveConfig(c config.Config) error {
 	}
 	s.post(EventStatus, s.Status())
 	return nil
+}
+
+func normalizeConfig(c config.Config) config.Config {
+	if c.Embed.TimeoutMs < 100 {
+		c.Embed.TimeoutMs = 100
+	} else if c.Embed.TimeoutMs > 30000 {
+		c.Embed.TimeoutMs = 30000
+	}
+	if c.Embed.MaxLineLength <= 0 {
+		c.Embed.MaxLineLength = arabic.DefaultLineLength
+	}
+	if c.Embed.FontSizeRelative <= 0 {
+		c.Embed.FontSizeRelative = 1.0
+	}
+	return c
 }
 
 func (s *Session) applyConfig(c config.Config) error {
@@ -323,6 +384,15 @@ func (s *Session) Hooks() []HookView {
 	for k, h := range s.hooks {
 		out = append(out, HookView{HookInfo: h, Embedding: s.embedding[k]})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].HookCode != out[j].HookCode {
+			return out[i].HookCode < out[j].HookCode
+		}
+		if out[i].Ctx != out[j].Ctx {
+			return out[i].Ctx < out[j].Ctx
+		}
+		return out[i].Ctx2 < out[j].Ctx2
+	})
 	return out
 }
 
@@ -352,16 +422,20 @@ type SavedGame struct {
 func (s *Session) SavedGames() []SavedGame {
 	games := s.store.Games()
 	s.mu.Lock()
-	curPath := strings.ToLower(filepath.Clean(s.gamePath))
+	rawGamePath := s.gamePath
 	isAttached := len(s.pids) > 0
 	s.mu.Unlock()
+	curPath := ""
+	if rawGamePath != "" {
+		curPath = strings.ToLower(filepath.Clean(rawGamePath))
+	}
+
+	runningByPath := hook.RunningPathsMap()
 
 	out := make([]SavedGame, 0, len(games))
 	for exePath, prof := range games {
-		var runningPID uint32
-		if pids := hook.PIDsByPath(exePath); len(pids) > 0 {
-			runningPID = pids[0]
-		}
+		normExe := strings.ToLower(filepath.Clean(exePath))
+		runningPID := runningByPath[normExe]
 		title := prof.Title
 		if title == "" {
 			title = filepath.Base(exePath)
@@ -372,7 +446,7 @@ func (s *Session) SavedGames() []SavedGame {
 			EmbedHooks: prof.EmbedHooks,
 			Pipeline:   prof.Pipeline,
 			RunningPID: runningPID,
-			Attached:   isAttached && curPath == exePath,
+			Attached:   isAttached && curPath != "" && curPath == normExe,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -530,6 +604,7 @@ func (s *Session) Attach(pid uint32) error {
 		for _, p := range pids {
 			s.host.DetachProcess(p)
 		}
+		s.Detach()
 		s.log("error", err.Error())
 		return err
 	}
@@ -577,7 +652,7 @@ func (s *Session) SetEmbed(key string, enabled bool) error {
 		return fmt.Errorf("unknown hook %s", key)
 	}
 	s.host.UseEmbed(h.TP, enabled)
-	return s.store.UpdateGame(path, func(g *config.GameProfile) {
+	if err := s.store.UpdateGame(path, func(g *config.GameProfile) {
 		kept := g.EmbedHooks[:0]
 		for _, e := range g.EmbedHooks {
 			if !(e.HookCode == h.HookCode && e.Ctx == h.Ctx && e.Ctx2 == h.Ctx2) {
@@ -591,7 +666,11 @@ func (s *Session) SetEmbed(key string, enabled bool) error {
 		if g.Title == "" {
 			g.Title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 		}
-	})
+	}); err != nil {
+		return err
+	}
+	s.post(EventHookNew, HookView{HookInfo: h, Embedding: enabled})
+	return nil
 }
 
 func (s *Session) pushEmbedSettings(pid uint32) {
@@ -610,8 +689,14 @@ func (s *Session) pushEmbedSettings(pid uint32) {
 			unityDir = s.unityFontDir()
 		}
 	}
+	waitMs := cfg.TimeoutMs
+	if waitMs < 100 {
+		waitMs = 100
+	} else if waitMs > 30000 {
+		waitMs = 30000
+	}
 	s.host.SettingsEx(pid, hook.EmbedSettings{
-		WaitTimeMs:       uint32(cfg.TimeoutMs),
+		WaitTimeMs:       uint32(waitMs),
 		FontFamily:       font,
 		DisplayMode:      hook.DisplayMode(cfg.DisplayMode),
 		ClearText:        cfg.ClearText,
@@ -635,7 +720,7 @@ func (s *Session) unityFontDir() string {
 // Translate runs the full pipeline (pre-rules, glossary, translator, post-rules,
 // placeholder check) and returns the logical (unshaped) translation.
 func (s *Session) Translate(ctx context.Context, text string) (string, bool, error) {
-	return s.translateWith(ctx, text, s.translator.Translate)
+	return s.translateWith(ctx, text, s.translator.Active(), nil)
 }
 
 // TranslateWithConfig runs the full pipeline using cfg without mutating saved settings or cache.
@@ -644,26 +729,48 @@ func (s *Session) TranslateWithConfig(ctx context.Context, cfg config.Translator
 	if p == nil {
 		return "", errors.New("no translator provider selected")
 	}
-	trans, _, err := s.translateWith(ctx, text, func(c context.Context, in string) (string, bool, error) {
+	trans, _, err := s.translateWith(ctx, text, p.Name(), func(c context.Context, in string) (string, bool, error) {
 		out, err := p.Translate(c, in)
 		return out, false, err
 	})
 	return trans, err
 }
 
-func (s *Session) translateWith(ctx context.Context, text string, fn func(context.Context, string) (string, bool, error)) (string, bool, error) {
+func isLLMProvider(name string) bool {
+	return name == "llm" || name == "offline_llm" ||
+		strings.HasPrefix(name, "llm:") || strings.HasPrefix(name, "offline_llm:")
+}
+
+func (s *Session) translateWith(ctx context.Context, text, providerName string, fn func(context.Context, string) (string, bool, error)) (string, bool, error) {
 	r := s.rules.Load()
 	preText := r.pre.Apply(text)
-	if gp := r.glossary.PromptContext(preText); gp != "" {
-		ctx = translator.WithGlossaryPrompt(ctx, gp)
+	if isLLMProvider(providerName) {
+		if gp := r.glossary.PromptContext(preText); gp != "" {
+			ctx = translator.WithGlossaryPrompt(ctx, gp)
+		}
+	} else {
+		preText = r.glossary.Apply(preText)
 	}
-	preText = r.glossary.Apply(preText)
-	trans, cached, err := fn(ctx, preText)
+	var (
+		trans  string
+		cached bool
+		err    error
+	)
+	if fn != nil {
+		trans, cached, err = fn(ctx, preText)
+	} else {
+		trans, cached, err = s.translator.TranslateValidated(ctx, preText, func(raw string) error {
+			if !pipeline.PlaceholdersPreserved(preText, r.post.Apply(raw)) {
+				return errors.New("translation dropped [..]/{..} placeholders")
+			}
+			return nil
+		})
+	}
 	if err != nil {
 		return "", false, err
 	}
 	trans = r.post.Apply(trans)
-	if !pipeline.PlaceholdersPreserved(text, trans) {
+	if !pipeline.PlaceholdersPreserved(preText, trans) {
 		return "", cached, errors.New("translation dropped [..]/{..} placeholders")
 	}
 	return trans, cached, nil
@@ -685,62 +792,37 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 	debugging := s.debugMode.Load()
 
 	var (
-		trans       string
-		shaped      string
-		cached      bool
-		err         error
-		preUs       int64
-		transUs     int64
-		postUs      int64
-		shapeUs     int64
-		callbackUs  int64
-		seq         uint64
+		trans      string
+		shaped     string
+		cached     bool
+		err        error
+		preUs      int64
+		transUs    int64
+		postUs     int64
+		shapeUs    int64
+		callbackUs int64
+		seq        uint64
 	)
 
 	if debugging {
 		seq = s.debugSeq.Add(1)
-		r := s.rules.Load()
+	}
 
-		t0 := time.Now()
-		preText := r.pre.Apply(text)
-		glossaryPrompt := r.glossary.PromptContext(preText)
+	r := s.rules.Load()
+	t0 := time.Now()
+	preText := r.pre.Apply(text)
+	provName := s.translator.Active()
+	var glossaryPrompt string
+	if isLLMProvider(provName) {
+		glossaryPrompt = r.glossary.PromptContext(preText)
+	} else {
 		preText = r.glossary.Apply(preText)
-		preUs = time.Since(t0).Microseconds()
+	}
+	preUs = time.Since(t0).Microseconds()
 
-		t1 := time.Now()
-		if s.debugRealTrans.Load() {
-			timeout := time.Duration(s.embedCfg.Load().TimeoutMs) * time.Millisecond
-			if timeout <= 0 {
-				timeout = 2 * time.Second
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), timeout*9/10)
-			if glossaryPrompt != "" {
-				ctx = translator.WithGlossaryPrompt(ctx, glossaryPrompt)
-			}
-			trans, cached, err = s.translator.Translate(ctx, preText)
-			cancel()
-		} else {
-			trans = fmt.Sprintf("نص اختباري %d", seq)
-		}
-		transUs = time.Since(t1).Microseconds()
-
-		if err != nil {
-			line.Error = err.Error()
-		} else {
-			t2 := time.Now()
-			trans = r.post.Apply(trans)
-			if s.debugRealTrans.Load() && !pipeline.PlaceholdersPreserved(text, trans) {
-				err = errors.New("translation dropped [..]/{..} placeholders")
-				line.Error = err.Error()
-			}
-			postUs = time.Since(t2).Microseconds()
-
-			if err == nil {
-				t3 := time.Now()
-				shaped = s.ShapeForEmbed(trans)
-				shapeUs = time.Since(t3).Microseconds()
-			}
-		}
+	t1 := time.Now()
+	if debugging && !s.debugRealTrans.Load() {
+		trans = fmt.Sprintf("نص اختباري %d", seq)
 	} else {
 		timeout := time.Duration(s.embedCfg.Load().TimeoutMs) * time.Millisecond
 		if timeout <= 0 {
@@ -748,13 +830,34 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 		}
 		// Leave headroom so the reply arrives before the game stops waiting.
 		ctx, cancel := context.WithTimeout(context.Background(), timeout*9/10)
-		defer cancel()
+		if glossaryPrompt != "" {
+			ctx = translator.WithGlossaryPrompt(ctx, glossaryPrompt)
+		}
+		trans, cached, err = s.translator.TranslateValidated(ctx, preText, func(raw string) error {
+			if !pipeline.PlaceholdersPreserved(preText, r.post.Apply(raw)) {
+				return errors.New("translation dropped [..]/{..} placeholders")
+			}
+			return nil
+		})
+		cancel()
+	}
+	transUs = time.Since(t1).Microseconds()
 
-		trans, cached, err = s.Translate(ctx, text)
-		if err != nil {
+	if err != nil {
+		line.Error = err.Error()
+	} else {
+		t2 := time.Now()
+		trans = r.post.Apply(trans)
+		if (!debugging || s.debugRealTrans.Load()) && !pipeline.PlaceholdersPreserved(preText, trans) {
+			err = errors.New("translation dropped [..]/{..} placeholders")
 			line.Error = err.Error()
-		} else {
+		}
+		postUs = time.Since(t2).Microseconds()
+
+		if err == nil {
+			t3 := time.Now()
 			shaped = s.ShapeForEmbed(trans)
+			shapeUs = time.Since(t3).Microseconds()
 		}
 	}
 
@@ -847,9 +950,11 @@ func (s *Session) OnHostInfo(kind hook.HostInfo, msg string) {
 		pids := s.pidList()
 		s.mu.Unlock()
 		s.log("info", "engine: "+msg)
-		for _, pid := range pids {
-			s.pushEmbedSettings(pid) // Unity font dir depends on the engine
-		}
+		go func() {
+			for _, pid := range pids {
+				s.pushEmbedSettings(pid) // Unity font dir depends on the engine
+			}
+		}()
 		s.post(EventStatus, s.Status())
 	case hook.HostInfoWarning, hook.HostInfoEmuWarning:
 		s.log("warn", msg)
@@ -886,22 +991,33 @@ func (s *Session) OnHookInsert(pid uint32, addr uint64, hookCode string) {
 	s.mu.Lock()
 	path := s.gamePath
 	s.mu.Unlock()
-	for _, e := range s.store.Game(path).EmbedHooks {
-		if e.HookCode != hookCode {
-			continue
-		}
-		tp := hook.ThreadParam{ProcessID: pid, Addr: addr, Ctx: e.Ctx, Ctx2: e.Ctx2}
-		s.host.UseEmbed(tp, true)
-		s.mu.Lock()
-		s.embedding[tp.Key()] = true
-		s.mu.Unlock()
-		s.log("info", "re-enabled embed for "+hookCode)
+	if path == "" {
+		return
 	}
+	go func() {
+		for _, e := range s.store.Game(path).EmbedHooks {
+			if e.HookCode != hookCode {
+				continue
+			}
+			tp := hook.ThreadParam{ProcessID: pid, Addr: addr, Ctx: e.Ctx, Ctx2: e.Ctx2}
+			s.host.UseEmbed(tp, true)
+			s.mu.Lock()
+			s.embedding[tp.Key()] = true
+			s.mu.Unlock()
+			s.log("info", "re-enabled embed for "+hookCode)
+		}
+	}()
 }
 
 // OnEmbedText implements hook.Handler.
 func (s *Session) OnEmbedText(text string, tp hook.ThreadParam) {
-	go s.handleEmbed(text, tp)
+	select {
+	case s.embedCh <- embedJob{text: text, tp: tp}:
+	default:
+		if s.host != nil {
+			s.host.EmbedCallback(tp, text, "")
+		}
+	}
 }
 
 func archName(is64 bool) string {

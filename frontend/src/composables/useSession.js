@@ -138,7 +138,7 @@ async function refreshAll() {
   if (cfg) config.value = cfg;
   if (hk) hooks.value = hk;
   if (ver) appVersion.value = ver;
-  await refreshProcesses();
+  await Promise.all([refreshProcesses(), refreshSavedGames(), refreshUnityFontStatus()]);
 }
 
 async function refreshProcesses() {
@@ -174,8 +174,7 @@ async function setEmbed(key, enabled) {
   errorBanner.value = "";
   try {
     await call("SetEmbed", key, enabled);
-    const h = hooks.value.find((x) => x.key === key);
-    if (h) h.embedding = enabled;
+    hooks.value = hooks.value.map((x) => (x.key === key ? { ...x, embedding: enabled } : x));
   } catch (e) {
     errorBanner.value = String(e);
   }

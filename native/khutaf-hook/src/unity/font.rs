@@ -23,7 +23,11 @@ struct FontState {
     dyn_font: *mut c_void,
     os_font: *mut c_void,
     tried_tmp_retry: bool,
-    scaled: HashSet<usize>,
+    t_tmp: *mut c_void,
+    t_fa: *mut c_void,
+    bundle_handles: Vec<u32>,
+    os_handles: Vec<u32>,
+    scaled: HashMap<usize, u32>,
     bundle_checked: HashMap<u32, bool>,
     fallback_attached: HashSet<usize>,
 }
@@ -39,7 +43,11 @@ static STATE: LazyLock<Mutex<FontState>> = LazyLock::new(|| {
         dyn_font: std::ptr::null_mut(),
         os_font: std::ptr::null_mut(),
         tried_tmp_retry: false,
-        scaled: HashSet::new(),
+        t_tmp: std::ptr::null_mut(),
+        t_fa: std::ptr::null_mut(),
+        bundle_handles: Vec::new(),
+        os_handles: Vec::new(),
+        scaled: HashMap::new(),
         bundle_checked: HashMap::new(),
         fallback_attached: HashSet::new(),
     })
@@ -65,10 +73,16 @@ pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text
         if let Some(donor) = read_component_tmp_font(rt, component) {
             let dyn_tmp = create_tmp_font_asset(rt, st.os_font, donor);
             if !dyn_tmp.is_null() {
-                rt.gchandle_pin(dyn_tmp);
+                let h = rt.gchandle_pin(dyn_tmp);
+                if h != 0 {
+                    st.os_handles.push(h);
+                }
                 dont_destroy(rt, dyn_tmp);
                 st.dyn_font = dyn_tmp;
-                let t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
+                if st.t_fa.is_null() {
+                    st.t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
+                }
+                let t_fa = st.t_fa;
                 if !t_fa.is_null() {
                     if !st.bundle_font.is_null() && st.bundle_font != st.dyn_font {
                         attach_fallback_to_asset(rt, t_fa, st.bundle_font, st.dyn_font);
@@ -133,7 +147,20 @@ fn reload_fonts(
     }
     st.fallback_attached.clear();
 
+    if st.t_tmp.is_null() {
+        st.t_tmp = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_Text");
+    }
+    if st.t_fa.is_null() {
+        st.t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
+    }
+
     if dir.is_empty() && family.is_empty() {
+        for h in st.bundle_handles.drain(..) {
+            rt.gchandle_free(h);
+        }
+        for h in st.os_handles.drain(..) {
+            rt.gchandle_free(h);
+        }
         st.bundle_font = std::ptr::null_mut();
         st.dyn_font = std::ptr::null_mut();
         st.os_font = std::ptr::null_mut();
@@ -141,14 +168,20 @@ fn reload_fonts(
     }
 
     if dir_changed {
+        for h in st.bundle_handles.drain(..) {
+            rt.gchandle_free(h);
+        }
         st.bundle_font = if dir.is_empty() {
             std::ptr::null_mut()
         } else {
-            load_bundle_font(rt, dir)
+            load_bundle_font(rt, dir, &mut st.bundle_handles)
         };
     }
 
     if fam_changed {
+        for h in st.os_handles.drain(..) {
+            rt.gchandle_free(h);
+        }
         let donor = if !st.bundle_font.is_null() {
             st.bundle_font
         } else if is_tmp_hook(hook_id) {
@@ -156,12 +189,12 @@ fn reload_fonts(
         } else {
             std::ptr::null_mut()
         };
-        let (os, dyn_tmp) = load_os_fonts(rt, family, donor);
+        let (os, dyn_tmp) = load_os_fonts(rt, family, donor, &mut st.os_handles);
         st.os_font = os;
         st.dyn_font = dyn_tmp;
     }
 
-    let t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
+    let t_fa = st.t_fa;
     if !t_fa.is_null() {
         if !st.bundle_font.is_null() && !st.dyn_font.is_null() && st.bundle_font != st.dyn_font {
             attach_fallback_to_asset(rt, t_fa, st.bundle_font, st.dyn_font);
@@ -243,7 +276,7 @@ fn dont_destroy(rt: &dyn UnityRuntime, obj: *mut c_void) {
     }
 }
 
-fn load_bundle_font(rt: &dyn UnityRuntime, dir: &str) -> *mut c_void {
+fn load_bundle_font(rt: &dyn UnityRuntime, dir: &str, handles: &mut Vec<u32>) -> *mut c_void {
     let ver = unity_version(rt);
     let path = Path::new(dir).join(pick_bundle(&ver));
     if !path.exists() {
@@ -280,7 +313,10 @@ fn load_bundle_font(rt: &dyn UnityRuntime, dir: &str) -> *mut c_void {
     if ab.is_null() {
         return std::ptr::null_mut();
     }
-    rt.gchandle_pin(ab);
+    let h_ab = rt.gchandle_pin(ab);
+    if h_ab != 0 {
+        handles.push(h_ab);
+    }
     dont_destroy(rt, ab);
 
     let mut arr = std::ptr::null_mut();
@@ -306,7 +342,10 @@ fn load_bundle_font(rt: &dyn UnityRuntime, dir: &str) -> *mut c_void {
         }
         let k = rt.object_get_class(elem);
         if rt.class_is_assignable_from(t_fa, k) {
-            rt.gchandle_pin(elem);
+            let h = rt.gchandle_pin(elem);
+            if h != 0 {
+                handles.push(h);
+            }
             dont_destroy(rt, elem);
             return elem;
         }
@@ -318,6 +357,7 @@ fn load_os_fonts(
     rt: &dyn UnityRuntime,
     family: &str,
     donor_font: *mut c_void,
+    handles: &mut Vec<u32>,
 ) -> (*mut c_void, *mut c_void) {
     let t_font = rt.find_class("UnityEngine.TextRenderingModule", "UnityEngine", "Font");
     if t_font.is_null() {
@@ -400,12 +440,18 @@ fn load_os_fonts(
     if os_font.is_null() {
         return (std::ptr::null_mut(), std::ptr::null_mut());
     }
-    rt.gchandle_pin(os_font);
+    let h_os = rt.gchandle_pin(os_font);
+    if h_os != 0 {
+        handles.push(h_os);
+    }
     dont_destroy(rt, os_font);
 
     let dyn_tmp = create_tmp_font_asset(rt, os_font, donor_font);
     if !dyn_tmp.is_null() {
-        rt.gchandle_pin(dyn_tmp);
+        let h_dyn = rt.gchandle_pin(dyn_tmp);
+        if h_dyn != 0 {
+            handles.push(h_dyn);
+        }
         dont_destroy(rt, dyn_tmp);
     }
     (os_font, dyn_tmp)
@@ -678,8 +724,8 @@ fn has_all_non_ascii(
                 return true;
             }
         }
-        let mut c16 = code as u16;
-        let mut args = [&mut c16 as *mut u16 as *mut c_void];
+        let mut c32 = code;
+        let mut args = [&mut c32 as *mut u32 as *mut c_void];
         let Some(boxed) = rt.invoke(m_has, font_asset, &mut args) else {
             return true;
         };
@@ -725,8 +771,14 @@ fn apply_component_font(
         return;
     }
 
-    let t_tmp = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_Text");
-    let t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
+    if st.t_tmp.is_null() {
+        st.t_tmp = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_Text");
+    }
+    if st.t_fa.is_null() {
+        st.t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
+    }
+    let t_tmp = st.t_tmp;
+    let t_fa = st.t_fa;
     if t_tmp.is_null() || t_fa.is_null() {
         return;
     }
@@ -792,12 +844,7 @@ fn scale_component_font(
     hook_id: u64,
     scale: f32,
 ) {
-    if st.scaled.len() >= MAX_SCALED_CACHE {
-        st.scaled.clear();
-    }
-    if !st.scaled.insert(component as usize) {
-        return;
-    }
+    let key = component as usize;
     let comp_cls = rt.object_get_class(component);
     if comp_cls.is_null() {
         return;
@@ -813,14 +860,30 @@ fn scale_component_font(
     if is_tmp_hook(hook_id) {
         let cur = unsafe { *(val_ptr as *const f32) };
         if cur > 0.0 {
+            let cur_bits = cur.to_bits();
+            if st.scaled.get(&key).copied() == Some(cur_bits) {
+                return;
+            }
             let mut next = (cur * scale).max(1.0);
             let _ = rt.invoke(m_set, component, &mut [&mut next as *mut f32 as *mut c_void]);
+            if st.scaled.len() >= MAX_SCALED_CACHE && !st.scaled.contains_key(&key) {
+                st.scaled.clear();
+            }
+            st.scaled.insert(key, next.to_bits());
         }
     } else if hook_id == HOOK_UI_TEXT_SET_TEXT || hook_id == HOOK_TEXTMESH_SET_TEXT {
         let cur = unsafe { *(val_ptr as *const i32) };
         if cur > 0 {
+            let cur_bits = cur as u32;
+            if st.scaled.get(&key).copied() == Some(cur_bits) {
+                return;
+            }
             let mut next = ((cur as f32) * scale).round().max(1.0) as i32;
             let _ = rt.invoke(m_set, component, &mut [&mut next as *mut i32 as *mut c_void]);
+            if st.scaled.len() >= MAX_SCALED_CACHE && !st.scaled.contains_key(&key) {
+                st.scaled.clear();
+            }
+            st.scaled.insert(key, next as u32);
         }
     }
 }

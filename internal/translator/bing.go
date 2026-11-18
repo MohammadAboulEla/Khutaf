@@ -55,8 +55,11 @@ func NewBing(cfg config.BingSettings) *Bing {
 			Timeout:   15 * time.Second,
 			Transport: newHTTPTransport(),
 			Jar:       jar,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
+			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+				if len(via) > 0 && via[0].Method == http.MethodPost {
+					return http.ErrUseLastResponse
+				}
+				return nil
 			},
 		},
 	}
@@ -127,10 +130,10 @@ func (b *Bing) getSession(ctx context.Context, force bool) (*bingSession, error)
 
 	var ig, iid string
 	if m := reBingIID.FindStringSubmatch(html); len(m) >= 2 {
-		ig = m[1]
+		iid = m[1]
 	}
 	if m := reBingIG.FindStringSubmatch(html); len(m) >= 2 {
-		iid = m[1]
+		ig = m[1]
 	}
 
 	b.sess = &bingSession{key: key, token: token, ig: ig, iid: iid}

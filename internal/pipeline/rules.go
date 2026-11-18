@@ -55,32 +55,33 @@ func (rs *RuleSet) Apply(s string) string {
 }
 
 var protectedMarks = []*regexp.Regexp{
-	regexp.MustCompile(`\[[^\]]+\]`),
+	regexp.MustCompile(`\[(?:\d+|[A-Z0-9_]+|[a-z][a-z0-9_]*|[A-Za-z0-9_.:=-]*[:=_-][^\]]*)\]`),
 	regexp.MustCompile(`\{[^\}]+\}`),
 }
 
-// PlaceholdersPreserved reports whether trans contains exactly the same set of
-// [vars] and {vars} as the source. Injecting a translation that drops them can
-// crash games that format these strings.
+// PlaceholdersPreserved reports whether trans contains the exact same multiset of
+// technical [vars] and {vars} as the source. Injecting a translation that drops
+// them can crash games that format these strings.
 func PlaceholdersPreserved(source, trans string) bool {
 	for _, re := range protectedMarks {
-		if !sameSet(re.FindAllString(source, -1), re.FindAllString(trans, -1)) {
+		if !sameMultiset(re.FindAllString(source, -1), re.FindAllString(trans, -1)) {
 			return false
 		}
 	}
 	return true
 }
 
-func sameSet(a, b []string) bool {
-	set := make(map[string]int, len(a))
+func sameMultiset(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
 	for _, s := range a {
-		set[s] |= 1
+		counts[s]++
 	}
 	for _, s := range b {
-		set[s] |= 2
-	}
-	for _, v := range set {
-		if v != 3 {
+		counts[s]--
+		if counts[s] < 0 {
 			return false
 		}
 	}

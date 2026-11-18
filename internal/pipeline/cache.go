@@ -112,6 +112,7 @@ func loadSQLite() (*sqliteLib, error) {
 type Cache struct {
 	mu     sync.RWMutex
 	api    *sqliteLib
+	dbMu   sync.Mutex
 	db     uintptr
 	mem    map[cacheKey]CacheEntry
 	manual map[manualKey]string
@@ -175,6 +176,7 @@ func OpenCache(dbPath string) (*Cache, error) {
 		shared: make(map[sharedKey]string),
 	}
 	const schemaSQL = `
+PRAGMA busy_timeout=5000;
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 CREATE TABLE IF NOT EXISTS translations (
@@ -204,6 +206,8 @@ func (c *Cache) Close() error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.dbMu.Lock()
+	defer c.dbMu.Unlock()
 	if c.db != 0 && c.api != nil {
 		r, _, _ := c.api.procCloseV2.Call(c.db)
 		c.db = 0
@@ -255,10 +259,13 @@ func (c *Cache) PutAuto(gameUID, provider, sourceText, translated string) {
 	now := time.Now().Unix()
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	if _, hasManual := c.manual[manualKey{gameUID: g, sourceText: sourceText}]; hasManual {
+		c.mu.Unlock()
+		return
+	}
 	k := cacheKey{gameUID: g, provider: provider, sourceText: sourceText}
 	if existing, ok := c.mem[k]; ok && existing.Manual {
+		c.mu.Unlock()
 		return
 	}
 	c.mem[k] = CacheEntry{
@@ -270,8 +277,15 @@ func (c *Cache) PutAuto(gameUID, provider, sourceText, translated string) {
 		UpdatedAt:  now,
 	}
 	c.shared[sharedKey{provider: provider, sourceText: sourceText}] = translated
-	if c.db != 0 {
-		_ = c.execUpsertAutoLocked(g, provider, sourceText, translated, now)
+	hasDB := c.db != 0
+	c.mu.Unlock()
+
+	if hasDB {
+		c.dbMu.Lock()
+		if c.db != 0 {
+			_ = c.execUpsertAutoLocked(g, provider, sourceText, translated, now)
+		}
+		c.dbMu.Unlock()
 	}
 }
 
@@ -290,7 +304,10 @@ func (c *Cache) PutManual(gameUID, provider, sourceText, translated string) erro
 	defer c.mu.Unlock()
 
 	if c.db != 0 {
-		if err := c.execUpsertManualLocked(g, provider, sourceText, translated, now); err != nil {
+		c.dbMu.Lock()
+		err := c.execUpsertManualLocked(g, provider, sourceText, translated, now)
+		c.dbMu.Unlock()
+		if err != nil {
 			return err
 		}
 	}
@@ -304,7 +321,9 @@ func (c *Cache) PutManual(gameUID, provider, sourceText, translated string) erro
 		UpdatedAt:  now,
 	}
 	c.manual[manualKey{gameUID: g, sourceText: sourceText}] = translated
-	c.shared[sharedKey{provider: provider, sourceText: sourceText}] = translated
+	if g == "global" {
+		c.shared[sharedKey{provider: provider, sourceText: sourceText}] = translated
+	}
 	return nil
 }
 
@@ -319,7 +338,10 @@ func (c *Cache) Delete(gameUID, provider, sourceText string) error {
 	defer c.mu.Unlock()
 
 	if c.db != 0 {
-		if err := c.execDeleteLocked(g, provider, sourceText); err != nil {
+		c.dbMu.Lock()
+		err := c.execDeleteLocked(g, provider, sourceText)
+		c.dbMu.Unlock()
+		if err != nil {
 			return err
 		}
 	}
@@ -356,6 +378,7 @@ func (c *Cache) Clear(gameUID string, includeManual bool) int {
 	c.rebuildSharedIndexLocked()
 
 	if c.db != 0 {
+		c.dbMu.Lock()
 		if all {
 			if includeManual {
 				_ = c.exec("DELETE FROM translations;")
@@ -365,6 +388,7 @@ func (c *Cache) Clear(gameUID string, includeManual bool) int {
 		} else {
 			_ = c.execClearScopeLocked(g, includeManual)
 		}
+		c.dbMu.Unlock()
 	}
 	return removed
 }
@@ -468,6 +492,9 @@ func (c *Cache) refreshSharedKeyLocked(provider, sourceText string) {
 	bestVal := ""
 	found := false
 	for _, e := range c.mem {
+		if e.Manual && e.GameUID != "global" {
+			continue
+		}
 		if e.Provider == provider && e.SourceText == sourceText {
 			if !found || e.UpdatedAt >= bestUpdated {
 				found = true
@@ -487,6 +514,9 @@ func (c *Cache) rebuildSharedIndexLocked() {
 	c.shared = make(map[sharedKey]string)
 	bestTs := make(map[sharedKey]int64)
 	for _, e := range c.mem {
+		if e.Manual && e.GameUID != "global" {
+			continue
+		}
 		sk := sharedKey{provider: e.Provider, sourceText: e.SourceText}
 		if prev, exists := bestTs[sk]; !exists || e.UpdatedAt >= prev {
 			bestTs[sk] = e.UpdatedAt

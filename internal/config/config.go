@@ -185,8 +185,14 @@ func Default() Config {
 type Store struct {
 	dir   string
 	mu    sync.RWMutex
+	ioMu  sync.Mutex
 	cfg   Config
 	games map[string]GameProfile
+}
+
+// NewMemoryStore creates an in-memory Store with default settings and no disk backing.
+func NewMemoryStore() *Store {
+	return &Store{cfg: Default(), games: map[string]GameProfile{}}
 }
 
 // Open loads (or initializes) the store in dir.
@@ -227,15 +233,21 @@ func (s *Store) Dir() string { return s.dir }
 func (s *Store) Config() Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.cfg
+	return cloneConfig(s.cfg)
 }
 
 // SaveConfig replaces and persists the config.
 func (s *Store) SaveConfig(c Config) error {
+	c = cloneConfig(c)
 	s.mu.Lock()
 	s.cfg = c
 	games := s.gamesSnapshotLocked()
 	s.mu.Unlock()
+	if s.dir == "" {
+		return nil
+	}
+	s.ioMu.Lock()
+	defer s.ioMu.Unlock()
 	if err := writeJSON(filepath.Join(s.dir, "config.json"), c); err != nil {
 		return err
 	}
@@ -246,21 +258,14 @@ func (s *Store) SaveConfig(c Config) error {
 func (s *Store) Game(exePath string) GameProfile {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.games[gameKey(exePath)]
+	return cloneGameProfile(s.games[gameKey(exePath)])
 }
 
 // Games returns a snapshot of all saved game profiles keyed by normalized exe path.
 func (s *Store) Games() map[string]GameProfile {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make(map[string]GameProfile, len(s.games))
-	for k, v := range s.games {
-		hooks := make([]EmbedHook, len(v.EmbedHooks))
-		copy(hooks, v.EmbedHooks)
-		v.EmbedHooks = hooks
-		out[k] = v
-	}
-	return out
+	return s.gamesSnapshotLocked()
 }
 
 // DeleteGame removes a saved game profile and persists games.json.
@@ -268,8 +273,13 @@ func (s *Store) DeleteGame(exePath string) error {
 	s.mu.Lock()
 	delete(s.games, gameKey(exePath))
 	snapshot := s.gamesSnapshotLocked()
-	globalGlossary := s.cfg.Pipeline.Glossary
+	globalGlossary := cloneGlossary(s.cfg.Pipeline.Glossary)
 	s.mu.Unlock()
+	if s.dir == "" {
+		return nil
+	}
+	s.ioMu.Lock()
+	defer s.ioMu.Unlock()
 	if err := writeJSON(filepath.Join(s.dir, "games.json"), snapshot); err != nil {
 		return err
 	}
@@ -279,7 +289,7 @@ func (s *Store) DeleteGame(exePath string) error {
 func (s *Store) gamesSnapshotLocked() map[string]GameProfile {
 	snapshot := make(map[string]GameProfile, len(s.games))
 	for k, v := range s.games {
-		snapshot[k] = v
+		snapshot[k] = cloneGameProfile(v)
 	}
 	return snapshot
 }
@@ -288,16 +298,60 @@ func (s *Store) gamesSnapshotLocked() map[string]GameProfile {
 func (s *Store) UpdateGame(exePath string, fn func(*GameProfile)) error {
 	s.mu.Lock()
 	key := gameKey(exePath)
-	g := s.games[key]
+	g := cloneGameProfile(s.games[key])
 	fn(&g)
-	s.games[key] = g
+	s.games[key] = cloneGameProfile(g)
 	snapshot := s.gamesSnapshotLocked()
-	globalGlossary := s.cfg.Pipeline.Glossary
+	globalGlossary := cloneGlossary(s.cfg.Pipeline.Glossary)
 	s.mu.Unlock()
+	if s.dir == "" {
+		return nil
+	}
+	s.ioMu.Lock()
+	defer s.ioMu.Unlock()
 	if err := writeJSON(filepath.Join(s.dir, "games.json"), snapshot); err != nil {
 		return err
 	}
 	return s.saveGlossaryFile(globalGlossary, snapshot)
+}
+
+func clonePipeline(p PipelineSettings) PipelineSettings {
+	if p.PreRules != nil {
+		r := make([]Rule, len(p.PreRules))
+		copy(r, p.PreRules)
+		p.PreRules = r
+	}
+	if p.PostRules != nil {
+		r := make([]Rule, len(p.PostRules))
+		copy(r, p.PostRules)
+		p.PostRules = r
+	}
+	p.Glossary = cloneGlossary(p.Glossary)
+	return p
+}
+
+func cloneGlossary(g []GlossaryEntry) []GlossaryEntry {
+	if g == nil {
+		return nil
+	}
+	out := make([]GlossaryEntry, len(g))
+	copy(out, g)
+	return out
+}
+
+func cloneConfig(c Config) Config {
+	c.Pipeline = clonePipeline(c.Pipeline)
+	return c
+}
+
+func cloneGameProfile(g GameProfile) GameProfile {
+	if g.EmbedHooks != nil {
+		hooks := make([]EmbedHook, len(g.EmbedHooks))
+		copy(hooks, g.EmbedHooks)
+		g.EmbedHooks = hooks
+	}
+	g.Pipeline = clonePipeline(g.Pipeline)
+	return g
 }
 
 func (s *Store) saveGlossaryFile(global []GlossaryEntry, games map[string]GameProfile) error {
@@ -339,9 +393,27 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("rename %s: %w", path, err)
+	}
+	cleanup = false
+	return nil
 }

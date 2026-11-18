@@ -4,15 +4,18 @@
 //! reader thread and game threads that send.
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Write};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use khutaf_proto::{read_msg, write_msg, Msg};
+use khutaf_proto::{read_msg, Msg};
 
 use crate::embed;
 
-static UP: Mutex<Option<File>> = Mutex::new(None);
+const SEND_QUEUE_CAP: usize = 512;
+
+static TX: Mutex<Option<SyncSender<Vec<u8>>>> = Mutex::new(None);
 static DOWN: Mutex<Option<File>> = Mutex::new(None);
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -29,28 +32,39 @@ fn open_retry(path: &str, write: bool) -> io::Result<File> {
 }
 
 pub fn connect(pid: u32) -> io::Result<()> {
-    let up = open_retry(&format!(r"\\.\pipe\khutaf_{pid}_up"), true)?;
+    let mut up = open_retry(&format!(r"\\.\pipe\khutaf_{pid}_up"), true)?;
     let down = open_retry(&format!(r"\\.\pipe\khutaf_{pid}_down"), false)?;
-    *UP.lock().unwrap() = Some(up);
-    *DOWN.lock().unwrap() = Some(down);
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(SEND_QUEUE_CAP);
+    std::thread::spawn(move || {
+        while let Ok(frame) = rx.recv() {
+            if up.write_all(&frame).is_err() {
+                break;
+            }
+        }
+        *TX.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    });
+    *TX.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
+    *DOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some(down);
     Ok(())
 }
 
-/// Sends a message; silently drops it when disconnected or the pipe broke.
+/// Enqueues a message for async pipe write; drops it without blocking when full or disconnected.
 pub fn send(msg: &Msg) -> bool {
-    let mut guard = match UP.lock() {
+    let frame = msg.encode();
+    let mut guard = match TX.lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
-    match guard.as_mut() {
-        Some(f) => {
-            if write_msg(f, msg).is_err() {
-                *guard = None;
-                return false;
-            }
-            true
+    let Some(tx) = guard.as_ref() else {
+        return false;
+    };
+    match tx.try_send(frame) {
+        Ok(()) => true,
+        Err(TrySendError::Full(_)) => false,
+        Err(TrySendError::Disconnected(_)) => {
+            *guard = None;
+            false
         }
-        None => false,
     }
 }
 
@@ -70,6 +84,6 @@ pub fn serve() {
 }
 
 pub fn close() {
-    *UP.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    *TX.lock().unwrap_or_else(|p| p.into_inner()) = None;
     *DOWN.lock().unwrap_or_else(|p| p.into_inner()) = None;
 }

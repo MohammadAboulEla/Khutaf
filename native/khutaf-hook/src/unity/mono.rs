@@ -3,7 +3,6 @@
 use std::collections::HashSet;
 use std::ffi::{c_char, c_void, CString};
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::OnceLock;
 
 use khutaf_proto::{level, Msg};
 use windows_sys::Win32::Foundation::HMODULE;
@@ -51,8 +50,10 @@ pub(crate) struct MonoApi {
     string_new_utf16: unsafe extern "C" fn(*mut c_void, *const u16, i32) -> *mut c_void,
     get_string_class: Option<unsafe extern "C" fn() -> *mut c_void>,
     array_new: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, u32) -> *mut c_void>,
+    array_length: Option<unsafe extern "C" fn(*mut c_void) -> u32>,
     array_addr_with_size: Option<unsafe extern "C" fn(*mut c_void, i32, usize) -> *mut u8>,
     gchandle_new: Option<unsafe extern "C" fn(*mut c_void, i32) -> u32>,
+    gchandle_free: Option<unsafe extern "C" fn(u32)>,
     object_new: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void>,
     class_get_field_from_name: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void>,
     field_get_value: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
@@ -64,7 +65,8 @@ pub(crate) struct MonoApi {
     runtime_class_init: Option<unsafe extern "C" fn(*mut c_void)>,
 }
 
-static MONO: OnceLock<Option<MonoApi>> = OnceLock::new();
+static MONO: AtomicPtr<MonoApi> = AtomicPtr::new(std::ptr::null_mut());
+static MONO_INIT_MU: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 static ORIG_TMP_SET_TEXT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_TMP_SETTEXT_1: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
@@ -92,7 +94,19 @@ fn find_mono_module() -> HMODULE {
 
 impl MonoApi {
     pub(crate) fn get() -> Option<&'static MonoApi> {
-        MONO.get_or_init(|| Self::load()).as_ref()
+        let p = MONO.load(Ordering::Acquire);
+        if !p.is_null() {
+            return Some(unsafe { &*p });
+        }
+        let _guard = MONO_INIT_MU.lock().unwrap_or_else(|e| e.into_inner());
+        let p = MONO.load(Ordering::Acquire);
+        if !p.is_null() {
+            return Some(unsafe { &*p });
+        }
+        let api = Self::load()?;
+        let leaked = Box::into_raw(Box::new(api));
+        MONO.store(leaked, Ordering::Release);
+        Some(unsafe { &*leaked })
     }
 
     fn load() -> Option<MonoApi> {
@@ -129,8 +143,10 @@ impl MonoApi {
             string_new_utf16: proc_addr(m, "mono_string_new_utf16")?,
             get_string_class: proc_addr(m, "mono_get_string_class"),
             array_new: proc_addr(m, "mono_array_new"),
+            array_length: proc_addr(m, "mono_array_length"),
             array_addr_with_size: proc_addr(m, "mono_array_addr_with_size"),
             gchandle_new: proc_addr(m, "mono_gchandle_new"),
+            gchandle_free: proc_addr(m, "mono_gchandle_free"),
             object_new: proc_addr(m, "mono_object_new"),
             class_get_field_from_name: proc_addr(m, "mono_class_get_field_from_name"),
             field_get_value: proc_addr(m, "mono_field_get_value"),
@@ -336,6 +352,9 @@ impl UnityRuntime for MonoApi {
     }
 
     fn class_get_type_object(&self, klass: *mut c_void) -> *mut c_void {
+        if klass.is_null() {
+            return std::ptr::null_mut();
+        }
         let (Some(get_ty), Some(get_obj)) = (self.class_get_type, self.type_get_object) else {
             return std::ptr::null_mut();
         };
@@ -444,7 +463,13 @@ impl UnityRuntime for MonoApi {
         if arr.is_null() {
             return Vec::new();
         }
-        let len = unsafe { *(arr as *const usize).add(3) }.min(4096);
+        let raw_len = match self.array_length {
+            Some(f) => unsafe { f(arr) as usize },
+            None => unsafe {
+                *((arr as *const u8).add(3 * std::mem::size_of::<usize>()) as *const u32) as usize
+            },
+        };
+        let len = raw_len.min(4096);
         let mut out = Vec::with_capacity(len);
         for i in 0..len {
             let ptr = match self.array_addr_with_size {
@@ -460,10 +485,19 @@ impl UnityRuntime for MonoApi {
         out
     }
 
-    fn gchandle_pin(&self, obj: *mut c_void) {
+    fn gchandle_pin(&self, obj: *mut c_void) -> u32 {
         if let Some(f) = self.gchandle_new {
             if !obj.is_null() {
-                unsafe { f(obj, 1) };
+                return unsafe { f(obj, 1) };
+            }
+        }
+        0
+    }
+
+    fn gchandle_free(&self, handle: u32) {
+        if handle != 0 {
+            if let Some(f) = self.gchandle_free {
+                unsafe { f(handle) };
             }
         }
     }
@@ -710,10 +744,16 @@ macro_rules! mono_detour_1 {
             let Some(_guard) = hooks::Enter::try_new() else {
                 return orig(this, text);
             };
-            let Some(api) = MonoApi::get() else {
-                return orig(this, text);
+            let next = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                MonoApi::get().map(|api| handle_mono_text(api, this, text, $hook_id))
+            })) {
+                Ok(Some(n)) => n,
+                Ok(None) => text,
+                Err(_) => {
+                    crate::log(level::ERROR, "panic in mono detour");
+                    text
+                }
             };
-            let next = handle_mono_text(api, this, text, $hook_id);
             orig(this, next);
         }
     };
@@ -726,10 +766,16 @@ macro_rules! mono_detour_2 {
             let Some(_guard) = hooks::Enter::try_new() else {
                 return orig(this, text, sync);
             };
-            let Some(api) = MonoApi::get() else {
-                return orig(this, text, sync);
+            let next = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                MonoApi::get().map(|api| handle_mono_text(api, this, text, $hook_id))
+            })) {
+                Ok(Some(n)) => n,
+                Ok(None) => text,
+                Err(_) => {
+                    crate::log(level::ERROR, "panic in mono detour");
+                    text
+                }
             };
-            let next = handle_mono_text(api, this, text, $hook_id);
             orig(this, next, sync);
         }
     };

@@ -15,7 +15,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"khutaf/internal/config"
 )
 
@@ -65,6 +67,7 @@ func (l *boundedLog) Reset() {
 type LlamaCppManager struct {
 	mu        sync.Mutex
 	cmd       *exec.Cmd
+	job       windows.Handle
 	done      chan struct{}
 	running   bool
 	ready     bool
@@ -119,7 +122,7 @@ func (m *LlamaCppManager) Start(cfg config.LlamaCppSettings) error {
 		"-ngl", strconv.Itoa(cfg.GPULayers),
 		"-c", strconv.Itoa(ctxSize),
 	}
-	if extra := strings.Fields(cfg.ExtraArgs); len(extra) > 0 {
+	if extra := splitCLIArgs(cfg.ExtraArgs); len(extra) > 0 {
 		args = append(args, extra...)
 	}
 
@@ -137,8 +140,10 @@ func (m *LlamaCppManager) Start(cfg config.LlamaCppSettings) error {
 	}
 
 	done := make(chan struct{})
+	job := assignKillOnCloseJob(cmd.Process.Pid)
 	m.mu.Lock()
 	m.cmd = cmd
+	m.job = job
 	m.done = done
 	m.running = true
 	m.ready = false
@@ -189,6 +194,7 @@ func (m *LlamaCppManager) Start(cfg config.LlamaCppSettings) error {
 		time.Sleep(350 * time.Millisecond)
 	}
 
+	_ = m.Stop()
 	return errors.New("llama-server started but health check timed out")
 }
 
@@ -196,9 +202,14 @@ func (m *LlamaCppManager) Start(cfg config.LlamaCppSettings) error {
 func (m *LlamaCppManager) Stop() error {
 	m.mu.Lock()
 	cmd := m.cmd
+	job := m.job
+	m.job = 0
 	done := m.done
 	m.mu.Unlock()
 
+	if job != 0 {
+		_ = windows.CloseHandle(job)
+	}
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
@@ -218,6 +229,69 @@ func (m *LlamaCppManager) Stop() error {
 	}
 	m.mu.Unlock()
 	return nil
+}
+
+func assignKillOnCloseJob(pid int) windows.Handle {
+	job, err := windows.CreateJobObject(nil, nil)
+	if err != nil {
+		return 0
+	}
+	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	if _, err := windows.SetInformationJobObject(
+		job,
+		windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(&info)),
+		uint32(unsafe.Sizeof(info)),
+	); err != nil {
+		_ = windows.CloseHandle(job)
+		return 0
+	}
+	proc, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		_ = windows.CloseHandle(job)
+		return 0
+	}
+	err = windows.AssignProcessToJobObject(job, proc)
+	_ = windows.CloseHandle(proc)
+	if err != nil {
+		_ = windows.CloseHandle(job)
+		return 0
+	}
+	return job
+}
+
+func splitCLIArgs(s string) []string {
+	var args []string
+	var cur strings.Builder
+	var quote rune
+	inToken := false
+	for _, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				cur.WriteRune(r)
+			}
+		case r == '"' || r == '\'':
+			quote = r
+			inToken = true
+		case r == ' ' || r == '\t' || r == '\r' || r == '\n':
+			if inToken {
+				args = append(args, cur.String())
+				cur.Reset()
+				inToken = false
+			}
+		default:
+			cur.WriteRune(r)
+			inToken = true
+		}
+	}
+	if inToken {
+		args = append(args, cur.String())
+	}
+	return args
 }
 
 // Close stops the managed server on application shutdown.

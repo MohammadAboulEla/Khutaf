@@ -1,3 +1,5 @@
+//go:build windows
+
 package session
 
 import (
@@ -56,7 +58,7 @@ func (s *Session) updateUnityFontState(fn func(*UnityFontStatus)) {
 	st.Dir = dir
 	st.Count = count
 	st.Installed = count > 0
-	s.emit("unityfonts:progress", st)
+	s.post("unityfonts:progress", st)
 }
 
 // DownloadUnityFonts downloads TMP_Font_AssetBundles.zip from GitHub Releases and extracts it
@@ -204,7 +206,7 @@ func extractSingleBundle(f *zip.File, dstPath string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, rc); err != nil {
+	if _, err := io.Copy(out, io.LimitReader(rc, 256<<20)); err != nil {
 		out.Close()
 		os.Remove(tmpPath)
 		return err
