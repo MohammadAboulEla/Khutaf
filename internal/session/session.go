@@ -749,15 +749,21 @@ func (s *Session) pushEmbedSettings(pid uint32) {
 	} else if waitMs > 30000 {
 		waitMs = 30000
 	}
+	pending := strings.TrimSpace(cfg.PendingText)
+	if pending != "" && arabic.HasArabic(pending) {
+		pending = s.ShapeForEmbed(pending)
+	}
 	s.host.SettingsEx(pid, hook.EmbedSettings{
-		WaitTimeMs:       uint32(waitMs),
-		FontFamily:       font,
-		DisplayMode:      hook.DisplayMode(cfg.DisplayMode),
-		ClearText:        cfg.ClearText,
-		ChangeFontSize:   cfg.ChangeFontSize,
+		WaitTimeMs:          uint32(waitMs),
+		FontFamily:          font,
+		DisplayMode:         hook.DisplayMode(cfg.DisplayMode),
+		ClearText:           cfg.ClearText,
+		ChangeFontSize:      cfg.ChangeFontSize,
 		FontSizeRelative:    cfg.FontSizeRelative,
 		UnityFontDir:        unityDir,
 		StripTypewriterTags: cfg.StripTypewriterTags,
+		NonBlocking:         cfg.NonBlocking,
+		PendingText:         pending,
 	})
 }
 
@@ -886,16 +892,24 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 	}
 	preUs = time.Since(t0).Microseconds()
 
+	ecfg := s.embedCfg.Load()
 	t1 := time.Now()
 	if debugging && !s.debugRealTrans.Load() {
 		trans = fmt.Sprintf("نص اختباري %d", seq)
 	} else {
-		timeout := time.Duration(s.embedCfg.Load().TimeoutMs) * time.Millisecond
+		timeout := time.Duration(ecfg.TimeoutMs) * time.Millisecond
 		if timeout <= 0 {
 			timeout = 2 * time.Second
 		}
-		// Leave headroom so the reply arrives before the game stops waiting.
-		ctx, cancel := context.WithTimeout(context.Background(), timeout*9/10)
+		if ecfg.NonBlocking {
+			if timeout < 12*time.Second {
+				timeout = 12 * time.Second
+			}
+		} else {
+			// Leave headroom so the reply arrives before the game stops waiting.
+			timeout = timeout * 9 / 10
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		if glossaryPrompt != "" {
 			ctx = translator.WithGlossaryPrompt(ctx, glossaryPrompt)
 		}
@@ -937,7 +951,7 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 	line.ElapsedMs = totalDur.Milliseconds()
 	s.post(EventEmbedLine, line)
 
-	timeoutMs := int64(s.embedCfg.Load().TimeoutMs)
+	timeoutMs := int64(ecfg.TimeoutMs)
 	if timeoutMs <= 0 {
 		timeoutMs = 2000
 	}
@@ -952,7 +966,7 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 			lvl = "error"
 		}
 		isTimeout = isTimeoutMsg(msg)
-	} else if totalDur.Milliseconds() > (timeoutMs*80)/100 {
+	} else if !ecfg.NonBlocking && totalDur.Milliseconds() > (timeoutMs*80)/100 {
 		lvl = "warn"
 		msg = "embed latency > 80% of TimeoutMs"
 	}

@@ -26,6 +26,8 @@ type EmbedSettings struct {
 	LimitLineLength     bool    `json:"limitLineLength"` // wrap non-Arabic output too
 	MaxLineLength       int     `json:"maxLineLength"`
 	StripTypewriterTags bool    `json:"stripTypewriterTags"` // strip <color=#00000000> typewriter tags
+	NonBlocking         bool    `json:"nonBlocking"`         // return immediately and update next frame
+	PendingText         string  `json:"pendingText"`         // empty keeps original while translating
 }
 
 // LLMSettings configures an OpenAI-compatible chat completion endpoint.
@@ -145,6 +147,8 @@ func Default() Config {
 			FontSizeRelative:    1,
 			MaxLineLength:       40,
 			StripTypewriterTags: true,
+			NonBlocking:         true,
+			PendingText:         "",
 		},
 		Translator: TranslatorSettings{
 			Active: "bing",

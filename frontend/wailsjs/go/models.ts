@@ -220,6 +220,8 @@ export namespace config {
 	    limitLineLength: boolean;
 	    maxLineLength: number;
 	    stripTypewriterTags: boolean;
+	    nonBlocking: boolean;
+	    pendingText: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new EmbedSettings(source);
@@ -238,6 +240,8 @@ export namespace config {
 	        this.limitLineLength = source["limitLineLength"];
 	        this.maxLineLength = source["maxLineLength"];
 	        this.stripTypewriterTags = source["stripTypewriterTags"];
+	        this.nonBlocking = source["nonBlocking"];
+	        this.pendingText = source["pendingText"];
 	    }
 	}
 	export class Config {

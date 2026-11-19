@@ -12,7 +12,7 @@ import (
 // Wire protocol shared with native/khutaf-proto (keep both in sync).
 // Frame: u32 len | u8 type | payload (little-endian, UTF-16 strings).
 
-const protoVersion = 1
+const protoVersion = 2
 
 const maxFrame = 16 * 1024 * 1024
 
@@ -57,10 +57,11 @@ type wireMsg struct {
 }
 
 type wireSettings struct {
-	WaitMs, DisplayMode                     uint32
-	FontFamily, FontDir                     string
-	ClearText, ChangeSize, StripTypewriter  bool
-	FontScale                               float32
+	WaitMs, DisplayMode                    uint32
+	FontFamily, FontDir, PendingText       string
+	ClearText, ChangeSize, StripTypewriter bool
+	NonBlocking                            bool
+	FontScale                              float32
 }
 
 type encoder struct{ b []byte }
@@ -125,6 +126,8 @@ func (m *wireMsg) encode() []byte {
 		e.boolean(s.ChangeSize)
 		e.u32(math.Float32bits(s.FontScale))
 		e.boolean(s.StripTypewriter)
+		e.boolean(s.NonBlocking)
+		e.str(s.PendingText)
 	case msgSetEmbed:
 		e.u64(m.HookID)
 		e.u64(m.Ctx)
@@ -225,6 +228,8 @@ func decodeBody(body []byte) (*wireMsg, error) {
 		s.ClearText, s.ChangeSize = d.boolean(), d.boolean()
 		s.FontScale = math.Float32frombits(d.u32())
 		s.StripTypewriter = d.boolean()
+		s.NonBlocking = d.boolean()
+		s.PendingText = d.str()
 	case msgSetEmbed:
 		m.HookID, m.Ctx, m.Ctx2 = d.u64(), d.u64(), d.u64()
 		m.On = d.boolean()

@@ -47,6 +47,8 @@ const form = reactive({
   limitLineLength: false,
   maxLineLength: 40,
   stripTypewriterTags: true,
+  nonBlocking: true,
+  pendingText: "",
 });
 
 watch(
@@ -74,6 +76,8 @@ function onSave() {
       limitLineLength: form.limitLineLength,
       maxLineLength: Number(form.maxLineLength) || 40,
       stripTypewriterTags: form.stripTypewriterTags,
+      nonBlocking: form.nonBlocking,
+      pendingText: form.pendingText.trim(),
     },
   });
 }
@@ -207,7 +211,43 @@ function onSave() {
             <span>Strip Typewriter Alpha Tags — may improve performance</span>
           </label>
         </Tooltip>
+        <Tooltip text="Returns immediately without freezing the game while translating; replaces text on the next game frame once ready.">
+          <label class="chk">
+            <input v-model="form.nonBlocking" type="checkbox" />
+            <span>Non-blocking translation (no freeze while translating)</span>
+          </label>
+        </Tooltip>
       </div>
+
+      <label class="field" :class="{ disabled: !form.nonBlocking }">
+        <span class="lbl">Pending Placeholder Text (empty = keep original text)</span>
+        <div class="pending-controls">
+          <input
+            v-model="form.pendingText"
+            type="text"
+            maxlength="64"
+            placeholder="Empty = show original text (or type ...)"
+            :disabled="!form.nonBlocking"
+            class="input"
+          />
+          <button
+            class="btn secondary"
+            type="button"
+            :disabled="!form.nonBlocking"
+            @click="form.pendingText = ''"
+          >
+            Original
+          </button>
+          <button
+            class="btn secondary"
+            type="button"
+            :disabled="!form.nonBlocking"
+            @click="form.pendingText = '...'"
+          >
+            ...
+          </button>
+        </div>
+      </label>
 
       <div class="actions">
         <button class="btn primary" type="button" @click="onSave">
@@ -338,6 +378,14 @@ function onSave() {
   gap: 8px;
   font-size: 12px;
   cursor: pointer;
+}
+.field.disabled {
+  opacity: 0.55;
+}
+.pending-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .chk.disabled {
   opacity: 0.55;

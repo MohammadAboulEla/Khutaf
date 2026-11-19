@@ -49,6 +49,8 @@ type EmbedSettings struct {
 	FontSizeRelative    float32
 	UnityFontDir        string // folder with arialuni_sdf_u* bundles; empty disables
 	StripTypewriterTags bool
+	NonBlocking         bool
+	PendingText         string // shown immediately while async translation runs; empty keeps original
 }
 
 // HookInfo describes a discovered text thread.

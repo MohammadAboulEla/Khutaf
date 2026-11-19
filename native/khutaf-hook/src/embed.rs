@@ -24,6 +24,45 @@ const CB_THRESHOLD: u32 = 3;
 const CB_OPEN_DURATION: Duration = Duration::from_secs(8);
 const TELEMETRY_RATE_LIMIT: Duration = Duration::from_secs(1);
 const MAX_LATE_PENDING: usize = 32;
+const MAX_ASYNC_IN_FLIGHT: usize = 64;
+const ASYNC_TTL: Duration = Duration::from_secs(16);
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ProcessOutcome {
+    KeepOriginal,
+    Replace { text: String, apply_font: bool },
+}
+
+pub struct ReadyUpdate {
+    pub hook_id: u64,
+    pub component: usize,
+    pub gc_handle: u32,
+    pub text: String,
+    pub apply_font: bool,
+}
+
+struct AsyncTarget {
+    req_id: u64,
+    hook_id: u64,
+    component: usize,
+    gc_handle: u32,
+    generation: u64,
+    orig_text: String,
+    raw_orig_text: String,
+    pending_text: String,
+    display_mode: u32,
+    showed_placeholder: bool,
+    created_at: Instant,
+}
+
+#[derive(Default)]
+struct AsyncState {
+    next_gen: u64,
+    comp_gen: HashMap<usize, u64>,
+    in_flight: HashMap<u64, AsyncTarget>,
+    ready: VecDeque<ReadyUpdate>,
+    handles_to_free: Vec<u32>,
+}
 
 #[derive(Default)]
 struct CircuitState {
@@ -106,6 +145,11 @@ static HAS_OWN_OUTPUTS: AtomicBool = AtomicBool::new(false);
 static DISPLAY_MODE: AtomicU32 = AtomicU32::new(0);
 static STRIP_TYPEWRITER: AtomicBool = AtomicBool::new(false);
 static CLEAR_TEXT: AtomicBool = AtomicBool::new(false);
+static NON_BLOCKING: AtomicBool = AtomicBool::new(false);
+static FRAME_TICK_ACTIVE: AtomicBool = AtomicBool::new(false);
+static HAS_ASYNC_WORK: AtomicBool = AtomicBool::new(false);
+static HAS_ASYNC_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+static ASYNC: LazyLock<Mutex<AsyncState>> = LazyLock::new(Default::default);
 type LastSentMap = HashMap<(u64, u64, u64), (String, Instant)>;
 
 static LAST_SENT_TEXT: LazyLock<Mutex<LastSentMap>> = LazyLock::new(Default::default);
@@ -159,6 +203,7 @@ pub fn set_settings(s: Settings) {
     DISPLAY_MODE.store(s.display_mode, Ordering::Relaxed);
     STRIP_TYPEWRITER.store(s.strip_typewriter_tags, Ordering::Relaxed);
     CLEAR_TEXT.store(s.clear_text, Ordering::Relaxed);
+    NON_BLOCKING.store(s.non_blocking, Ordering::Relaxed);
     *SETTINGS.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(s);
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
@@ -174,6 +219,31 @@ pub(crate) fn strip_typewriter_tags() -> bool {
 
 pub(crate) fn clear_text_enabled() -> bool {
     CLEAR_TEXT.load(Ordering::Relaxed)
+}
+
+pub(crate) fn set_frame_tick_active(active: bool) {
+    FRAME_TICK_ACTIVE.store(active, Ordering::Release);
+}
+
+pub(crate) fn has_async_work() -> bool {
+    HAS_ASYNC_WORK.load(Ordering::Acquire)
+}
+
+pub(crate) fn has_async_in_flight() -> bool {
+    HAS_ASYNC_IN_FLIGHT.load(Ordering::Acquire)
+}
+
+fn sync_async_flags(st: &AsyncState) {
+    HAS_ASYNC_WORK.store(!st.ready.is_empty() || !st.handles_to_free.is_empty(), Ordering::Release);
+    HAS_ASYNC_IN_FLIGHT.store(!st.in_flight.is_empty(), Ordering::Release);
+}
+
+fn push_late_pending(req_id: u64, orig: String) {
+    let mut late = LATE_PENDING.lock().unwrap_or_else(|p| p.into_inner());
+    if late.len() >= MAX_LATE_PENDING {
+        late.pop_front();
+    }
+    late.push_back((req_id, orig));
 }
 
 pub fn set_enabled(hook_id: u64, ctx: u64, ctx2: u64, on: bool) {
@@ -206,7 +276,7 @@ fn is_own_output(text: &str) -> bool {
     OWN_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner()).set.contains(text)
 }
 
-fn remember_output(text: &str) {
+pub(crate) fn remember_output(text: &str) {
     let mut o = OWN_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner());
     if o.set.contains(text) {
         return;
@@ -378,66 +448,177 @@ fn format_display(mode: u32, orig: &str, trans: &str) -> Option<String> {
     }
 }
 
-/// Reports hooked text to the host and, when embedding is enabled for the
-/// thread, blocks up to `wait_ms` for a replacement. `None` = keep original.
-pub fn process(
+/// Reports hooked text to the host and either handles translation asynchronously
+/// (when `non_blocking` and frame-tick writeback are active) or blocks up to `wait_ms`.
+pub fn process_unity(
     hook_id: u64,
     ctx_fn: impl FnOnce() -> u64,
     ctx2: u64,
     component: usize,
-    text: &str,
-) -> Option<String> {
-    if text.trim().is_empty() || is_own_output(text) {
-        return None;
+    cleaned: &str,
+    raw: &str,
+    pin_fn: impl FnOnce() -> u32,
+) -> ProcessOutcome {
+    if cleaned.trim().is_empty() || is_own_output(cleaned) {
+        return ProcessOutcome::KeepOriginal;
     }
 
     let display_mode = DISPLAY_MODE.load(Ordering::Relaxed);
     let clear_text = CLEAR_TEXT.load(Ordering::Relaxed);
     let (ctx, enabled, unchanged_disabled) =
-        resolve_component(hook_id, ctx_fn, ctx2, component, fnv1a_64(text.as_bytes()));
+        resolve_component(hook_id, ctx_fn, ctx2, component, fnv1a_64(cleaned.as_bytes()));
     if unchanged_disabled {
-        return None;
+        return ProcessOutcome::KeepOriginal;
     }
-    if !enabled || display_mode == 3 || text.chars().count() <= 1 {
-        if has_translatable_letters(text) {
-            send_text_dedup(hook_id, ctx, ctx2, text);
+    if !enabled || display_mode == 3 || cleaned.chars().count() <= 1 {
+        if has_translatable_letters(cleaned) {
+            send_text_dedup(hook_id, ctx, ctx2, cleaned);
         }
-        return None;
+        return ProcessOutcome::KeepOriginal;
     }
     if clear_text {
-        send_text_dedup(hook_id, ctx, ctx2, text);
-        return Some(" ".to_owned());
+        send_text_dedup(hook_id, ctx, ctx2, cleaned);
+        return ProcessOutcome::Replace { text: " ".to_owned(), apply_font: false };
     }
-    if !has_translatable_letters(text) {
-        return None;
+    if !has_translatable_letters(cleaned) {
+        return ProcessOutcome::KeepOriginal;
     }
     let cfg = settings();
     if let Some(cached) = RECENT_TRANSLATIONS
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .get(text)
+        .get(cleaned)
     {
-        let cached = cached?;
-        let out = format_display(cfg.display_mode, text, &cached)?;
+        let Some(cached) = cached else { return ProcessOutcome::KeepOriginal };
+        let Some(out) = format_display(cfg.display_mode, cleaned, &cached) else {
+            return ProcessOutcome::KeepOriginal;
+        };
         remember_output(&out);
-        return Some(out);
+        return ProcessOutcome::Replace { text: out, apply_font: true };
     }
 
     {
         let cb = CIRCUIT.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(until) = cb.open_until {
             if Instant::now() < until {
-                return None;
+                return ProcessOutcome::KeepOriginal;
             }
+        }
+    }
+
+    if NON_BLOCKING.load(Ordering::Relaxed) && FRAME_TICK_ACTIVE.load(Ordering::Acquire) && component != 0 {
+        let mut stale_for_late: Option<(u64, String)> = None;
+        {
+            let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+            let same_req = st
+                .in_flight
+                .iter()
+                .find(|(_, t)| t.hook_id == hook_id && t.component == component)
+                .map(|(&rid, _)| rid);
+            if let Some(old_rid) = same_req {
+                let existing = &st.in_flight[&old_rid];
+                if existing.orig_text == cleaned {
+                    return if existing.showed_placeholder {
+                        ProcessOutcome::Replace {
+                            text: existing.pending_text.clone(),
+                            apply_font: !existing.pending_text.is_ascii(),
+                        }
+                    } else {
+                        ProcessOutcome::KeepOriginal
+                    };
+                }
+                if existing.showed_placeholder
+                    && (cleaned == existing.pending_text || raw == existing.pending_text)
+                {
+                    return ProcessOutcome::KeepOriginal;
+                }
+                if let Some(old) = st.in_flight.remove(&old_rid) {
+                    if old.gc_handle != 0 {
+                        st.handles_to_free.push(old.gc_handle);
+                    }
+                    stale_for_late = Some((old.req_id, old.orig_text));
+                    sync_async_flags(&st);
+                }
+            }
+            if st.in_flight.len() >= MAX_ASYNC_IN_FLIGHT {
+                if let Some(&oldest_rid) = st.in_flight.keys().min() {
+                    if let Some(evicted) = st.in_flight.remove(&oldest_rid) {
+                        if evicted.gc_handle != 0 {
+                            st.handles_to_free.push(evicted.gc_handle);
+                        }
+                        sync_async_flags(&st);
+                        // Keep latest evicted line in LATE_PENDING after dropping lock if needed.
+                        if stale_for_late.is_none() {
+                            stale_for_late = Some((evicted.req_id, evicted.orig_text));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some((old_rid, old_text)) = stale_for_late {
+            push_late_pending(old_rid, old_text);
+        }
+
+        let gc_handle = pin_fn();
+        if gc_handle != 0 {
+            let req_id = NEXT_REQ.fetch_add(1, Ordering::Relaxed);
+            let showed_placeholder = !cfg.pending_text.is_empty();
+            {
+                let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+                st.next_gen = st.next_gen.wrapping_add(1).max(1);
+                let gen_id = st.next_gen;
+                st.comp_gen.insert(component, gen_id);
+                st.in_flight.insert(
+                    req_id,
+                    AsyncTarget {
+                        req_id,
+                        hook_id,
+                        component,
+                        gc_handle,
+                        generation: gen_id,
+                        orig_text: cleaned.to_owned(),
+                        raw_orig_text: raw.to_owned(),
+                        pending_text: cfg.pending_text.clone(),
+                        display_mode: cfg.display_mode,
+                        showed_placeholder,
+                        created_at: Instant::now(),
+                    },
+                );
+                sync_async_flags(&st);
+            }
+            if !ipc::send(&Msg::EmbedRequest {
+                req_id,
+                hook_id,
+                ctx,
+                ctx2,
+                text: cleaned.to_owned(),
+            }) {
+                let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(removed) = st.in_flight.remove(&req_id) {
+                    if removed.gc_handle != 0 {
+                        st.handles_to_free.push(removed.gc_handle);
+                    }
+                    sync_async_flags(&st);
+                }
+                return ProcessOutcome::KeepOriginal;
+            }
+            return if showed_placeholder {
+                ProcessOutcome::Replace {
+                    text: cfg.pending_text.clone(),
+                    apply_font: !cfg.pending_text.is_ascii(),
+                }
+            } else {
+                ProcessOutcome::KeepOriginal
+            };
         }
     }
 
     let wait = Duration::from_millis(cfg.wait_ms.max(1) as u64);
     let req_id = NEXT_REQ.fetch_add(1, Ordering::Relaxed);
     PENDING.lock().unwrap_or_else(|p| p.into_inner()).insert(req_id, None);
-    if !ipc::send(&Msg::EmbedRequest { req_id, hook_id, ctx, ctx2, text: text.to_owned() }) {
+    if !ipc::send(&Msg::EmbedRequest { req_id, hook_id, ctx, ctx2, text: cleaned.to_owned() }) {
         PENDING.lock().unwrap_or_else(|p| p.into_inner()).remove(&req_id);
-        return None;
+        return ProcessOutcome::KeepOriginal;
     }
 
     let wait_start = Instant::now();
@@ -461,11 +642,7 @@ pub fn process(
     let wait_us = wait_elapsed.as_micros() as u64;
 
     if timed_out {
-        let mut late = LATE_PENDING.lock().unwrap_or_else(|p| p.into_inner());
-        if late.len() >= MAX_LATE_PENDING {
-            late.pop_front();
-        }
-        late.push_back((req_id, text.to_owned()));
+        push_late_pending(req_id, cleaned.to_owned());
     }
 
     let slow_warn = !timed_out && wait_elapsed.as_millis() * 100 >= wait.as_millis() * 80;
@@ -510,21 +687,23 @@ pub fn process(
     }
 
     match reply {
-        Some(t) if !t.is_empty() && t != text => {
+        Some(t) if !t.is_empty() && t != cleaned => {
             RECENT_TRANSLATIONS
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .insert(text.to_owned(), Some(t.clone()), None);
-            let out = format_display(cfg.display_mode, text, &t)?;
+                .insert(cleaned.to_owned(), Some(t.clone()), None);
+            let Some(out) = format_display(cfg.display_mode, cleaned, &t) else {
+                return ProcessOutcome::KeepOriginal;
+            };
             remember_output(&out);
-            Some(out)
+            ProcessOutcome::Replace { text: out, apply_font: true }
         }
         Some(_) => {
             RECENT_TRANSLATIONS
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .insert(text.to_owned(), None, None);
-            None
+                .insert(cleaned.to_owned(), None, None);
+            ProcessOutcome::KeepOriginal
         }
         None => {
             if !SHUTDOWN.load(Ordering::Relaxed) {
@@ -536,21 +715,98 @@ pub fn process(
                 RECENT_TRANSLATIONS
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .insert(text.to_owned(), None, Some(Instant::now() + cooldown));
+                    .insert(cleaned.to_owned(), None, Some(Instant::now() + cooldown));
             }
-            None
+            ProcessOutcome::KeepOriginal
         }
     }
 }
 
+/// Blocking convenience wrapper used in unit tests.
+#[cfg(test)]
+pub fn process(
+    hook_id: u64,
+    ctx_fn: impl FnOnce() -> u64,
+    ctx2: u64,
+    component: usize,
+    text: &str,
+) -> Option<String> {
+    match process_unity(hook_id, ctx_fn, ctx2, component, text, text, || 0) {
+        ProcessOutcome::Replace { text, .. } => Some(text),
+        ProcessOutcome::KeepOriginal => None,
+    }
+}
+
 pub fn complete(req_id: u64, text: Option<String>) {
-    let mut pending = PENDING.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(slot) = pending.get_mut(&req_id) {
-        *slot = Some(text);
-        PENDING_CV.notify_all();
+    {
+        let mut pending = PENDING.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(slot) = pending.get_mut(&req_id) {
+            *slot = Some(text);
+            PENDING_CV.notify_all();
+            return;
+        }
+    }
+
+    let async_target = {
+        let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+        let removed = st.in_flight.remove(&req_id);
+        if removed.is_some() {
+            sync_async_flags(&st);
+        }
+        removed
+    };
+    if let Some(target) = async_target {
+        match text {
+            Some(t) if !t.is_empty() && t != target.orig_text => {
+                RECENT_TRANSLATIONS
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(target.orig_text.clone(), Some(t.clone()), None);
+                let out = format_display(target.display_mode, &target.orig_text, &t);
+                let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+                let still_current = st.comp_gen.get(&target.component).copied() == Some(target.generation);
+                if still_current {
+                    if let Some(out) = out {
+                        st.ready.push_back(ReadyUpdate {
+                            hook_id: target.hook_id,
+                            component: target.component,
+                            gc_handle: target.gc_handle,
+                            text: out,
+                            apply_font: true,
+                        });
+                    } else if target.gc_handle != 0 {
+                        st.handles_to_free.push(target.gc_handle);
+                    }
+                } else if target.gc_handle != 0 {
+                    st.handles_to_free.push(target.gc_handle);
+                }
+                sync_async_flags(&st);
+            }
+            _ => {
+                if !SHUTDOWN.load(Ordering::Relaxed) {
+                    RECENT_TRANSLATIONS
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(target.orig_text.clone(), None, Some(Instant::now() + ERROR_CACHE_COOLDOWN));
+                }
+                let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+                let still_current = st.comp_gen.get(&target.component).copied() == Some(target.generation);
+                if target.showed_placeholder && still_current {
+                    st.ready.push_back(ReadyUpdate {
+                        hook_id: target.hook_id,
+                        component: target.component,
+                        gc_handle: target.gc_handle,
+                        text: target.raw_orig_text,
+                        apply_font: false,
+                    });
+                } else if target.gc_handle != 0 {
+                    st.handles_to_free.push(target.gc_handle);
+                }
+                sync_async_flags(&st);
+            }
+        }
         return;
     }
-    drop(pending);
 
     let orig = {
         let mut late = LATE_PENDING.lock().unwrap_or_else(|p| p.into_inner());
@@ -569,9 +825,65 @@ pub fn complete(req_id: u64, text: Option<String>) {
     }
 }
 
+pub(crate) fn take_async_work() -> (Vec<ReadyUpdate>, Vec<u32>) {
+    let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+    let updates: Vec<ReadyUpdate> = st.ready.drain(..).collect();
+    let frees = std::mem::take(&mut st.handles_to_free);
+    sync_async_flags(&st);
+    (updates, frees)
+}
+
+pub(crate) fn reap_expired_async() {
+    let now = Instant::now();
+    let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+    let expired_ids: Vec<u64> = st
+        .in_flight
+        .iter()
+        .filter_map(|(&rid, t)| (now.duration_since(t.created_at) >= ASYNC_TTL).then_some(rid))
+        .collect();
+    if expired_ids.is_empty() {
+        return;
+    }
+    for rid in expired_ids {
+        if let Some(t) = st.in_flight.remove(&rid) {
+            let still_current = st.comp_gen.get(&t.component).copied() == Some(t.generation);
+            if t.showed_placeholder && still_current {
+                st.ready.push_back(ReadyUpdate {
+                    hook_id: t.hook_id,
+                    component: t.component,
+                    gc_handle: t.gc_handle,
+                    text: t.raw_orig_text,
+                    apply_font: false,
+                });
+            } else if t.gc_handle != 0 {
+                st.handles_to_free.push(t.gc_handle);
+            }
+        }
+    }
+    sync_async_flags(&st);
+}
+
+fn clear_async_state() {
+    let mut guard = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+    let st = &mut *guard;
+    for (_, t) in st.in_flight.drain() {
+        if t.gc_handle != 0 {
+            st.handles_to_free.push(t.gc_handle);
+        }
+    }
+    for u in st.ready.drain(..) {
+        if u.gc_handle != 0 {
+            st.handles_to_free.push(u.gc_handle);
+        }
+    }
+    st.comp_gen.clear();
+    sync_async_flags(st);
+}
+
 /// Wakes every waiting game thread so unload never blocks the game.
 pub fn release_all() {
     SHUTDOWN.store(true, Ordering::SeqCst);
+    clear_async_state();
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
     LAST_SENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
@@ -582,6 +894,7 @@ pub fn release_all() {
 /// Resets embed state for a new pipe session after re-attach.
 pub fn reset_for_session() {
     SHUTDOWN.store(false, Ordering::SeqCst);
+    clear_async_state();
     ENABLED.lock().unwrap_or_else(|p| p.into_inner()).clear();
     ENABLED_HOOK_MASK.store(0, Ordering::Release);
     ENABLED_HIGH_HOOKS.store(false, Ordering::Release);
@@ -731,6 +1044,162 @@ mod tests {
             }, 0, 0xCAFE, &line).is_none());
         }
         assert_eq!(calls, 1);
+        reset_for_session();
+    }
+
+    fn decode_sent_req_id(rx: &std::sync::mpsc::Receiver<Vec<u8>>) -> u64 {
+        let frame = rx.try_recv().expect("expected EmbedRequest frame");
+        let msg = khutaf_proto::Msg::decode(&frame[4..]).expect("decode frame");
+        match msg {
+            khutaf_proto::Msg::EmbedRequest { req_id, .. } => req_id,
+            other => panic!("unexpected msg: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn async_embed_returns_placeholder_then_queues_ready_update() {
+        let _guard = test_guard();
+        reset_for_session();
+        let rx = ipc::install_test_sink();
+        set_frame_tick_active(true);
+        set_settings(Settings {
+            wait_ms: 1000,
+            non_blocking: true,
+            pending_text: "...".into(),
+            ..Default::default()
+        });
+        set_enabled(1, 55, 0, true);
+
+        let mut pin_calls = 0usize;
+        let out = process_unity(1, || 55, 0, 0x1000, "Hello Rohen", "Hello Rohen", || {
+            pin_calls += 1;
+            701
+        });
+        assert_eq!(out, ProcessOutcome::Replace { text: "...".into(), apply_font: false });
+        assert_eq!(pin_calls, 1);
+        let req_id = decode_sent_req_id(&rx);
+
+        // Repeat typewriter update with same text reuses in-flight request without re-pinning.
+        let dup = process_unity(1, || 55, 0, 0x1000, "Hello Rohen", "Hello Rohen", || {
+            pin_calls += 1;
+            702
+        });
+        assert_eq!(dup, ProcessOutcome::Replace { text: "...".into(), apply_font: false });
+        assert_eq!(pin_calls, 1);
+        assert!(rx.try_recv().is_err());
+
+        complete(req_id, Some("مرحبا روهين".into()));
+        let (updates, frees) = take_async_work();
+        assert!(frees.is_empty());
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].gc_handle, 701);
+        assert_eq!(updates[0].text, "مرحبا روهين");
+        assert!(updates[0].apply_font);
+
+        ipc::clear_test_sink();
+        set_frame_tick_active(false);
+        set_settings(Settings::default());
+        reset_for_session();
+    }
+
+    #[test]
+    fn async_embed_restores_original_on_error_when_placeholder_shown() {
+        let _guard = test_guard();
+        reset_for_session();
+        let rx = ipc::install_test_sink();
+        set_frame_tick_active(true);
+        set_settings(Settings {
+            wait_ms: 1000,
+            non_blocking: true,
+            pending_text: "...".into(),
+            ..Default::default()
+        });
+        set_enabled(1, 55, 0, true);
+
+        let out = process_unity(1, || 55, 0, 0x2000, "Line", "<color=red>Line</color>", || 801);
+        assert_eq!(out, ProcessOutcome::Replace { text: "...".into(), apply_font: false });
+        let req_id = decode_sent_req_id(&rx);
+
+        complete(req_id, None);
+        let (updates, _) = take_async_work();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].gc_handle, 801);
+        assert_eq!(updates[0].text, "<color=red>Line</color>");
+        assert!(!updates[0].apply_font);
+
+        ipc::clear_test_sink();
+        set_frame_tick_active(false);
+        set_settings(Settings::default());
+        reset_for_session();
+    }
+
+    #[test]
+    fn async_embed_supersedes_stale_line_on_same_component() {
+        let _guard = test_guard();
+        reset_for_session();
+        let rx = ipc::install_test_sink();
+        set_frame_tick_active(true);
+        set_settings(Settings {
+            wait_ms: 1000,
+            non_blocking: true,
+            pending_text: "...".into(),
+            ..Default::default()
+        });
+        set_enabled(1, 55, 0, true);
+
+        let _ = process_unity(1, || 55, 0, 0x3000, "Line 1", "Line 1", || 901);
+        let req1 = decode_sent_req_id(&rx);
+        let _ = process_unity(1, || 55, 0, 0x3000, "Line 2", "Line 2", || 902);
+        let req2 = decode_sent_req_id(&rx);
+
+        // Completing stale req1 frees handle 901 and warms cache, without overwriting Line 2.
+        complete(req1, Some("السطر الأول".into()));
+        let (updates, frees) = take_async_work();
+        assert!(updates.is_empty());
+        assert_eq!(frees, vec![901]);
+        assert_eq!(
+            RECENT_TRANSLATIONS.lock().unwrap().get("Line 1"),
+            Some(Some("السطر الأول".to_owned()))
+        );
+
+        complete(req2, Some("السطر الثاني".into()));
+        let (updates2, _) = take_async_work();
+        assert_eq!(updates2.len(), 1);
+        assert_eq!(updates2[0].gc_handle, 902);
+        assert_eq!(updates2[0].text, "السطر الثاني");
+
+        ipc::clear_test_sink();
+        set_frame_tick_active(false);
+        set_settings(Settings::default());
+        reset_for_session();
+    }
+
+    #[test]
+    fn async_embed_empty_pending_keeps_original_and_skips_restore_on_error() {
+        let _guard = test_guard();
+        reset_for_session();
+        let rx = ipc::install_test_sink();
+        set_frame_tick_active(true);
+        set_settings(Settings {
+            wait_ms: 1000,
+            non_blocking: true,
+            pending_text: "".into(),
+            ..Default::default()
+        });
+        set_enabled(1, 55, 0, true);
+
+        let out = process_unity(1, || 55, 0, 0x4000, "Item Name", "Item Name", || 1001);
+        assert_eq!(out, ProcessOutcome::KeepOriginal);
+        let req_id = decode_sent_req_id(&rx);
+
+        complete(req_id, None);
+        let (updates, frees) = take_async_work();
+        assert!(updates.is_empty());
+        assert_eq!(frees, vec![1001]);
+
+        ipc::clear_test_sink();
+        set_frame_tick_active(false);
+        set_settings(Settings::default());
         reset_for_session();
     }
 }

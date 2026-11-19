@@ -323,6 +323,8 @@ func (h *Host) SettingsEx(pid uint32, s EmbedSettings) {
 		ChangeSize:      s.ChangeFontSize,
 		FontScale:       relative,
 		StripTypewriter: s.StripTypewriterTags,
+		NonBlocking:     s.NonBlocking,
+		PendingText:     s.PendingText,
 	}
 	ps.mu.Lock()
 	ps.lastSettings = &ws

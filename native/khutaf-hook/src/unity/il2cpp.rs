@@ -70,6 +70,8 @@ static ORIG_UIE_TEXTELEMENT_SET_TEXT: AtomicPtr<c_void> = AtomicPtr::new(std::pt
 static ORIG_UIE_TEXTFIELD_SET_VALUE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_GUITEXT_SET_TEXT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_NGUILABEL_SET_TEXT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_CANVAS_WILL_RENDER: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_CAMERA_PRE_CULL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 impl Il2CppApi {
     pub(crate) fn get() -> Option<&'static Il2CppApi> {
@@ -529,6 +531,20 @@ pub fn install() -> usize {
     installed += add_simple_il2cpp(api, HOOK_GUITEXT_SET_TEXT, "UNITY:GUIText.set_text", "GUIText::set_text", "UnityEngine.TextRenderingModule", "UnityEngine", "GUIText", "set_text", detour_guitext_set_text as *mut c_void, &ORIG_GUITEXT_SET_TEXT, &mut seen);
     installed += add_simple_il2cpp(api, HOOK_NGUILABEL_SET_TEXT, "UNITY:UILabel.set_text", "UILabel::set_text", "UGUI", "", "UILabel", "set_text", detour_nguilabel_set_text as *mut c_void, &ORIG_NGUILABEL_SET_TEXT, &mut seen);
 
+    let k_canvas = api.find_class("UnityEngine.UIModule", "UnityEngine", "Canvas");
+    let m_canvas = api.find_method(k_canvas, "SendWillRenderCanvases", 0);
+    if hook_il2cpp(m_canvas, detour_canvas_will_render as *mut c_void, &ORIG_CANVAS_WILL_RENDER, &mut seen) {
+        embed::set_frame_tick_active(true);
+        crate::telemetry("HOOK_NATIVE", "il2cpp::install", 0, "info", "async frame tick via Canvas::SendWillRenderCanvases");
+    } else {
+        let k_cam = api.find_class("UnityEngine.CoreModule", "UnityEngine", "Camera");
+        let m_cam = api.find_method(k_cam, "FireOnPreCull", 1);
+        if hook_il2cpp(m_cam, detour_camera_pre_cull as *mut c_void, &ORIG_CAMERA_PRE_CULL, &mut seen) {
+            embed::set_frame_tick_active(true);
+            crate::telemetry("HOOK_NATIVE", "il2cpp::install", 0, "info", "async frame tick via Camera::FireOnPreCull");
+        }
+    }
+
     installed
 }
 
@@ -639,14 +655,44 @@ fn handle_il2cpp_text(api: &Il2CppApi, this: *mut c_void, text: *mut c_void, hoo
     } else {
         Cow::Borrowed(&raw)
     };
-    match embed::process(hook_id, caller_rel_ctx, 0, this as usize, &cleaned) {
-        Some(replaced) => {
-            font::on_text(api, this, hook_id, &replaced);
+    match embed::process_unity(hook_id, caller_rel_ctx, 0, this as usize, &cleaned, &raw, || api.gchandle_pin(this)) {
+        embed::ProcessOutcome::Replace { text: replaced, apply_font } => {
+            if apply_font {
+                font::on_text(api, this, hook_id, &replaced);
+            }
             let new_str = api.string_new(&replaced);
             if new_str.is_null() { text } else { new_str }
         }
-        None => text,
+        embed::ProcessOutcome::KeepOriginal => text,
     }
+}
+
+unsafe extern "C" fn detour_canvas_will_render(method: *const c_void) {
+    let orig: unsafe extern "C" fn(*const c_void) = load_fn(&ORIG_CANVAS_WILL_RENDER);
+    if embed::has_async_work() || embed::has_async_in_flight() {
+        if let Some(_guard) = hooks::Enter::try_new() {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(api) = Il2CppApi::get() {
+                    super::on_frame_tick(api);
+                }
+            }));
+        }
+    }
+    orig(method);
+}
+
+unsafe extern "C" fn detour_camera_pre_cull(cam: *mut c_void, method: *const c_void) {
+    let orig: unsafe extern "C" fn(*mut c_void, *const c_void) = load_fn(&ORIG_CAMERA_PRE_CULL);
+    if embed::has_async_work() || embed::has_async_in_flight() {
+        if let Some(_guard) = hooks::Enter::try_new() {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(api) = Il2CppApi::get() {
+                    super::on_frame_tick(api);
+                }
+            }));
+        }
+    }
+    orig(cam, method);
 }
 
 unsafe fn load_fn<F: Copy>(slot: &AtomicPtr<c_void>) -> F {

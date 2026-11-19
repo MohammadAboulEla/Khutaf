@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CString};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -542,6 +542,161 @@ pub trait UnityRuntime {
             klass = self.class_get_parent(klass);
         }
         std::ptr::null_mut()
+    }
+}
+
+struct AsyncUnityCache {
+    unity_obj_resolved: bool,
+    t_unity_obj: *mut c_void,
+    f_cached_ptr: *mut c_void,
+    m_op_implicit: *mut c_void,
+    setters: HashMap<(usize, u64), *mut c_void>,
+}
+
+unsafe impl Send for AsyncUnityCache {}
+
+static ASYNC_UNITY_CACHE: LazyLock<Mutex<AsyncUnityCache>> = LazyLock::new(|| {
+    Mutex::new(AsyncUnityCache {
+        unity_obj_resolved: false,
+        t_unity_obj: std::ptr::null_mut(),
+        f_cached_ptr: std::ptr::null_mut(),
+        m_op_implicit: std::ptr::null_mut(),
+        setters: HashMap::new(),
+    })
+});
+
+static FRAME_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+struct GcHandleGuard<'a> {
+    rt: &'a dyn UnityRuntime,
+    handle: u32,
+}
+
+impl Drop for GcHandleGuard<'_> {
+    fn drop(&mut self) {
+        if self.handle != 0 {
+            self.rt.gchandle_free(self.handle);
+        }
+    }
+}
+
+fn ensure_unity_object_meta(rt: &dyn UnityRuntime, cache: &mut AsyncUnityCache) {
+    if cache.unity_obj_resolved {
+        return;
+    }
+    cache.unity_obj_resolved = true;
+    let t_obj = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Object");
+    cache.t_unity_obj = t_obj;
+    if !t_obj.is_null() {
+        cache.f_cached_ptr = rt.find_field_in_hierarchy(t_obj, "m_CachedPtr");
+        if cache.f_cached_ptr.is_null() {
+            cache.m_op_implicit = rt.find_method(t_obj, "op_Implicit", 1);
+        }
+    }
+}
+
+fn is_unity_object_alive(
+    rt: &dyn UnityRuntime,
+    cache: &mut AsyncUnityCache,
+    comp: *mut c_void,
+    comp_cls: *mut c_void,
+) -> bool {
+    if comp.is_null() || comp_cls.is_null() {
+        return false;
+    }
+    ensure_unity_object_meta(rt, cache);
+    if !cache.t_unity_obj.is_null() && !rt.class_is_assignable_from(cache.t_unity_obj, comp_cls) {
+        return true;
+    }
+    if !cache.f_cached_ptr.is_null() {
+        let mut ptr: *mut c_void = std::ptr::null_mut();
+        rt.field_get_value(comp, cache.f_cached_ptr, &mut ptr as *mut *mut c_void as *mut c_void);
+        return !ptr.is_null();
+    }
+    if !cache.m_op_implicit.is_null() {
+        if let Some(boxed) = rt.invoke(cache.m_op_implicit, std::ptr::null_mut(), &mut [comp]) {
+            let p = rt.unbox(boxed) as *const u8;
+            return !p.is_null() && unsafe { *p } != 0;
+        }
+        return false;
+    }
+    false
+}
+
+fn resolve_setter_method(
+    rt: &dyn UnityRuntime,
+    cache: &mut AsyncUnityCache,
+    comp_cls: *mut c_void,
+    hook_id: u64,
+) -> *mut c_void {
+    let key = (comp_cls as usize, hook_id);
+    if let Some(&m) = cache.setters.get(&key) {
+        return m;
+    }
+    let primary = if hook_id == HOOK_UIE_TEXTFIELD_SET_VALUE {
+        "set_value"
+    } else {
+        "set_text"
+    };
+    let mut m = rt.find_method_in_hierarchy(comp_cls, primary, 1);
+    if m.is_null() && is_tmp_hook(hook_id) {
+        let mut cur = comp_cls;
+        while !cur.is_null() {
+            m = rt.find_method_param0(cur, "SetText", 1, "String");
+            if !m.is_null() {
+                break;
+            }
+            cur = rt.class_get_parent(cur);
+        }
+    }
+    if !m.is_null() {
+        if cache.setters.len() >= 256 {
+            cache.setters.clear();
+        }
+        cache.setters.insert(key, m);
+    }
+    m
+}
+
+pub(crate) fn flush_async_updates(rt: &dyn UnityRuntime) {
+    let (updates, handles_to_free) = embed::take_async_work();
+    for h in handles_to_free {
+        rt.gchandle_free(h);
+    }
+    if updates.is_empty() {
+        return;
+    }
+    let mut cache = ASYNC_UNITY_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+    for u in updates {
+        let _pin_guard = GcHandleGuard { rt, handle: u.gc_handle };
+        let comp = u.component as *mut c_void;
+        let comp_cls = rt.object_get_class(comp);
+        if !is_unity_object_alive(rt, &mut cache, comp, comp_cls) {
+            continue;
+        }
+        let m_set = resolve_setter_method(rt, &mut cache, comp_cls, u.hook_id);
+        if m_set.is_null() {
+            continue;
+        }
+        if u.apply_font {
+            embed::remember_output(&u.text);
+            font::on_text(rt, comp, u.hook_id, &u.text);
+        }
+        let new_str = rt.string_new(&u.text);
+        if !new_str.is_null() {
+            let _ = rt.invoke(m_set, comp, &mut [new_str]);
+        }
+    }
+}
+
+pub(crate) fn on_frame_tick(rt: &dyn UnityRuntime) {
+    if embed::has_async_in_flight()
+        && FRAME_COUNTER.fetch_add(1, Ordering::Relaxed).is_multiple_of(60)
+    {
+        embed::reap_expired_async();
+    }
+    if embed::has_async_work() {
+        flush_async_updates(rt);
     }
 }
 

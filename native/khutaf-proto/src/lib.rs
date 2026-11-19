@@ -7,7 +7,7 @@
 
 use std::io::{self, Read, Write};
 
-pub const PROTO_VERSION: u32 = 1;
+pub const PROTO_VERSION: u32 = 2;
 
 /// Upper bound on a single frame, guards against corrupted length prefixes.
 pub const MAX_FRAME: u32 = 16 * 1024 * 1024;
@@ -44,6 +44,8 @@ pub struct Settings {
     pub change_font_size: bool,
     pub font_scale: f32,
     pub strip_typewriter_tags: bool,
+    pub non_blocking: bool,
+    pub pending_text: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -142,6 +144,8 @@ impl Msg {
                 e.bool(s.change_font_size);
                 e.f32(s.font_scale);
                 e.bool(s.strip_typewriter_tags);
+                e.bool(s.non_blocking);
+                e.str(&s.pending_text);
             }
             Msg::SetEmbed { hook_id, ctx, ctx2, on } => {
                 e.u64(*hook_id);
@@ -203,6 +207,8 @@ impl Msg {
                 change_font_size: d.bool()?,
                 font_scale: f32::from_bits(d.u32()?),
                 strip_typewriter_tags: d.bool()?,
+                non_blocking: d.bool()?,
+                pending_text: d.str()?,
             }),
             kind::SET_EMBED => Msg::SetEmbed { hook_id: d.u64()?, ctx: d.u64()?, ctx2: d.u64()?, on: d.bool()? },
             kind::EMBED_RESPONSE => {
@@ -294,6 +300,8 @@ mod tests {
                 change_font_size: false,
                 font_scale: 1.5,
                 strip_typewriter_tags: true,
+                non_blocking: true,
+                pending_text: "...".into(),
             }),
             Msg::SetEmbed { hook_id: 7, ctx: 0, ctx2: 0, on: true },
             Msg::EmbedResponse { req_id: 9, text: Some("ok".into()) },

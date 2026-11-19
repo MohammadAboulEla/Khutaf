@@ -174,6 +174,18 @@ pub fn close() {
 }
 
 #[cfg(test)]
+pub(crate) fn install_test_sink() -> mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = mpsc::sync_channel(64);
+    *TX.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
+    rx
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_sink() {
+    *TX.lock().unwrap_or_else(|p| p.into_inner()) = None;
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
