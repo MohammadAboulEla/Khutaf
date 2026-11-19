@@ -9,34 +9,47 @@
 </p>
 
 <p align="center">
-  <a href="README.md">العربية</a> | <strong>English</strong>
+  <a href="README.ar.md">العربية</a> | <strong>English</strong>
 </p>
 
 [![Watch the video](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)
 
 ---
 
-## Key Features
+## Download (`v0.1.3-beta`)
 
-### 🎯 In-Game Text Hooking & Embedding
-* **Self-Authored Rust Hook DLL:** Enumerates running 64-bit Unity (Mono & IL2CPP) games, injects `khutaf-hook64.dll` via `CreateRemoteThread(LoadLibraryW)`, and communicates over bidirectional overlapped named pipes.
-* **Live Hook Console:** Inspects discovered text hooks split by call-site `#ctx` with real-time captured text, per-hook **Embed** toggles, and per-game profile persistence (`games.json`).
-* **Flexible Display Modes:** Show Arabic translation only, original + translation, or translation + original, plus an optional toggle to strip invisible typewriter alpha tags (`<color=#00000000>`) while preserving visible text colors.
+Download the latest portable Windows release (`Khutaf.exe` + `runtime/khutaf-hook64.dll`) from [GitHub Releases](https://github.com/MohammadAboulEla/Khutaf/releases):
 
-### ✍️ Arabic RTL Engine & Unity Font Injection
-* **Contextual Shaping:** Converts Arabic letters to Presentation Forms (`U+FE80`–`U+FEFC` & Forms-A), applies mandatory Lam-Alef ligatures, and preserves Tashkeel diacritics.
-* **BiDi Visual Ordering:** Reverses RTL lines for engines without native Arabic support while keeping Latin words, numbers, `[vars]`, `{vars}`, and paired rich-text tags (`<color=...>...</color>`) intact and mirroring brackets.
-* **Logical Line Wrapping:** Wraps text on word boundaries before visual reversal so multi-line dialogue boxes read top-to-bottom.
-* **Unity Mono & IL2CPP Font Fallback:** Dynamically creates OS TMP/UI fonts (`Tahoma` by default) and optionally loads `TMP_Font_AssetBundles` fallbacks so Arabic renders cleanly instead of missing-glyph boxes.
-
-### 🌐 Translation Providers, Pipeline & Cache
-* **Free Bing Translator (Default):** Works out of the box with no API key required, alongside additional traditional web translators.
-* **OpenAI-Compatible LLM Support:** Preconfigured presets for OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Ollama, LM Studio, and `llama.cpp`.
-* **Text Pipeline & 3-Tier Cache:** Pre/post literal & regex rules, global + per-game glossary, `[..]` / `{..}` placeholder safety checks, and SQLite translation cache (per-game -> global -> cross-game shared fallback) with a built-in manual cache editor.
+* Extract the archive anywhere while keeping `Khutaf.exe` and `runtime/khutaf-hook64.dll` together.
+* Requires **Windows 10 / 11 (x64)** and **Microsoft Edge WebView2 Runtime**.
+* Optionally download `TMP_Font_AssetBundles` from inside **Embed Settings** for Unity games lacking Arabic font glyphs.
 
 ---
 
-## Getting Started
+## Key Features
+
+### 🎯 In-Game Text Hooking & Embedding
+* **Self-Authored Rust Hook DLL:** Enumerates running 64-bit Unity (Mono & IL2CPP) games, injects `khutaf-hook64.dll` via `CreateRemoteThread(LoadLibraryW)`, and communicates over owner-only named pipes with per-session random pipe handshakes (`PROTO_VERSION = 2`).
+* **Non-Blocking (Async) Translation (Default):** Translates off the Unity main thread and writes Arabic back on Unity frame ticks (`Canvas::SendWillRenderCanvases` / `Camera::FireOnPreCull`) so gameplay never freezes. Configurable pending placeholder (`Original` by default, `"..."`, or custom text) with automatic restoration on timeout or error.
+* **Low-Overhead Hook Path & Resilience:** Zero-allocation UTF-16 letter pre-filtering, bounded stack-trace reprobes for disabled UI components, timeout cooldown, circuit breaker with late-reply cache warming, and exponential IPC reconnect backoff.
+* **Live Hook Console & Profiles:** Inspects discovered text hooks split by call-site `#ctx` with real-time captured text, per-hook **Embed** toggles, and automatic per-game profile persistence (`games.json`).
+* **Flexible Display & Typography:** Show translation only, original + translation, translation + original, or original only; relative font scaling; and optional stripping of invisible typewriter alpha tags (`<color=#00000000>`) while preserving visible colors.
+
+### ✍️ Arabic RTL Engine & Unity Font Injection
+* **Contextual Shaping:** Converts Arabic letters to Presentation Forms (`U+FE80`–`U+FEFC` & Forms-A), applies mandatory Lam-Alef ligatures, and preserves Tashkeel diacritics.
+* **Smart BiDi Visual Ordering:** Reverses RTL lines for engines without native Arabic support while keeping Latin words, numbers, `[vars]`, `{vars}`, CamelCase placeholders, and paired rich-text tags (`<color=...>...</color>`) intact and mirroring brackets automatically.
+* **Logical Line Wrapping:** Wraps text on word boundaries before visual reversal (optionally enforced on non-Arabic output) so multi-line dialogue boxes read top-to-bottom.
+* **Unity Mono & IL2CPP Font Fallback:** Dynamically creates OS TMP/UI fonts (`Tahoma` by default) and provides one-click in-app download of SHA-256-verified `TMP_Font_AssetBundles` (`arialuni_sdf_u*`) so Arabic renders cleanly instead of missing-glyph boxes.
+
+### 🌐 Translation Providers, Pipeline, Cache & Diagnostics
+* **Free Traditional Translators:** Bing Translator (default, no API key required), plus Google, Microsoft, Yandex, Papago, Youdao, Alibaba, Volcengine, LingoCloud, ModernMT, QQ TranSmart, and Translate.com.
+* **OpenAI-Compatible & Offline Local LLMs:** Presets for OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Ollama, LM Studio, plus a built-in `llama.cpp` (`llama-server.exe`) runner supporting offline translation templates (`HY-MT2`, `TranslateGemma`, `NLLB-Instruct`).
+* **Text Pipeline & 3-Tier SQLite Cache:** Pre/post literal & regex rules, global + per-game glossary, placeholder safety checks, and 3-tier SQLite translation cache (per-game -> global -> cross-game shared fallback) with a built-in manual cache editor.
+* **Diagnostics & Telemetry View:** Live per-subsystem telemetry stream, function latency matrix, and redacted JSONL diagnostic bundle export.
+
+---
+
+## Build from Source
 
 ### Prerequisites
 * **Windows 10 / 11** (x64)
@@ -64,8 +77,9 @@ wails build
 ---
 
 ## Safety, Anti-Cheat & Privacy
-* **Offline Single-Player Games Only:** Khutaf injects a native hook DLL (`khutaf-hook64.dll`) via `CreateRemoteThread(LoadLibraryW)`. Do **not** attach to online multiplayer games or games protected by anti-cheat systems (e.g., EasyAntiCheat, BattlEye, Riot Vanguard), as DLL injection may trigger bans or crashes.
-* **Translation Privacy:** Captured game dialogue is sent to whichever translation provider you configure (Bing or your OpenAI-compatible endpoint). Use the built-in `llama.cpp` / Offline LLM mode if you want 100% local, offline translation.
+* **Offline Single-Player Games Only:** Khutaf injects a native hook DLL (`khutaf-hook64.dll`) via `CreateRemoteThread(LoadLibraryW)` and includes built-in anti-cheat process detection warnings (e.g., EasyAntiCheat, BattlEye, Riot Vanguard). Do **not** attach to online multiplayer games or anti-cheat-protected titles, as DLL injection may trigger bans or crashes.
+* **Local Security & Integrity:** API keys are encrypted at rest via Windows DPAPI, IPC named pipes and shared memory enforce owner-only ACLs, and downloaded Unity font bundles are verified against pinned SHA-256 digests.
+* **Translation Privacy:** Captured game dialogue is sent only to whichever translation provider you configure (Bing or your OpenAI-compatible endpoint). Use the built-in `llama.cpp` / Offline LLM mode for 100% local, offline translation.
 
 ---
 
@@ -80,6 +94,13 @@ graph TD
     B --> F[Arabic Shaper & BiDi]
     B --> G[JSON Config & SQLite Cache]
 ```
+
+---
+
+## License
+
+Copyright (c) 2026 Mohammad AboulEla.  
+Licensed under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE).
 
 ---
 
