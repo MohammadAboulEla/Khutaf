@@ -422,8 +422,22 @@ func (s *Session) Hooks() []HookView {
 
 // SetDebugMode toggles performance profiling mode and optionally keeps real translation active.
 func (s *Session) SetDebugMode(enabled bool, realTrans bool) {
+	wasMock := s.debugMode.Load() && !s.debugRealTrans.Load()
+	nowMock := enabled && !realTrans
 	s.debugMode.Store(enabled)
 	s.debugRealTrans.Store(realTrans)
+	if wasMock != nowMock {
+		s.mu.Lock()
+		pids := s.pidList()
+		s.mu.Unlock()
+		if len(pids) > 0 {
+			go func() {
+				for _, pid := range pids {
+					s.pushEmbedSettings(pid)
+				}
+			}()
+		}
+	}
 	s.post(EventStatus, s.Status())
 }
 
