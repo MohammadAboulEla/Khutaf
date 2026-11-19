@@ -17,7 +17,11 @@ Follow these steps in order whenever creating a new release of Khutaf:
   git log --oneline -n 20
   ```
 
-## 2. Run Verification Checks
+## 2. Bump Version in Source
+- Update `var AppVersion = "<version>"` in `app.go`.
+- Update `version = "<version>"` under `[workspace.package]` in `native/Cargo.toml`.
+
+## 3. Run Verification Checks
 - Run Go vet & tests, and verify the frontend builds cleanly:
   ```powershell
   go vet ./...
@@ -25,7 +29,7 @@ Follow these steps in order whenever creating a new release of Khutaf:
   npm --prefix frontend run build
   ```
 
-## 3. Build Native Hook DLL & Wails Binary
+## 4. Build Native Hook DLL & Wails Binary
 - Rebuild `runtime/khutaf-hook64.dll`:
   ```powershell
   powershell -ExecutionPolicy Bypass -File scripts/build-native.ps1
@@ -35,7 +39,7 @@ Follow these steps in order whenever creating a new release of Khutaf:
   wails build -ldflags "-X main.AppVersion=<version>"
   ```
 
-## 4. Package Release Zip in `dist/`
+## 5. Package Release Zip in `dist/`
 - Stage only `Khutaf.exe` and `runtime/khutaf-hook64.dll` (never include `runtime/TMP_Font_AssetBundles/` — users download that in-app from the `unity-fonts` release).
 - Zip with `.NET ZipFile` (avoid `Compress-Archive` progress-bar errors in non-interactive shells):
   ```powershell
@@ -52,7 +56,7 @@ Follow these steps in order whenever creating a new release of Khutaf:
   Get-Item $zip | Select-Object Name, Length
   ```
 
-## 5. Generate Changelog & Release Notes
+## 6. Generate Changelog & Release Notes
 - Summarize user-facing changes since the previous release/tag (from `git log <prev-tag>..HEAD` or recent session changes) into concise Markdown release notes:
   - **What's New / Fixed** (bulleted list)
   - **What's Included** (`Khutaf.exe`, `runtime/khutaf-hook64.dll`)
