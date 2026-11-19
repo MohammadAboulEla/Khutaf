@@ -1,7 +1,7 @@
 //! Blocking embed round-trip used by hook detours on the game thread.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -14,9 +14,10 @@ const DEFAULT_WAIT_MS: u32 = 1000;
 /// `.text` and sets it again) it must pass through untouched.
 const OWN_OUTPUT_HISTORY: usize = 256;
 const MAX_COMPONENT_CTX: usize = 4096;
+const MAX_DISABLED_REPROBES: u8 = 2;
 const MAX_RECENT_TRANS: usize = 4096;
 const MAX_LAST_SENT: usize = 512;
-const TEXT_RATE_LIMIT: Duration = Duration::from_millis(50);
+const TEXT_RATE_LIMIT: Duration = Duration::from_millis(250);
 const ERROR_CACHE_COOLDOWN: Duration = Duration::from_secs(5);
 const TIMEOUT_CACHE_COOLDOWN: Duration = Duration::from_secs(4);
 const CB_THRESHOLD: u32 = 3;
@@ -82,13 +83,29 @@ impl RecentCache {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ComponentEntry {
+    ctx: u64,
+    enabled_gen: u64,
+    enabled: bool,
+    last_text_hash: u64,
+    reprobe_count: u8,
+}
+
 static SETTINGS: LazyLock<RwLock<Arc<Settings>>> = LazyLock::new(|| {
     RwLock::new(Arc::new(Settings { wait_ms: DEFAULT_WAIT_MS, font_scale: 1.0, ..Default::default() }))
 });
 static ENABLED: LazyLock<Mutex<HashSet<(u64, u64, u64)>>> = LazyLock::new(Default::default);
-static COMPONENT_CTX: LazyLock<Mutex<HashMap<(u64, usize), u64>>> = LazyLock::new(Default::default);
+static ENABLED_GEN: AtomicU64 = AtomicU64::new(1);
+static ENABLED_HOOK_MASK: AtomicU64 = AtomicU64::new(0);
+static ENABLED_HIGH_HOOKS: AtomicBool = AtomicBool::new(false);
+static COMPONENT_CTX: LazyLock<Mutex<HashMap<(u64, usize), ComponentEntry>>> = LazyLock::new(Default::default);
 static RECENT_TRANSLATIONS: LazyLock<Mutex<RecentCache>> = LazyLock::new(Default::default);
 static OWN_OUTPUTS: LazyLock<Mutex<OwnOutputs>> = LazyLock::new(Default::default);
+static HAS_OWN_OUTPUTS: AtomicBool = AtomicBool::new(false);
+static DISPLAY_MODE: AtomicU32 = AtomicU32::new(0);
+static STRIP_TYPEWRITER: AtomicBool = AtomicBool::new(false);
+static CLEAR_TEXT: AtomicBool = AtomicBool::new(false);
 type LastSentMap = HashMap<(u64, u64, u64), (String, Instant)>;
 
 static LAST_SENT_TEXT: LazyLock<Mutex<LastSentMap>> = LazyLock::new(Default::default);
@@ -101,7 +118,47 @@ static PENDING_CV: Condvar = Condvar::new();
 static NEXT_REQ: AtomicU64 = AtomicU64::new(1);
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
+fn sync_enabled_summary(set: &HashSet<(u64, u64, u64)>) {
+    let mut mask = 0u64;
+    let mut high = false;
+    for &(hid, _, _) in set {
+        if hid < 64 {
+            mask |= 1u64 << hid;
+        } else {
+            high = true;
+        }
+    }
+    ENABLED_HOOK_MASK.store(mask, Ordering::Release);
+    ENABLED_HIGH_HOOKS.store(high, Ordering::Release);
+    ENABLED_GEN.fetch_add(1, Ordering::AcqRel);
+}
+
+#[inline]
+fn has_any_enabled_for_hook(hook_id: u64) -> bool {
+    if SHUTDOWN.load(Ordering::Relaxed) {
+        return false;
+    }
+    if hook_id < 64 {
+        (ENABLED_HOOK_MASK.load(Ordering::Acquire) & (1u64 << hook_id)) != 0
+    } else {
+        ENABLED_HIGH_HOOKS.load(Ordering::Acquire)
+    }
+}
+
+#[inline]
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut h = 0xcbf29ce484222325u64;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 pub fn set_settings(s: Settings) {
+    DISPLAY_MODE.store(s.display_mode, Ordering::Relaxed);
+    STRIP_TYPEWRITER.store(s.strip_typewriter_tags, Ordering::Relaxed);
+    CLEAR_TEXT.store(s.clear_text, Ordering::Relaxed);
     *SETTINGS.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(s);
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
@@ -111,20 +168,31 @@ pub fn settings() -> Arc<Settings> {
     Arc::clone(&SETTINGS.read().unwrap_or_else(|p| p.into_inner()))
 }
 
+pub(crate) fn strip_typewriter_tags() -> bool {
+    STRIP_TYPEWRITER.load(Ordering::Relaxed)
+}
+
+pub(crate) fn clear_text_enabled() -> bool {
+    CLEAR_TEXT.load(Ordering::Relaxed)
+}
+
 pub fn set_enabled(hook_id: u64, ctx: u64, ctx2: u64, on: bool) {
     let mut set = ENABLED.lock().unwrap_or_else(|p| p.into_inner());
     if on {
         set.insert((hook_id, ctx, ctx2));
     } else {
         set.remove(&(hook_id, ctx, ctx2));
-        drop(set);
+    }
+    sync_enabled_summary(&set);
+    drop(set);
+    if !on {
         let mut comp = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
-        comp.retain(|&(hid, _), &mut mapped_ctx| !(hid == hook_id && (ctx == 0 || mapped_ctx == ctx)));
+        comp.retain(|&(hid, _), entry| !(hid == hook_id && (ctx == 0 || entry.ctx == ctx)));
     }
 }
 
 pub fn is_enabled(hook_id: u64, ctx: u64, ctx2: u64) -> bool {
-    if SHUTDOWN.load(Ordering::Relaxed) {
+    if !has_any_enabled_for_hook(hook_id) {
         return false;
     }
     let set = ENABLED.lock().unwrap_or_else(|p| p.into_inner());
@@ -132,6 +200,9 @@ pub fn is_enabled(hook_id: u64, ctx: u64, ctx2: u64) -> bool {
 }
 
 fn is_own_output(text: &str) -> bool {
+    if !HAS_OWN_OUTPUTS.load(Ordering::Acquire) {
+        return false;
+    }
     OWN_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner()).set.contains(text)
 }
 
@@ -148,41 +219,108 @@ fn remember_output(text: &str) {
     let owned = text.to_owned();
     o.set.insert(owned.clone());
     o.queue.push_back(owned);
+    HAS_OWN_OUTPUTS.store(true, Ordering::Release);
 }
 
-fn resolve_component_ctx_lazy(
+/// Resolves `(ctx, is_enabled, unchanged_disabled)` while avoiding repeated stack walks
+/// on UI elements whose embed hook is disabled.
+fn resolve_component(
     hook_id: u64,
     ctx_fn: impl FnOnce() -> u64,
     ctx2: u64,
     component: usize,
-) -> u64 {
+    text_hash: u64,
+) -> (u64, bool, bool) {
     if component == 0 {
-        return ctx_fn();
+        let raw_ctx = ctx_fn();
+        return (raw_ctx, is_enabled(hook_id, raw_ctx, ctx2), false);
     }
+
+    let cur_gen = ENABLED_GEN.load(Ordering::Acquire);
+    let any_enabled = has_any_enabled_for_hook(hook_id);
     let existing = COMPONENT_CTX
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .get(&(hook_id, component))
         .copied();
-    if let Some(existing) = existing {
-        if is_enabled(hook_id, existing, ctx2) {
-            return existing;
+
+    if let Some(mut entry) = existing {
+        if entry.enabled_gen == cur_gen {
+            if entry.enabled {
+                return (entry.ctx, true, false);
+            }
+            if entry.last_text_hash == text_hash {
+                return (entry.ctx, false, true);
+            }
+            if !any_enabled || entry.reprobe_count >= MAX_DISABLED_REPROBES {
+                if let Some(slot) = COMPONENT_CTX
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get_mut(&(hook_id, component))
+                {
+                    slot.last_text_hash = text_hash;
+                }
+                return (entry.ctx, false, false);
+            }
+
+            let raw_ctx = ctx_fn();
+            if raw_ctx != entry.ctx && is_enabled(hook_id, raw_ctx, ctx2) {
+                entry.ctx = raw_ctx;
+                entry.enabled = true;
+                entry.reprobe_count = 0;
+            } else {
+                entry.reprobe_count = entry.reprobe_count.saturating_add(1);
+            }
+            entry.last_text_hash = text_hash;
+            if let Some(slot) = COMPONENT_CTX
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get_mut(&(hook_id, component))
+            {
+                *slot = entry;
+            }
+            return (entry.ctx, entry.enabled, false);
         }
-        let raw_ctx = ctx_fn();
-        if existing != raw_ctx && is_enabled(hook_id, raw_ctx, ctx2) {
-            let mut map = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
-            map.insert((hook_id, component), raw_ctx);
-            return raw_ctx;
+
+        let mut now_enabled = any_enabled && is_enabled(hook_id, entry.ctx, ctx2);
+        if !now_enabled && any_enabled {
+            let raw_ctx = ctx_fn();
+            if raw_ctx != entry.ctx && is_enabled(hook_id, raw_ctx, ctx2) {
+                entry.ctx = raw_ctx;
+                now_enabled = true;
+            }
         }
-        return existing;
+        entry.enabled_gen = cur_gen;
+        entry.enabled = now_enabled;
+        entry.reprobe_count = 0;
+        entry.last_text_hash = text_hash;
+        if let Some(slot) = COMPONENT_CTX
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get_mut(&(hook_id, component))
+        {
+            *slot = entry;
+        }
+        return (entry.ctx, now_enabled, false);
     }
+
     let raw_ctx = ctx_fn();
+    let enabled = any_enabled && is_enabled(hook_id, raw_ctx, ctx2);
     let mut map = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
     if map.len() >= MAX_COMPONENT_CTX {
         map.clear();
     }
-    map.insert((hook_id, component), raw_ctx);
-    raw_ctx
+    map.insert(
+        (hook_id, component),
+        ComponentEntry {
+            ctx: raw_ctx,
+            enabled_gen: cur_gen,
+            enabled,
+            last_text_hash: text_hash,
+            reprobe_count: 0,
+        },
+    );
+    (raw_ctx, enabled, false)
 }
 
 fn send_text_dedup(hook_id: u64, ctx: u64, ctx2: u64, text: &str) {
@@ -253,19 +391,27 @@ pub fn process(
         return None;
     }
 
-    let cfg = settings();
-    let ctx = resolve_component_ctx_lazy(hook_id, ctx_fn, ctx2, component);
-    if text.chars().count() <= 1 || cfg.display_mode == 3 || !is_enabled(hook_id, ctx, ctx2) {
-        send_text_dedup(hook_id, ctx, ctx2, text);
+    let display_mode = DISPLAY_MODE.load(Ordering::Relaxed);
+    let clear_text = CLEAR_TEXT.load(Ordering::Relaxed);
+    let (ctx, enabled, unchanged_disabled) =
+        resolve_component(hook_id, ctx_fn, ctx2, component, fnv1a_64(text.as_bytes()));
+    if unchanged_disabled {
         return None;
     }
-    if cfg.clear_text {
+    if !enabled || display_mode == 3 || text.chars().count() <= 1 {
+        if has_translatable_letters(text) {
+            send_text_dedup(hook_id, ctx, ctx2, text);
+        }
+        return None;
+    }
+    if clear_text {
         send_text_dedup(hook_id, ctx, ctx2, text);
         return Some(" ".to_owned());
     }
     if !has_translatable_letters(text) {
         return None;
     }
+    let cfg = settings();
     if let Some(cached) = RECENT_TRANSLATIONS
         .lock()
         .unwrap_or_else(|p| p.into_inner())
@@ -437,6 +583,9 @@ pub fn release_all() {
 pub fn reset_for_session() {
     SHUTDOWN.store(false, Ordering::SeqCst);
     ENABLED.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    ENABLED_HOOK_MASK.store(0, Ordering::Release);
+    ENABLED_HIGH_HOOKS.store(false, Ordering::Release);
+    ENABLED_GEN.fetch_add(1, Ordering::AcqRel);
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     LAST_SENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
@@ -444,6 +593,7 @@ pub fn reset_for_session() {
         let mut own = OWN_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner());
         own.queue.clear();
         own.set.clear();
+        HAS_OWN_OUTPUTS.store(false, Ordering::Release);
     }
     PENDING.lock().unwrap_or_else(|p| p.into_inner()).clear();
     LATE_PENDING.lock().unwrap_or_else(|p| p.into_inner()).clear();
@@ -452,6 +602,12 @@ pub fn reset_for_session() {
 
 pub fn is_shutting_down() -> bool {
     SHUTDOWN.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(Default::default);
+    TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 #[cfg(test)]
@@ -472,18 +628,19 @@ mod tests {
 
     #[test]
     fn disabled_hook_returns_none_even_if_cached() {
+        let _guard = test_guard();
+        reset_for_session();
         RECENT_TRANSLATIONS
             .lock()
             .unwrap()
             .insert("Hello".to_owned(), Some("مرحبا".to_owned()), None);
         assert!(process(999, || 123, 0, 0, "Hello").is_none());
-        RECENT_TRANSLATIONS.lock().unwrap().clear();
-        LAST_SENT_TEXT.lock().unwrap().clear();
-        COMPONENT_CTX.lock().unwrap().clear();
+        reset_for_session();
     }
 
     #[test]
     fn circuit_breaker_skips_when_open_and_resets() {
+        let _guard = test_guard();
         reset_for_session();
         set_enabled(1, 10, 0, true);
         {
@@ -501,11 +658,79 @@ mod tests {
 
     #[test]
     fn late_reply_warms_recent_cache() {
+        let _guard = test_guard();
         reset_for_session();
         LATE_PENDING.lock().unwrap().push_back((777, "Late line".to_owned()));
         complete(777, Some("سطر متأخر".to_owned()));
         let cached = RECENT_TRANSLATIONS.lock().unwrap().get("Late line");
         assert_eq!(cached, Some(Some("سطر متأخر".to_owned())));
+        reset_for_session();
+    }
+
+    #[test]
+    fn disabled_component_bounds_ctx_reprobes_when_other_ctx_enabled() {
+        let _guard = test_guard();
+        reset_for_session();
+        set_enabled(1, 999, 0, true);
+        let mut calls = 0usize;
+        for i in 0..50 {
+            let line = format!("HP {i}");
+            assert!(process(1, || {
+                calls += 1;
+                111
+            }, 0, 0xABCD, &line).is_none());
+        }
+        assert!(calls <= (MAX_DISABLED_REPROBES as usize) + 1, "expected <= 3 calls, got {calls}");
+        reset_for_session();
+    }
+
+    #[test]
+    fn disabled_component_skips_reprobe_when_text_unchanged_and_picks_up_new_enable() {
+        let _guard = test_guard();
+        reset_for_session();
+        {
+            let mut cb = CIRCUIT.lock().unwrap();
+            cb.consecutive_timeouts = CB_THRESHOLD;
+            cb.open_until = Some(Instant::now() + Duration::from_secs(30));
+        }
+        let mut calls = 0usize;
+        for _ in 0..20 {
+            assert!(process(1, || {
+                calls += 1;
+                111
+            }, 0, 0xBEEF, "Press E").is_none());
+        }
+        assert_eq!(calls, 1);
+
+        set_enabled(1, 222, 0, true);
+        assert!(process(1, || {
+            calls += 1;
+            222
+        }, 0, 0xBEEF, "Press E").is_none());
+        assert_eq!(calls, 2);
+
+        // Subsequent calls hit cached enabled component entry directly.
+        assert!(process(1, || {
+            calls += 1;
+            222
+        }, 0, 0xBEEF, "Press F").is_none());
+        assert_eq!(calls, 2);
+        reset_for_session();
+    }
+
+    #[test]
+    fn no_enabled_hooks_never_reprobes_cached_component() {
+        let _guard = test_guard();
+        reset_for_session();
+        let mut calls = 0usize;
+        for i in 0..20 {
+            let line = format!("Quest step {i}");
+            assert!(process(1, || {
+                calls += 1;
+                111
+            }, 0, 0xCAFE, &line).is_none());
+        }
+        assert_eq!(calls, 1);
         reset_for_session();
     }
 }

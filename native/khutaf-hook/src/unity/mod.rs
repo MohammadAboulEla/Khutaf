@@ -185,7 +185,60 @@ fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
     if nb.is_empty() || nb.len() > hb.len() {
         return None;
     }
-    hb.windows(nb.len()).position(|w| w.eq_ignore_ascii_case(nb))
+    let first_lo = nb[0].to_ascii_lowercase();
+    let first_hi = nb[0].to_ascii_uppercase();
+    let mut i = 0;
+    let end = hb.len() - nb.len();
+    while i <= end {
+        let b = hb[i];
+        if (b == first_lo || b == first_hi) && hb[i..i + nb.len()].eq_ignore_ascii_case(nb) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Zero-allocation UTF-16 pre-filter matching `embed::has_translatable_letters` for hot detours.
+pub(crate) fn utf16_has_translatable_letters(units: &[u16]) -> bool {
+    if units.len() <= 1 {
+        return false;
+    }
+    let mut in_tag = false;
+    let mut i = 0;
+    while i < units.len() {
+        let u = units[i];
+        if in_tag {
+            if u == b'>' as u16 {
+                in_tag = false;
+            }
+            i += 1;
+            continue;
+        }
+        if u == b'<' as u16 && units[i + 1..].contains(&(b'>' as u16)) {
+            in_tag = true;
+            i += 1;
+            continue;
+        }
+        if u < 0x80 {
+            if (u as u8).is_ascii_alphabetic() {
+                return true;
+            }
+        } else if !(0xD800..=0xDFFF).contains(&u) {
+            if let Some(ch) = char::from_u32(u as u32) {
+                let code = ch as u32;
+                let is_arabic = matches!(
+                    code,
+                    0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF
+                );
+                if ch.is_alphabetic() && !is_arabic {
+                    return true;
+                }
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 fn strip_tag_prefix<'a>(s: &'a str, prefix: &str) -> Cow<'a, str> {
@@ -293,7 +346,7 @@ pub(crate) fn clean_tmp_tags(s: &str) -> Cow<'_, str> {
     if let Cow::Owned(next) = strip_exact_ci(&cur, "</noparse>") {
         cur = Cow::Owned(next);
     }
-    if embed::settings().strip_typewriter_tags {
+    if embed::strip_typewriter_tags() {
         if let Cow::Owned(next) = strip_typewriter_alpha_tags(&cur) {
             cur = Cow::Owned(next);
         }
@@ -498,6 +551,7 @@ mod tests {
 
     #[test]
     fn clean_tmp_tags_borrows_plain_and_strips_tags() {
+        let _guard = embed::test_guard();
         assert!(matches!(clean_tmp_tags("Hello world 123"), Cow::Borrowed("Hello world 123")));
         assert!(matches!(clean_tmp_tags("<color=red>Hi</color>"), Cow::Borrowed("<color=red>Hi</color>")));
 
@@ -518,5 +572,20 @@ mod tests {
         let mut restore = (*embed::settings()).clone();
         restore.strip_typewriter_tags = prev;
         embed::set_settings(restore);
+    }
+
+    #[test]
+    fn utf16_prefilter_filters_non_translatable() {
+        let u = |s: &str| -> Vec<u16> { s.encode_utf16().collect() };
+        assert!(!utf16_has_translatable_letters(&u("")));
+        assert!(!utf16_has_translatable_letters(&u("A")));
+        assert!(!utf16_has_translatable_letters(&u("12345 / 60")));
+        assert!(!utf16_has_translatable_letters(&u("... --- !!!")));
+        assert!(!utf16_has_translatable_letters(&u("<color=red>99%</color>")));
+        assert!(!utf16_has_translatable_letters(&u("مرحبا بالعالم \u{FE8E}\u{FE92}")));
+        assert!(utf16_has_translatable_letters(&u("Health < 50 HP")));
+        assert!(utf16_has_translatable_letters(&u("<color=red>HP:</color> 50")));
+        assert!(utf16_has_translatable_letters(&u("Start Game")));
+        assert!(utf16_has_translatable_letters(&u("日本語テスト")));
     }
 }

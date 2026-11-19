@@ -199,6 +199,25 @@ impl Il2CppApi {
         }
         std::ptr::null_mut()
     }
+
+    fn string_utf16_slice(&self, s: *mut c_void) -> Option<&[u16]> {
+        if s.is_null() {
+            return None;
+        }
+        let (ptr, len) = match (self.string_chars, self.string_length) {
+            (Some(chars_fn), Some(len_fn)) => unsafe { (chars_fn(s), len_fn(s)) },
+            _ => unsafe {
+                let base = (s as *const u8).add(2 * std::mem::size_of::<usize>());
+                let l = *(base as *const i32);
+                let c = base.add(4) as *const u16;
+                (c, l)
+            },
+        };
+        if ptr.is_null() || len <= 0 || len > 1_000_000 {
+            return None;
+        }
+        Some(unsafe { std::slice::from_raw_parts(ptr, len as usize) })
+    }
 }
 
 impl UnityRuntime for Il2CppApi {
@@ -352,23 +371,10 @@ impl UnityRuntime for Il2CppApi {
     }
 
     fn string_to_rust(&self, s: *mut c_void) -> String {
-        if s.is_null() {
-            return String::new();
+        match self.string_utf16_slice(s) {
+            Some(slice) => String::from_utf16_lossy(slice),
+            None => String::new(),
         }
-        let (ptr, len) = match (self.string_chars, self.string_length) {
-            (Some(chars_fn), Some(len_fn)) => unsafe { (chars_fn(s), len_fn(s)) },
-            _ => unsafe {
-                let base = (s as *const u8).add(2 * std::mem::size_of::<usize>());
-                let l = *(base as *const i32);
-                let c = base.add(4) as *const u16;
-                (c, l)
-            },
-        };
-        if ptr.is_null() || len <= 0 || len > 1_000_000 {
-            return String::new();
-        }
-        let slice = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-        String::from_utf16_lossy(slice)
     }
 
     fn string_array_new(&self, items: &[&str]) -> *mut c_void {
@@ -621,10 +627,13 @@ fn emit_hook(hook_id: u64, code: &str, name: &str) {
 }
 
 fn handle_il2cpp_text(api: &Il2CppApi, this: *mut c_void, text: *mut c_void, hook_id: u64) -> *mut c_void {
-    if text.is_null() {
+    let Some(units) = api.string_utf16_slice(text) else {
+        return text;
+    };
+    if !embed::clear_text_enabled() && !super::utf16_has_translatable_letters(units) {
         return text;
     }
-    let raw = api.string_to_rust(text);
+    let raw = String::from_utf16_lossy(units);
     let cleaned: Cow<'_, str> = if is_tmp_hook(hook_id) {
         clean_tmp_tags(&raw)
     } else {
