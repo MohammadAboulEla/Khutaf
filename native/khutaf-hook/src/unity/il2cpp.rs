@@ -1,10 +1,11 @@
 //! Unity IL2CPP (`GameAssembly.dll`) C-API resolver and text setter detours.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::{c_char, c_void, CString};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-use khutaf_proto::{level, Msg};
+use khutaf_proto::level;
 
 use super::{
     caller_rel_ctx, clean_tmp_tags, cstr_to_string, font, is_tmp_hook, module_handle, proc_addr,
@@ -13,7 +14,7 @@ use super::{
     HOOK_TMP_SETTEXT, HOOK_TMP_SET_TEXT, HOOK_UIE_TEXTELEMENT_SET_TEXT,
     HOOK_UIE_TEXTFIELD_SET_VALUE, HOOK_UI_TEXT_SET_TEXT,
 };
-use crate::{embed, hooks, ipc};
+use crate::{embed, hooks};
 
 pub(crate) struct Il2CppApi {
     domain_get: unsafe extern "C" fn() -> *mut c_void,
@@ -616,12 +617,7 @@ fn hook_il2cpp(
 }
 
 fn emit_hook(hook_id: u64, code: &str, name: &str) {
-    ipc::send(&Msg::HookAdded {
-        hook_id,
-        code: code.into(),
-        name: name.into(),
-        embeddable: true,
-    });
+    super::record_and_emit_hook(hook_id, code, name);
 }
 
 fn handle_il2cpp_text(api: &Il2CppApi, this: *mut c_void, text: *mut c_void, hook_id: u64) -> *mut c_void {
@@ -629,9 +625,12 @@ fn handle_il2cpp_text(api: &Il2CppApi, this: *mut c_void, text: *mut c_void, hoo
         return text;
     }
     let raw = api.string_to_rust(text);
-    let cleaned = if is_tmp_hook(hook_id) { clean_tmp_tags(&raw) } else { raw };
-    let ctx = caller_rel_ctx();
-    match embed::process(hook_id, ctx, 0, this as usize, &cleaned) {
+    let cleaned: Cow<'_, str> = if is_tmp_hook(hook_id) {
+        clean_tmp_tags(&raw)
+    } else {
+        Cow::Borrowed(&raw)
+    };
+    match embed::process(hook_id, caller_rel_ctx, 0, this as usize, &cleaned) {
         Some(replaced) => {
             font::on_text(api, this, hook_id, &replaced);
             let new_str = api.string_new(&replaced);
@@ -659,7 +658,13 @@ macro_rules! il2cpp_detour_1 {
                 Ok(Some(n)) => n,
                 Ok(None) => text,
                 Err(_) => {
-                    crate::log(level::ERROR, "panic in il2cpp detour");
+                    crate::telemetry(
+                        "HOOK_NATIVE",
+                        "il2cpp::detour",
+                        0,
+                        "error",
+                        &format!("panic in il2cpp detour | hook_id={}", $hook_id),
+                    );
                     text
                 }
             };
@@ -681,7 +686,13 @@ macro_rules! il2cpp_detour_2 {
                 Ok(Some(n)) => n,
                 Ok(None) => text,
                 Err(_) => {
-                    crate::log(level::ERROR, "panic in il2cpp detour");
+                    crate::telemetry(
+                        "HOOK_NATIVE",
+                        "il2cpp::detour",
+                        0,
+                        "error",
+                        &format!("panic in il2cpp detour | hook_id={}", $hook_id),
+                    );
                     text
                 }
             };

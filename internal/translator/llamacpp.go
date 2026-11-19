@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -77,6 +78,22 @@ type LlamaCppManager struct {
 	lastError string
 	logs      boundedLog
 	client    *http.Client
+	telem     atomic.Pointer[TelemetryFunc]
+}
+
+// SetTelemetry registers an optional telemetry callback.
+func (m *LlamaCppManager) SetTelemetry(fn TelemetryFunc) {
+	if fn == nil {
+		m.telem.Store(nil)
+		return
+	}
+	m.telem.Store(&fn)
+}
+
+func (m *LlamaCppManager) emitTelem(fnName string, durUs int64, level, msg string, fields map[string]any) {
+	if p := m.telem.Load(); p != nil && *p != nil {
+		(*p)("TRANSLATOR", fnName, durUs, level, msg, fields)
+	}
 }
 
 // NewLlamaCppManager creates a new llama.cpp process supervisor.
@@ -139,6 +156,7 @@ func (m *LlamaCppManager) Start(cfg config.LlamaCppSettings) error {
 		return fmt.Errorf("start llama-server: %w", err)
 	}
 
+	startTime := time.Now()
 	done := make(chan struct{})
 	job := assignKillOnCloseJob(cmd.Process.Pid)
 	m.mu.Lock()
@@ -166,6 +184,9 @@ func (m *LlamaCppManager) Start(cfg config.LlamaCppSettings) error {
 			}
 		}
 		m.mu.Unlock()
+		if err != nil {
+			m.emitTelem("LlamaCppManager.Start", 0, "error", "llama-server exited: "+err.Error(), map[string]any{"port": port})
+		}
 		close(done)
 	}()
 
@@ -180,6 +201,7 @@ func (m *LlamaCppManager) Start(cfg config.LlamaCppSettings) error {
 			if errMsg == "" {
 				errMsg = "process exited unexpectedly"
 			}
+			m.emitTelem("LlamaCppManager.Start", time.Since(startTime).Microseconds(), "error", errMsg, map[string]any{"port": port, "job": job != 0})
 			return fmt.Errorf("llama-server exited: %s", errMsg)
 		default:
 		}
@@ -189,12 +211,14 @@ func (m *LlamaCppManager) Start(cfg config.LlamaCppSettings) error {
 				m.ready = true
 			}
 			m.mu.Unlock()
+			m.emitTelem("LlamaCppManager.Start", time.Since(startTime).Microseconds(), "info", "ready", map[string]any{"pid": cmd.Process.Pid, "port": port, "job": job != 0})
 			return nil
 		}
 		time.Sleep(350 * time.Millisecond)
 	}
 
 	_ = m.Stop()
+	m.emitTelem("LlamaCppManager.Start", time.Since(startTime).Microseconds(), "error", "health check timed out", map[string]any{"port": port, "job": job != 0})
 	return errors.New("llama-server started but health check timed out")
 }
 

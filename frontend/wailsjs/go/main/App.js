@@ -30,6 +30,10 @@ export function ClearScopeCache(arg1, arg2) {
   return window['go']['main']['App']['ClearScopeCache'](arg1, arg2);
 }
 
+export function ClearTelemetry() {
+  return window['go']['main']['App']['ClearTelemetry']();
+}
+
 export function ClearTranslationCache() {
   return window['go']['main']['App']['ClearTranslationCache']();
 }
@@ -50,8 +54,16 @@ export function DownloadUnityFonts() {
   return window['go']['main']['App']['DownloadUnityFonts']();
 }
 
+export function ExportDiagnosticBundle() {
+  return window['go']['main']['App']['ExportDiagnosticBundle']();
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
+}
+
+export function GetTelemetrySnapshot() {
+  return window['go']['main']['App']['GetTelemetrySnapshot']();
 }
 
 export function Hooks() {

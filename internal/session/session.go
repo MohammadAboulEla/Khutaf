@@ -29,13 +29,14 @@ type Emitter func(name string, data any)
 
 // Event names emitted to the frontend.
 const (
-	EventLog       = "log"
-	EventStatus    = "session:status"
-	EventHookNew   = "hook:new"
-	EventHookDel   = "hook:remove"
-	EventHookText  = "hook:output"
-	EventEmbedLine = "embed:line"
-	EventDebugTrace = "debug:trace"
+	EventLog            = "log"
+	EventStatus         = "session:status"
+	EventHookNew        = "hook:new"
+	EventHookDel        = "hook:remove"
+	EventHookText       = "hook:output"
+	EventEmbedLine      = "embed:line"
+	EventDebugTrace     = "debug:trace"
+	EventTelemetryBatch = "telemetry:batch"
 )
 
 // HookView is a hook as shown in the UI.
@@ -116,6 +117,8 @@ type Session struct {
 	debugMode      atomic.Bool
 	debugRealTrans atomic.Bool
 	debugSeq       atomic.Uint64
+	telemetry      *telemetryStore
+	droppedEvents  atomic.Uint64
 
 	mu        sync.Mutex
 	gamePath  string
@@ -153,6 +156,7 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 		events:     make(chan func(), 4096),
 		embedCh:    make(chan embedJob, 256),
 		eventStop:  make(chan struct{}),
+		telemetry:  newTelemetryStore(),
 		pids:       map[uint32]bool{},
 		hooks:      map[string]hook.HookInfo{},
 		embedding:  map[string]bool{},
@@ -164,6 +168,7 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 	})
 	defEmbed := config.Default().Embed
 	s.embedCfg.Store(&defEmbed)
+	s.debugRealTrans.Store(true)
 	go func() {
 		for {
 			select {
@@ -186,9 +191,26 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 			}
 		}()
 	}
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.eventStop:
+				return
+			case <-ticker.C:
+				if batch, ok := s.telemetry.flushPending(s.droppedEvents.Load()); ok {
+					s.post(EventTelemetryBatch, batch)
+				}
+			}
+		}
+	}()
 	if cacheErr != nil {
 		s.log("warn", "translation cache fallback to memory: "+cacheErr.Error())
 	}
+	cache.SetTelemetry(s.recordRawTelemetry)
+	s.translator.SetTelemetry(s.recordRawTelemetry)
+	s.llama.SetTelemetry(s.recordRawTelemetry)
 	cfg := store.Config()
 	if err := s.applyConfig(cfg); err != nil {
 		s.log("warn", err.Error())
@@ -210,6 +232,7 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 		s.hostErr = err
 		s.log("error", "hook host unavailable: "+err.Error())
 	} else {
+		host.SetTelemetry(s.recordRawTelemetry)
 		s.host = host
 		s.log("info", "hook host started ("+runtimeDir+")")
 	}
@@ -255,6 +278,7 @@ func (s *Session) post(name string, data any) {
 	case <-s.eventStop:
 	case s.events <- func() { s.emit(name, data) }:
 	default: // UI is overwhelmed; drop rather than stall the game thread
+		s.droppedEvents.Add(1)
 	}
 }
 
@@ -600,7 +624,10 @@ func (s *Session) Attach(pid uint32) error {
 		}
 	}
 	s.log("info", fmt.Sprintf("attaching to %s (pids %v, %s)", filepath.Base(path), pids, archName(is64)))
-	if err := hook.Inject(s.runtimeDir, needInject, is64); err != nil {
+	injectStart := time.Now()
+	err = hook.Inject(s.runtimeDir, needInject, is64)
+	s.RecordSpan(SubIPCPipe, "hook.Inject", injectStart, err, map[string]any{"pids": needInject})
+	if err != nil {
 		for _, p := range pids {
 			s.host.DetachProcess(p)
 		}
@@ -778,12 +805,18 @@ func (s *Session) translateWith(ctx context.Context, text, providerName string, 
 
 // ShapeForEmbed applies wrapping, shaping and visual ordering with current settings.
 func (s *Session) ShapeForEmbed(trans string) string {
+	start := time.Now()
 	cfg := s.embedCfg.Load()
-	return arabic.Process(trans, arabic.Options{
+	out := arabic.Process(trans, arabic.Options{
 		MaxLineLength: cfg.MaxLineLength,
 		ForceWrap:     cfg.LimitLineLength,
 		DisplayMode:   arabic.DisplayMode(cfg.DisplayMode),
 	})
+	s.recordTelemetry(SubArabicShaper, "arabic.Process", "trace", "shaped", time.Since(start).Microseconds(), false, map[string]any{
+		"inRunes":  len([]rune(trans)),
+		"outRunes": len([]rune(out)),
+	})
+	return out
 }
 
 func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
@@ -871,6 +904,44 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 	line.ElapsedMs = totalDur.Milliseconds()
 	s.post(EventEmbedLine, line)
 
+	glossaryMode := "Apply"
+	if isLLMProvider(provName) {
+		glossaryMode = "PromptContext"
+	}
+	timeoutMs := int64(s.embedCfg.Load().TimeoutMs)
+	if timeoutMs <= 0 {
+		timeoutMs = 2000
+	}
+	lvl := "trace"
+	msg := "ok"
+	isTimeout := false
+	if err != nil {
+		msg = err.Error()
+		if strings.Contains(msg, "placeholders") {
+			lvl = "warn"
+		} else {
+			lvl = "error"
+		}
+		if strings.Contains(strings.ToLower(msg), "timeout") || strings.Contains(strings.ToLower(msg), "deadline") {
+			isTimeout = true
+		}
+	} else if totalDur.Milliseconds() > (timeoutMs*80)/100 {
+		lvl = "warn"
+		msg = "embed latency > 80% of TimeoutMs"
+	}
+	s.recordTelemetry(SubPipelineCache, "Session.handleEmbed", lvl, msg, totalDur.Microseconds(), isTimeout, map[string]any{
+		"key":          line.Key,
+		"cached":       cached,
+		"glossaryMode": glossaryMode,
+		"preRulesUs":   preUs,
+		"translateUs":  transUs,
+		"postRulesUs":  postUs,
+		"shapeUs":      shapeUs,
+		"callbackUs":   callbackUs,
+		"totalUs":      totalDur.Microseconds(),
+		"origLen":      len([]rune(text)),
+	})
+
 	if debugging {
 		s.post(EventDebugTrace, DebugTrace{
 			Seq:         seq,
@@ -957,8 +1028,18 @@ func (s *Session) OnHostInfo(kind hook.HostInfo, msg string) {
 		}()
 		s.post(EventStatus, s.Status())
 	case hook.HostInfoWarning, hook.HostInfoEmuWarning:
+		if ev, ok := ParseNativeTelemetry(msg, "warn"); ok {
+			s.recordTelemetry(ev.Subsystem, ev.Func, ev.Level, ev.Message, ev.DurationUs,
+				isTimeoutMsg(ev.Message), ev.Fields)
+			return
+		}
 		s.log("warn", msg)
 	default:
+		if ev, ok := ParseNativeTelemetry(msg, "info"); ok {
+			s.recordTelemetry(ev.Subsystem, ev.Func, ev.Level, ev.Message, ev.DurationUs,
+				isTimeoutMsg(ev.Message), ev.Fields)
+			return
+		}
 		if strings.HasPrefix(msg, "[perf] ") {
 			s.emitPerfTrace(strings.TrimPrefix(msg, "[perf] "))
 		}

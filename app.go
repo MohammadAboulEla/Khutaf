@@ -97,6 +97,21 @@ func (a *App) SetDebugMode(enabled bool, realTrans bool) {
 	a.session.SetDebugMode(enabled, realTrans)
 }
 
+// GetTelemetrySnapshot returns the telemetry ring buffer and function health matrix.
+func (a *App) GetTelemetrySnapshot() session.TelemetrySnapshot {
+	return a.session.GetTelemetrySnapshot()
+}
+
+// ClearTelemetry resets the telemetry ring buffer and function health stats.
+func (a *App) ClearTelemetry() {
+	a.session.ClearTelemetry()
+}
+
+// ExportDiagnosticBundle writes a .jsonl diagnostic report and returns its file path.
+func (a *App) ExportDiagnosticBundle() (string, error) {
+	return a.session.ExportDiagnosticBundle()
+}
+
 // SavedGames returns all saved game profiles with running/attached status.
 func (a *App) SavedGames() []session.SavedGame { return a.session.SavedGames() }
 

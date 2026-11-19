@@ -14,7 +14,10 @@ const DEFAULT_WAIT_MS: u32 = 1000;
 /// `.text` and sets it again) it must pass through untouched.
 const OWN_OUTPUT_HISTORY: usize = 256;
 const MAX_COMPONENT_CTX: usize = 4096;
-const MAX_RECENT_TRANS: usize = 512;
+const MAX_RECENT_TRANS: usize = 4096;
+const MAX_LAST_SENT: usize = 512;
+const TEXT_RATE_LIMIT: Duration = Duration::from_millis(50);
+const ERROR_CACHE_COOLDOWN: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 struct OwnOutputs {
@@ -22,13 +25,59 @@ struct OwnOutputs {
     set: HashSet<String>,
 }
 
+struct RecentEntry {
+    trans: Option<String>,
+    expires_at: Option<Instant>,
+}
+
+#[derive(Default)]
+struct RecentCache {
+    map: HashMap<String, RecentEntry>,
+    order: VecDeque<String>,
+}
+
+impl RecentCache {
+    fn get(&mut self, text: &str) -> Option<Option<String>> {
+        let entry = self.map.get(text)?;
+        if let Some(exp) = entry.expires_at {
+            if Instant::now() >= exp {
+                self.map.remove(text);
+                return None;
+            }
+        }
+        Some(entry.trans.clone())
+    }
+
+    fn insert(&mut self, text: String, trans: Option<String>, expires_at: Option<Instant>) {
+        if let Some(existing) = self.map.get_mut(&text) {
+            existing.trans = trans;
+            existing.expires_at = expires_at;
+            return;
+        }
+        while self.order.len() >= MAX_RECENT_TRANS {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+        self.order.push_back(text.clone());
+        self.map.insert(text, RecentEntry { trans, expires_at });
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+    }
+}
+
 static SETTINGS: LazyLock<RwLock<Arc<Settings>>> = LazyLock::new(|| {
     RwLock::new(Arc::new(Settings { wait_ms: DEFAULT_WAIT_MS, font_scale: 1.0, ..Default::default() }))
 });
 static ENABLED: LazyLock<Mutex<HashSet<(u64, u64, u64)>>> = LazyLock::new(Default::default);
 static COMPONENT_CTX: LazyLock<Mutex<HashMap<(u64, usize), u64>>> = LazyLock::new(Default::default);
-static RECENT_TRANSLATIONS: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default::default);
+static RECENT_TRANSLATIONS: LazyLock<Mutex<RecentCache>> = LazyLock::new(Default::default);
 static OWN_OUTPUTS: LazyLock<Mutex<OwnOutputs>> = LazyLock::new(Default::default);
+static LAST_SENT_TEXT: LazyLock<Mutex<HashMap<(u64, u64, u64), (String, Instant)>>> =
+    LazyLock::new(Default::default);
 
 /// req_id -> None while waiting, Some(reply) once answered.
 static PENDING: LazyLock<Mutex<HashMap<u64, Option<Option<String>>>>> = LazyLock::new(Default::default);
@@ -85,31 +134,85 @@ fn remember_output(text: &str) {
     o.queue.push_back(owned);
 }
 
-fn resolve_component_ctx(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize) -> u64 {
+fn resolve_component_ctx_lazy(
+    hook_id: u64,
+    ctx_fn: impl FnOnce() -> u64,
+    ctx2: u64,
+    component: usize,
+) -> u64 {
     if component == 0 {
-        return raw_ctx;
+        return ctx_fn();
     }
-    let existing = {
-        let mut map = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(&existing) = map.get(&(hook_id, component)) {
-            Some(existing)
-        } else {
-            if map.len() >= MAX_COMPONENT_CTX {
-                map.clear();
-            }
-            map.insert((hook_id, component), raw_ctx);
-            return raw_ctx;
-        }
-    };
+    let existing = COMPONENT_CTX
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&(hook_id, component))
+        .copied();
     if let Some(existing) = existing {
-        if existing != raw_ctx && is_enabled(hook_id, raw_ctx, ctx2) && !is_enabled(hook_id, existing, ctx2) {
+        if is_enabled(hook_id, existing, ctx2) {
+            return existing;
+        }
+        let raw_ctx = ctx_fn();
+        if existing != raw_ctx && is_enabled(hook_id, raw_ctx, ctx2) {
             let mut map = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
             map.insert((hook_id, component), raw_ctx);
             return raw_ctx;
         }
         return existing;
     }
+    let raw_ctx = ctx_fn();
+    let mut map = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
+    if map.len() >= MAX_COMPONENT_CTX {
+        map.clear();
+    }
+    map.insert((hook_id, component), raw_ctx);
     raw_ctx
+}
+
+fn send_text_dedup(hook_id: u64, ctx: u64, ctx2: u64, text: &str) {
+    let now = Instant::now();
+    {
+        let mut last = LAST_SENT_TEXT.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((prev, prev_at)) = last.get(&(hook_id, ctx, ctx2)) {
+            if prev == text || now.duration_since(*prev_at) < TEXT_RATE_LIMIT {
+                return;
+            }
+        }
+        if last.len() >= MAX_LAST_SENT && !last.contains_key(&(hook_id, ctx, ctx2)) {
+            last.clear();
+        }
+        last.insert((hook_id, ctx, ctx2), (text.to_owned(), now));
+    }
+    ipc::send(&Msg::Text { hook_id, ctx, ctx2, text: text.to_owned() });
+}
+
+fn is_arabic_char(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF
+    )
+}
+
+/// Reports whether `s` contains at least one non-Arabic alphabetic letter outside `<...>` rich-text tags.
+pub(crate) fn has_translatable_letters(s: &str) -> bool {
+    let mut in_tag = false;
+    let bytes = s.as_bytes();
+    for (idx, ch) in s.char_indices() {
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+            }
+            continue;
+        }
+        if ch == '<' && bytes[idx + 1..].contains(&b'>') {
+            in_tag = true;
+            continue;
+        }
+        if ch.is_alphabetic() && !is_arabic_char(ch) {
+            return true;
+        }
+    }
+    false
 }
 
 fn format_display(mode: u32, orig: &str, trans: &str) -> Option<String> {
@@ -123,35 +226,36 @@ fn format_display(mode: u32, orig: &str, trans: &str) -> Option<String> {
 
 /// Reports hooked text to the host and, when embedding is enabled for the
 /// thread, blocks up to `wait_ms` for a replacement. `None` = keep original.
-pub fn process(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize, text: &str) -> Option<String> {
+pub fn process(
+    hook_id: u64,
+    ctx_fn: impl FnOnce() -> u64,
+    ctx2: u64,
+    component: usize,
+    text: &str,
+) -> Option<String> {
     if text.trim().is_empty() || is_own_output(text) {
-        return None;
-    }
-    if text.chars().count() <= 1 {
-        ipc::send(&Msg::Text { hook_id, ctx: raw_ctx, ctx2, text: text.to_owned() });
         return None;
     }
 
     let cfg = settings();
-    let ctx = resolve_component_ctx(hook_id, raw_ctx, ctx2, component);
-    if cfg.display_mode == 3 {
-        ipc::send(&Msg::Text { hook_id, ctx, ctx2, text: text.to_owned() });
-        return None;
-    }
-    if !is_enabled(hook_id, ctx, ctx2) {
-        ipc::send(&Msg::Text { hook_id, ctx, ctx2, text: text.to_owned() });
+    let ctx = resolve_component_ctx_lazy(hook_id, ctx_fn, ctx2, component);
+    if text.chars().count() <= 1 || cfg.display_mode == 3 || !is_enabled(hook_id, ctx, ctx2) {
+        send_text_dedup(hook_id, ctx, ctx2, text);
         return None;
     }
     if cfg.clear_text {
-        ipc::send(&Msg::Text { hook_id, ctx, ctx2, text: text.to_owned() });
+        send_text_dedup(hook_id, ctx, ctx2, text);
         return Some(" ".to_owned());
+    }
+    if !has_translatable_letters(text) {
+        return None;
     }
     if let Some(cached) = RECENT_TRANSLATIONS
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .get(text)
-        .cloned()
     {
+        let cached = cached?;
         let out = format_display(cfg.display_mode, text, &cached)?;
         remember_output(&out);
         return Some(out);
@@ -165,7 +269,9 @@ pub fn process(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize, text: &s
         return None;
     }
 
-    let deadline = Instant::now() + wait;
+    let wait_start = Instant::now();
+    let deadline = wait_start + wait;
+    let mut timed_out = false;
     let mut pending = PENDING.lock().unwrap_or_else(|p| p.into_inner());
     let reply = loop {
         if let Some(Some(_)) = pending.get(&req_id) {
@@ -173,24 +279,60 @@ pub fn process(hook_id: u64, raw_ctx: u64, ctx2: u64, component: usize, text: &s
         }
         let now = Instant::now();
         if now >= deadline || SHUTDOWN.load(Ordering::Relaxed) {
+            timed_out = now >= deadline && !SHUTDOWN.load(Ordering::Relaxed);
             pending.remove(&req_id);
             break None;
         }
         pending = PENDING_CV.wait_timeout(pending, deadline - now).unwrap_or_else(|p| p.into_inner()).0;
     };
     drop(pending);
-
-    let reply = reply.filter(|t| !t.is_empty() && t != text)?;
-    {
-        let mut recent = RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner());
-        if recent.len() >= MAX_RECENT_TRANS {
-            recent.clear();
-        }
-        recent.insert(text.to_owned(), reply.clone());
+    let wait_elapsed = wait_start.elapsed();
+    let wait_us = wait_elapsed.as_micros() as u64;
+    if timed_out {
+        crate::telemetry(
+            "IPC_PIPE",
+            "embed::process",
+            wait_us,
+            "error",
+            &format!("embed wait timeout | hook_id={hook_id} wait_ms={}", wait.as_millis()),
+        );
+    } else if wait_elapsed.as_millis() * 100 >= wait.as_millis() * 80 {
+        crate::telemetry(
+            "IPC_PIPE",
+            "embed::process",
+            wait_us,
+            "warn",
+            &format!("embed wait > 80% of wait_ms | hook_id={hook_id} wait_ms={}", wait.as_millis()),
+        );
     }
-    let out = format_display(cfg.display_mode, text, &reply)?;
-    remember_output(&out);
-    Some(out)
+
+    match reply {
+        Some(t) if !t.is_empty() && t != text => {
+            RECENT_TRANSLATIONS
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(text.to_owned(), Some(t.clone()), None);
+            let out = format_display(cfg.display_mode, text, &t)?;
+            remember_output(&out);
+            Some(out)
+        }
+        Some(_) => {
+            RECENT_TRANSLATIONS
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(text.to_owned(), None, None);
+            None
+        }
+        None => {
+            if !timed_out && !SHUTDOWN.load(Ordering::Relaxed) {
+                RECENT_TRANSLATIONS
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(text.to_owned(), None, Some(Instant::now() + ERROR_CACHE_COOLDOWN));
+            }
+            None
+        }
+    }
 }
 
 pub fn complete(req_id: u64, text: Option<String>) {
@@ -206,10 +348,55 @@ pub fn release_all() {
     SHUTDOWN.store(true, Ordering::SeqCst);
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    LAST_SENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
     let _guard = PENDING.lock().unwrap_or_else(|p| p.into_inner());
     PENDING_CV.notify_all();
 }
 
+/// Resets embed state for a new pipe session after re-attach.
+pub fn reset_for_session() {
+    SHUTDOWN.store(false, Ordering::SeqCst);
+    ENABLED.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    LAST_SENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    {
+        let mut own = OWN_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner());
+        own.queue.clear();
+        own.set.clear();
+    }
+    PENDING.lock().unwrap_or_else(|p| p.into_inner()).clear();
+}
+
 pub fn is_shutting_down() -> bool {
     SHUTDOWN.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn has_translatable_letters_filters_non_translatable() {
+        assert!(!has_translatable_letters(""));
+        assert!(!has_translatable_letters("12345 / 60"));
+        assert!(!has_translatable_letters("... --- !!!"));
+        assert!(!has_translatable_letters("<color=red>100%</color>"));
+        assert!(!has_translatable_letters("مرحبا بالعالم"));
+        assert!(has_translatable_letters("<color=red>HP:</color> 50"));
+        assert!(has_translatable_letters("Start Game"));
+        assert!(has_translatable_letters("日本語テスト"));
+    }
+
+    #[test]
+    fn disabled_hook_returns_none_even_if_cached() {
+        RECENT_TRANSLATIONS
+            .lock()
+            .unwrap()
+            .insert("Hello".to_owned(), Some("مرحبا".to_owned()), None);
+        assert!(process(999, || 123, 0, 0, "Hello").is_none());
+        RECENT_TRANSLATIONS.lock().unwrap().clear();
+        LAST_SENT_TEXT.lock().unwrap().clear();
+        COMPONENT_CTX.lock().unwrap().clear();
+    }
 }

@@ -25,10 +25,15 @@ struct FontState {
     tried_tmp_retry: bool,
     t_tmp: *mut c_void,
     t_fa: *mut c_void,
+    f_font: *mut c_void,
+    m_tmp_get_font: *mut c_void,
+    m_tmp_set_font: *mut c_void,
+    size_methods: HashMap<usize, (*mut c_void, *mut c_void)>,
     bundle_handles: Vec<u32>,
     os_handles: Vec<u32>,
     scaled: HashMap<usize, u32>,
     bundle_checked: HashMap<u32, bool>,
+    bundle_supports_arabic: Option<bool>,
     fallback_attached: HashSet<usize>,
 }
 
@@ -45,23 +50,28 @@ static STATE: LazyLock<Mutex<FontState>> = LazyLock::new(|| {
         tried_tmp_retry: false,
         t_tmp: std::ptr::null_mut(),
         t_fa: std::ptr::null_mut(),
+        f_font: std::ptr::null_mut(),
+        m_tmp_get_font: std::ptr::null_mut(),
+        m_tmp_set_font: std::ptr::null_mut(),
+        size_methods: HashMap::new(),
         bundle_handles: Vec::new(),
         os_handles: Vec::new(),
         scaled: HashMap::new(),
         bundle_checked: HashMap::new(),
+        bundle_supports_arabic: None,
         fallback_attached: HashSet::new(),
     })
 });
 
 pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text: &str) {
     let settings = embed::settings();
-    let dir = settings.font_dir.trim().to_owned();
-    let family = settings.font_family.trim().to_owned();
+    let dir = settings.font_dir.trim();
+    let family = settings.font_family.trim();
 
     let mut st = STATE.lock().unwrap_or_else(|p| p.into_inner());
 
     if !st.initialized || st.loaded_dir != dir || st.loaded_family != family {
-        reload_fonts(rt, &mut st, &dir, &family, component, hook_id);
+        reload_fonts(rt, &mut st, dir, family, component, hook_id);
     } else if st.dyn_font.is_null()
         && !st.os_font.is_null()
         && !st.tried_tmp_retry
@@ -70,6 +80,7 @@ pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text
     {
         // Retry TMP font creation once we see an actual TMP component that can donate its shader.
         st.tried_tmp_retry = true;
+        let t_retry = std::time::Instant::now();
         if let Some(donor) = read_component_tmp_font(rt, component) {
             let dyn_tmp = create_tmp_font_asset(rt, st.os_font, donor);
             if !dyn_tmp.is_null() {
@@ -89,7 +100,13 @@ pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text
                     }
                     register_global_fallbacks(rt, t_fa, st.bundle_font, st.dyn_font);
                 }
-                crate::log(level::INFO, "unity TMP dynamic font created via component shader donor");
+                crate::telemetry(
+                    "UNITY_FONT",
+                    "font::on_text",
+                    t_retry.elapsed().as_micros() as u64,
+                    "info",
+                    "TMP dynamic font created via shader donor",
+                );
             }
         }
     }
@@ -135,6 +152,7 @@ fn reload_fonts(
     component: *mut c_void,
     hook_id: u64,
 ) {
+    let start = std::time::Instant::now();
     let dir_changed = !st.initialized || st.loaded_dir != dir;
     let fam_changed = !st.initialized || st.loaded_family != family;
     st.initialized = true;
@@ -142,13 +160,26 @@ fn reload_fonts(
     st.loaded_family = family.to_owned();
     st.tried_tmp_retry = false;
     st.scaled.clear();
+    st.size_methods.clear();
     if dir_changed {
         st.bundle_checked.clear();
+        st.bundle_supports_arabic = None;
     }
     st.fallback_attached.clear();
 
     if st.t_tmp.is_null() {
         st.t_tmp = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_Text");
+    }
+    if !st.t_tmp.is_null() {
+        if st.f_font.is_null() {
+            st.f_font = rt.find_field_in_hierarchy(st.t_tmp, "m_fontAsset");
+        }
+        if st.m_tmp_get_font.is_null() {
+            st.m_tmp_get_font = rt.find_method_in_hierarchy(st.t_tmp, "get_font", 0);
+        }
+        if st.m_tmp_set_font.is_null() {
+            st.m_tmp_set_font = rt.find_method_in_hierarchy(st.t_tmp, "set_font", 1);
+        }
     }
     if st.t_fa.is_null() {
         st.t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
@@ -202,10 +233,13 @@ fn reload_fonts(
         register_global_fallbacks(rt, t_fa, st.bundle_font, st.dyn_font);
     }
 
-    crate::log(
-        level::INFO,
-        format!(
-            "unity font ready (bundle={}, os_tmp={}, os_ui={})",
+    crate::telemetry(
+        "UNITY_FONT",
+        "font::reload_fonts",
+        start.elapsed().as_micros() as u64,
+        "info",
+        &format!(
+            "fonts ready | bundle={} os_tmp={} os_ui={}",
             !st.bundle_font.is_null(),
             !st.dyn_font.is_null(),
             !st.os_font.is_null()
@@ -280,7 +314,13 @@ fn load_bundle_font(rt: &dyn UnityRuntime, dir: &str, handles: &mut Vec<u32>) ->
     let ver = unity_version(rt);
     let path = Path::new(dir).join(pick_bundle(&ver));
     if !path.exists() {
-        crate::log(level::WARN, format!("TMP bundle missing: {}", path.display()));
+        crate::telemetry(
+            "UNITY_FONT",
+            "font::load_bundle_font",
+            0,
+            "warn",
+            &format!("TMP bundle missing | unity={ver}"),
+        );
         return std::ptr::null_mut();
     }
     let Some(path_str_arg) = path.to_str() else { return std::ptr::null_mut() };
@@ -774,6 +814,17 @@ fn apply_component_font(
     if st.t_tmp.is_null() {
         st.t_tmp = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_Text");
     }
+    if !st.t_tmp.is_null() {
+        if st.f_font.is_null() {
+            st.f_font = rt.find_field_in_hierarchy(st.t_tmp, "m_fontAsset");
+        }
+        if st.m_tmp_get_font.is_null() {
+            st.m_tmp_get_font = rt.find_method_in_hierarchy(st.t_tmp, "get_font", 0);
+        }
+        if st.m_tmp_set_font.is_null() {
+            st.m_tmp_set_font = rt.find_method_in_hierarchy(st.t_tmp, "set_font", 1);
+        }
+    }
     if st.t_fa.is_null() {
         st.t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
     }
@@ -784,21 +835,31 @@ fn apply_component_font(
     }
 
     let mut target = if !st.bundle_font.is_null() { st.bundle_font } else { st.dyn_font };
-    if !st.bundle_font.is_null()
-        && !st.dyn_font.is_null()
-        && !has_all_non_ascii(rt, t_fa, st.bundle_font, &mut st.bundle_checked, text)
-    {
-        target = st.dyn_font;
+    if !st.bundle_font.is_null() && !st.dyn_font.is_null() {
+        if st.bundle_supports_arabic == Some(false) {
+            target = st.dyn_font;
+        } else if !has_all_non_ascii(rt, t_fa, st.bundle_font, &mut st.bundle_checked, text) {
+            target = st.dyn_font;
+            if text.chars().any(|c| ('\u{FE80}'..='\u{FEFF}').contains(&c)) {
+                st.bundle_supports_arabic = Some(false);
+            }
+        }
     }
 
-    let comp_cls = rt.object_get_class(component);
-    let m_get = rt.find_method_in_hierarchy(comp_cls, "get_font", 0);
-    let f_font = rt.find_field_in_hierarchy(t_tmp, "m_fontAsset");
+    let f_font = st.f_font;
     let mut cur_font: *mut c_void = std::ptr::null_mut();
-    if !m_get.is_null() {
-        cur_font = rt.invoke(m_get, component, &mut []).unwrap_or(std::ptr::null_mut());
-    } else if !f_font.is_null() {
+    let mut comp_cls: *mut c_void = std::ptr::null_mut();
+    if !f_font.is_null() {
         rt.field_get_value(component, f_font, &mut cur_font as *mut *mut c_void as *mut c_void);
+    } else {
+        let mut m_get = st.m_tmp_get_font;
+        if m_get.is_null() {
+            comp_cls = rt.object_get_class(component);
+            m_get = rt.find_method_in_hierarchy(comp_cls, "get_font", 0);
+        }
+        if !m_get.is_null() {
+            cur_font = rt.invoke(m_get, component, &mut []).unwrap_or(std::ptr::null_mut());
+        }
     }
 
     if !cur_font.is_null()
@@ -817,10 +878,19 @@ fn apply_component_font(
         return;
     }
 
-    let m_set = rt.find_method_in_hierarchy(comp_cls, "set_font", 1);
+    let mut m_set = st.m_tmp_set_font;
+    if m_set.is_null() {
+        if comp_cls.is_null() {
+            comp_cls = rt.object_get_class(component);
+        }
+        m_set = rt.find_method_in_hierarchy(comp_cls, "set_font", 1);
+    }
     if !m_set.is_null() {
         let _ = rt.invoke(m_set, component, &mut [target]);
     } else if !f_font.is_null() {
+        if comp_cls.is_null() {
+            comp_cls = rt.object_get_class(component);
+        }
         rt.field_set_value(component, f_font, target);
         let f_changed = rt.find_field_in_hierarchy(t_tmp, "m_havePropertiesChanged");
         if !f_changed.is_null() {
@@ -849,8 +919,20 @@ fn scale_component_font(
     if comp_cls.is_null() {
         return;
     }
-    let m_get = rt.find_method_in_hierarchy(comp_cls, "get_fontSize", 0);
-    let m_set = rt.find_method_in_hierarchy(comp_cls, "set_fontSize", 1);
+    let cls_key = comp_cls as usize;
+    let (m_get, m_set) = if let Some(&pair) = st.size_methods.get(&cls_key) {
+        pair
+    } else {
+        let pair = (
+            rt.find_method_in_hierarchy(comp_cls, "get_fontSize", 0),
+            rt.find_method_in_hierarchy(comp_cls, "set_fontSize", 1),
+        );
+        if st.size_methods.len() >= 128 {
+            st.size_methods.clear();
+        }
+        st.size_methods.insert(cls_key, pair);
+        pair
+    };
     let Some(boxed) = rt.invoke(m_get, component, &mut []) else { return };
     let val_ptr = rt.unbox(boxed);
     if val_ptr.is_null() || m_set.is_null() {

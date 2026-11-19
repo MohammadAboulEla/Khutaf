@@ -31,21 +31,32 @@ fn open_retry(path: &str, write: bool) -> io::Result<File> {
     }
 }
 
-pub fn connect(pid: u32) -> io::Result<()> {
-    let mut up = open_retry(&format!(r"\\.\pipe\khutaf_{pid}_up"), true)?;
-    let down = open_retry(&format!(r"\\.\pipe\khutaf_{pid}_down"), false)?;
-    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(SEND_QUEUE_CAP);
-    std::thread::spawn(move || {
-        while let Ok(frame) = rx.recv() {
-            if up.write_all(&frame).is_err() {
-                break;
+pub fn connect_wait(pid: u32) {
+    let up_path = format!(r"\\.\pipe\khutaf_{pid}_up");
+    let down_path = format!(r"\\.\pipe\khutaf_{pid}_down");
+    loop {
+        let Ok(mut up) = OpenOptions::new().write(true).open(&up_path) else {
+            std::thread::sleep(Duration::from_millis(250));
+            continue;
+        };
+        let Ok(down) = open_retry(&down_path, false) else {
+            drop(up);
+            std::thread::sleep(Duration::from_millis(250));
+            continue;
+        };
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(SEND_QUEUE_CAP);
+        std::thread::spawn(move || {
+            while let Ok(frame) = rx.recv() {
+                if up.write_all(&frame).is_err() {
+                    break;
+                }
             }
-        }
-        *TX.lock().unwrap_or_else(|p| p.into_inner()) = None;
-    });
-    *TX.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
-    *DOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some(down);
-    Ok(())
+            *TX.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        });
+        *TX.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
+        *DOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some(down);
+        return;
+    }
 }
 
 /// Enqueues a message for async pipe write; drops it without blocking when full or disconnected.

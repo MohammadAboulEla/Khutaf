@@ -22,7 +22,7 @@ const status = ref({
   pids: [],
   provider: "",
   debugMode: false,
-  debugRealTrans: false,
+  debugRealTrans: true,
 });
 
 const processes = ref([]);
@@ -31,6 +31,9 @@ const hookOutputs = ref({});
 const embedFeed = ref([]);
 const logs = ref([]);
 const debugTraces = ref([]);
+const telemetryEvents = ref([]);
+const functionStats = ref([]);
+const droppedEvents = ref(0);
 const savedGames = ref([]);
 const cacheCount = ref(0);
 const appVersion = ref("0.1.0");
@@ -124,6 +127,20 @@ function init() {
     scheduleFlush();
   });
 
+  on("telemetry:batch", (batch) => {
+    if (!batch) return;
+    if (Array.isArray(batch.events) && batch.events.length) {
+      const incoming = [...batch.events].reverse();
+      telemetryEvents.value = [...incoming, ...telemetryEvents.value].slice(0, 2000);
+    }
+    if (Array.isArray(batch.stats)) {
+      functionStats.value = batch.stats;
+    }
+    if (typeof batch.droppedEvents === "number") {
+      droppedEvents.value = batch.droppedEvents;
+    }
+  });
+
   refreshAll();
 }
 
@@ -138,7 +155,7 @@ async function refreshAll() {
   if (cfg) config.value = cfg;
   if (hk) hooks.value = hk;
   if (ver) appVersion.value = ver;
-  await Promise.all([refreshProcesses(), refreshSavedGames(), refreshUnityFontStatus()]);
+  await Promise.all([refreshProcesses(), refreshSavedGames(), refreshUnityFontStatus(), refreshTelemetry()]);
 }
 
 async function refreshProcesses() {
@@ -205,10 +222,50 @@ const stopLlamaServer = () => call("StopLlamaServer");
 const llamaServerStatus = () => call("LlamaServerStatus");
 const browseLlamaBinary = () => call("BrowseLlamaBinary");
 const browseGGUFModel = () => call("BrowseGGUFModel");
-const setDebugMode = (enabled, realTrans = false) => call("SetDebugMode", Boolean(enabled), Boolean(realTrans));
+const setDebugMode = (enabled, realTrans = true) => call("SetDebugMode", Boolean(enabled), Boolean(realTrans));
 const clearDebugTraces = () => {
   debugTraces.value = [];
 };
+
+async function refreshTelemetry() {
+  try {
+    const snap = await call("GetTelemetrySnapshot");
+    if (!snap) return;
+    if (Array.isArray(snap.events)) {
+      telemetryEvents.value = [...snap.events].reverse().slice(0, 2000);
+    }
+    if (Array.isArray(snap.stats)) {
+      functionStats.value = snap.stats;
+    }
+    if (typeof snap.droppedEvents === "number") {
+      droppedEvents.value = snap.droppedEvents;
+    }
+  } catch (e) {
+    errorBanner.value = String(e);
+  }
+}
+
+async function clearTelemetry() {
+  errorBanner.value = "";
+  try {
+    await call("ClearTelemetry");
+    telemetryEvents.value = [];
+    functionStats.value = [];
+    droppedEvents.value = 0;
+  } catch (e) {
+    errorBanner.value = String(e);
+  }
+}
+
+async function exportDiagnosticBundle() {
+  errorBanner.value = "";
+  try {
+    return await call("ExportDiagnosticBundle");
+  } catch (e) {
+    errorBanner.value = String(e);
+    return "";
+  }
+}
 
 async function refreshSavedGames() {
   try {
@@ -359,6 +416,9 @@ export function useSession() {
     embedFeed: readonly(embedFeed),
     logs: readonly(logs),
     debugTraces: readonly(debugTraces),
+    telemetryEvents: readonly(telemetryEvents),
+    functionStats: readonly(functionStats),
+    droppedEvents: readonly(droppedEvents),
     savedGames: readonly(savedGames),
     cacheCount: readonly(cacheCount),
     appVersion: readonly(appVersion),
@@ -396,6 +456,9 @@ export function useSession() {
     downloadUnityFonts,
     setDebugMode,
     clearDebugTraces,
+    refreshTelemetry,
+    clearTelemetry,
+    exportDiagnosticBundle,
     clearError,
   };
 }

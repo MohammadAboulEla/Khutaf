@@ -10,7 +10,7 @@ mod unity;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-use khutaf_proto::{Msg, PROTO_VERSION};
+use khutaf_proto::{level, Msg, PROTO_VERSION};
 use windows_sys::Win32::Foundation::{CloseHandle, HMODULE, TRUE};
 use windows_sys::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
 use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
@@ -43,30 +43,43 @@ unsafe extern "system" fn init_thread(_: *mut c_void) -> u32 {
 
 fn run() {
     let pid = unsafe { GetCurrentProcessId() };
-    if ipc::connect(pid).is_err() {
-        return; // host is gone; unload silently
+    loop {
+        ipc::connect_wait(pid);
+        embed::reset_for_session();
+        let engine = unity::detect();
+        ipc::send(&Msg::Hello {
+            proto: PROTO_VERSION,
+            pid,
+            arch: (std::mem::size_of::<usize>() * 8) as u8,
+            engine: engine.name().into(),
+            unity_version: String::new(),
+        });
+        let reader = std::thread::spawn(|| {
+            ipc::serve(); // blocks until Detach or the pipe breaks
+            embed::release_all();
+        });
+
+        unity::install(engine);
+
+        let _ = reader.join();
+        hooks::shutdown();
+        ipc::close();
+        std::thread::sleep(std::time::Duration::from_millis(250));
     }
-    let engine = unity::detect();
-    ipc::send(&Msg::Hello {
-        proto: PROTO_VERSION,
-        pid,
-        arch: (std::mem::size_of::<usize>() * 8) as u8,
-        engine: engine.name().into(),
-        unity_version: String::new(),
-    });
-    let reader = std::thread::spawn(|| {
-        ipc::serve(); // blocks until Detach or the pipe breaks
-        embed::release_all();
-    });
-
-    unity::install(engine);
-
-    let _ = reader.join();
-    hooks::shutdown();
-    ipc::close();
 }
 
 /// Sends a log line to the host (dropped when disconnected).
 pub(crate) fn log(lvl: u8, msg: impl Into<String>) {
     ipc::send(&Msg::Log { level: lvl, msg: msg.into() });
+}
+
+/// Sends a structured telemetry line over `Msg::Log` without breaking wire compatibility.
+pub(crate) fn telemetry(subsys: &str, func: &str, dur_us: u64, lvl: &str, msg: &str) {
+    let wire_lvl = match lvl {
+        "error" => level::ERROR,
+        "warn" => level::WARN,
+        _ => level::INFO,
+    };
+    let line = format!("[telemetry|{subsys}|{func}|{dur_us}|{lvl}] {msg}");
+    ipc::send(&Msg::Log { level: wire_lvl, msg: line });
 }

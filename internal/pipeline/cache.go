@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -108,6 +109,9 @@ func loadSQLite() (*sqliteLib, error) {
 	return sqliteAPI, sqliteErr
 }
 
+// TelemetryFunc receives structured telemetry events from the cache.
+type TelemetryFunc func(subsys, fnName string, durUs int64, level, msg string, fields map[string]any)
+
 // Cache provides 0ms in-memory translation lookup backed by SQLite persistence.
 type Cache struct {
 	mu     sync.RWMutex
@@ -117,6 +121,25 @@ type Cache struct {
 	mem    map[cacheKey]CacheEntry
 	manual map[manualKey]string
 	shared map[sharedKey]string
+	telem  atomic.Pointer[TelemetryFunc]
+}
+
+// SetTelemetry registers an optional telemetry callback.
+func (c *Cache) SetTelemetry(fn TelemetryFunc) {
+	if c == nil {
+		return
+	}
+	if fn == nil {
+		c.telem.Store(nil)
+		return
+	}
+	c.telem.Store(&fn)
+}
+
+func (c *Cache) emitTelem(fnName string, durUs int64, level, msg string, fields map[string]any) {
+	if p := c.telem.Load(); p != nil && *p != nil {
+		(*p)("PIPELINE_CACHE", fnName, durUs, level, msg, fields)
+	}
 }
 
 // NormalizeGameUID normalizes a game executable path into a cache scope key.
@@ -224,30 +247,50 @@ func (c *Cache) Get(gameUID, provider, sourceText string) (string, bool) {
 	if c == nil {
 		return "", false
 	}
+	start := time.Now()
+	val, tier := c.getWithTier(gameUID, provider, sourceText)
+	if tier == "" {
+		c.emitTelem("Cache.Get", time.Since(start).Microseconds(), "trace", "miss", map[string]any{"tier": "miss"})
+		return "", false
+	}
+	c.emitTelem("Cache.Get", time.Since(start).Microseconds(), "trace", "hit:"+tier, map[string]any{"tier": tier})
+	return val, true
+}
+
+// GetSilent performs the same cache lookup as Get without emitting telemetry.
+func (c *Cache) GetSilent(gameUID, provider, sourceText string) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	val, tier := c.getWithTier(gameUID, provider, sourceText)
+	return val, tier != ""
+}
+
+func (c *Cache) getWithTier(gameUID, provider, sourceText string) (string, string) {
 	g := NormalizeGameUID(gameUID)
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if val, ok := c.manual[manualKey{gameUID: g, sourceText: sourceText}]; ok {
-		return val, true
+	if v, ok := c.manual[manualKey{gameUID: g, sourceText: sourceText}]; ok {
+		return v, "manual_game"
 	}
 	if g != "global" {
-		if val, ok := c.manual[manualKey{gameUID: "global", sourceText: sourceText}]; ok {
-			return val, true
+		if v, ok := c.manual[manualKey{gameUID: "global", sourceText: sourceText}]; ok {
+			return v, "manual_global"
 		}
 	}
 	if entry, ok := c.mem[cacheKey{gameUID: g, provider: provider, sourceText: sourceText}]; ok {
-		return entry.Translated, true
+		return entry.Translated, "auto_game"
 	}
 	if g != "global" {
 		if entry, ok := c.mem[cacheKey{gameUID: "global", provider: provider, sourceText: sourceText}]; ok {
-			return entry.Translated, true
+			return entry.Translated, "auto_global"
 		}
 	}
-	if val, ok := c.shared[sharedKey{provider: provider, sourceText: sourceText}]; ok {
-		return val, true
+	if v, ok := c.shared[sharedKey{provider: provider, sourceText: sourceText}]; ok {
+		return v, "shared"
 	}
-	return "", false
+	return "", ""
 }
 
 // PutAuto stores an automatic translation without overwriting manual overrides.
@@ -281,11 +324,19 @@ func (c *Cache) PutAuto(gameUID, provider, sourceText, translated string) {
 	c.mu.Unlock()
 
 	if hasDB {
+		t0 := time.Now()
 		c.dbMu.Lock()
+		var dbErr error
 		if c.db != 0 {
-			_ = c.execUpsertAutoLocked(g, provider, sourceText, translated, now)
+			dbErr = c.execUpsertAutoLocked(g, provider, sourceText, translated, now)
 		}
 		c.dbMu.Unlock()
+		durUs := time.Since(t0).Microseconds()
+		if dbErr != nil {
+			c.emitTelem("Cache.PutAuto", durUs, "error", dbErr.Error(), nil)
+		} else if durUs > 50_000 {
+			c.emitTelem("Cache.PutAuto", durUs, "warn", "slow sqlite write", nil)
+		}
 	}
 }
 

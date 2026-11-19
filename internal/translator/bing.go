@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"khutaf/internal/config"
@@ -42,8 +43,24 @@ type Bing struct {
 	cfg    config.BingSettings
 	client *http.Client
 
-	mu   sync.Mutex
-	sess *bingSession
+	mu    sync.Mutex
+	sess  *bingSession
+	telem atomic.Pointer[TelemetryFunc]
+}
+
+// SetTelemetry registers an optional telemetry callback.
+func (b *Bing) SetTelemetry(fn TelemetryFunc) {
+	if fn == nil {
+		b.telem.Store(nil)
+		return
+	}
+	b.telem.Store(&fn)
+}
+
+func (b *Bing) emitTelem(fnName string, durUs int64, level, msg string, fields map[string]any) {
+	if p := b.telem.Load(); p != nil && *p != nil {
+		(*p)("TRANSLATOR", fnName, durUs, level, msg, fields)
+	}
 }
 
 // NewBing creates a free Bing translator client and pre-warms its session.
@@ -84,6 +101,7 @@ func (b *Bing) Translate(ctx context.Context, text string) (string, error) {
 	if err == nil {
 		return out, nil
 	}
+	b.emitTelem("Bing.postTranslate", 0, "warn", "token expired or error, refreshing session: "+err.Error(), nil)
 	// Token/IG may have expired; refresh once and retry.
 	sess, rerr := b.getSession(ctx, true)
 	if rerr != nil {
@@ -98,6 +116,7 @@ func (b *Bing) getSession(ctx context.Context, force bool) (*bingSession, error)
 	if b.sess != nil && !force {
 		return b.sess, nil
 	}
+	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bingHostURL, nil)
 	if err != nil {
 		return nil, err
@@ -105,26 +124,31 @@ func (b *Bing) getSession(ctx context.Context, force bool) (*bingSession, error)
 	req.Header.Set("User-Agent", bingUserAgent)
 	resp, err := b.client.Do(req)
 	if err != nil {
+		b.emitTelem("Bing.getSession", time.Since(start).Microseconds(), "error", err.Error(), nil)
 		return nil, fmt.Errorf("bing init: %w", err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
+		b.emitTelem("Bing.getSession", time.Since(start).Microseconds(), "error", err.Error(), nil)
 		return nil, fmt.Errorf("bing init read: %w", err)
 	}
 	html := string(raw)
 
 	abuseMatch := reBingAbuse.FindStringSubmatch(html)
 	if len(abuseMatch) < 2 {
+		b.emitTelem("Bing.getSession", time.Since(start).Microseconds(), "error", "missing abuse prevention token", nil)
 		return nil, errors.New("bing init: missing abuse prevention token")
 	}
 	var params []any
 	if err := json.Unmarshal([]byte(abuseMatch[1]), &params); err != nil || len(params) < 2 {
+		b.emitTelem("Bing.getSession", time.Since(start).Microseconds(), "error", "invalid token payload", nil)
 		return nil, errors.New("bing init: invalid token payload")
 	}
 	key := formatJSONScalar(params[0])
 	token, _ := params[1].(string)
 	if key == "" || token == "" {
+		b.emitTelem("Bing.getSession", time.Since(start).Microseconds(), "error", "empty key or token", nil)
 		return nil, errors.New("bing init: empty key or token")
 	}
 
@@ -137,6 +161,7 @@ func (b *Bing) getSession(ctx context.Context, force bool) (*bingSession, error)
 	}
 
 	b.sess = &bingSession{key: key, token: token, ig: ig, iid: iid}
+	b.emitTelem("Bing.getSession", time.Since(start).Microseconds(), "debug", "session initialized", map[string]any{"force": force})
 	return b.sess, nil
 }
 

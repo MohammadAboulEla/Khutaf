@@ -117,13 +117,16 @@ func injectPID(pid uint32, dllPath string, loadLibAddr uintptr) error {
 	}
 	defer windows.CloseHandle(windows.Handle(thread))
 
-	event, err := windows.WaitForSingleObject(windows.Handle(thread), 5000)
+	event, err := windows.WaitForSingleObject(windows.Handle(thread), 15000)
 	if err != nil {
 		freeRemote = false
 		return fmt.Errorf("wait LoadLibraryW(%d): %w", pid, err)
 	}
 	if event != windows.WAIT_OBJECT_0 {
 		freeRemote = false
+		if isModuleLoaded(pid, nativeHookDLL) {
+			return nil
+		}
 		return fmt.Errorf("LoadLibraryW(%d) timed out (wait status %d)", pid, event)
 	}
 	if !isModuleLoaded(pid, nativeHookDLL) {

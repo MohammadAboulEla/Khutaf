@@ -21,6 +21,8 @@ export function ClearSavedGameHooks(arg1:string):Promise<void>;
 
 export function ClearScopeCache(arg1:string,arg2:boolean):Promise<number>;
 
+export function ClearTelemetry():Promise<void>;
+
 export function ClearTranslationCache():Promise<number>;
 
 export function DeleteCacheEntry(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -31,7 +33,11 @@ export function Detach():Promise<void>;
 
 export function DownloadUnityFonts():Promise<void>;
 
+export function ExportDiagnosticBundle():Promise<string>;
+
 export function GetConfig():Promise<config.Config>;
+
+export function GetTelemetrySnapshot():Promise<session.TelemetrySnapshot>;
 
 export function Hooks():Promise<Array<session.HookView>>;
 

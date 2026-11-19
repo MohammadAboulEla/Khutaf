@@ -400,6 +400,36 @@ export namespace pipeline {
 
 export namespace session {
 	
+	export class FunctionHealthStats {
+	    func: string;
+	    subsystem: string;
+	    calls: number;
+	    errors: number;
+	    timeouts: number;
+	    lastDurUs: number;
+	    maxDurUs: number;
+	    avgDurUs: number;
+	    lastError?: string;
+	    lastCalledAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FunctionHealthStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.func = source["func"];
+	        this.subsystem = source["subsystem"];
+	        this.calls = source["calls"];
+	        this.errors = source["errors"];
+	        this.timeouts = source["timeouts"];
+	        this.lastDurUs = source["lastDurUs"];
+	        this.maxDurUs = source["maxDurUs"];
+	        this.avgDurUs = source["avgDurUs"];
+	        this.lastError = source["lastError"];
+	        this.lastCalledAt = source["lastCalledAt"];
+	    }
+	}
 	export class HookView {
 	    key: string;
 	    hookCode: string;
@@ -499,6 +529,68 @@ export namespace session {
 	        this.debugMode = source["debugMode"];
 	        this.debugRealTrans = source["debugRealTrans"];
 	    }
+	}
+	export class TelemetryEvent {
+	    seq: number;
+	    timestamp: string;
+	    unixMs: number;
+	    level: string;
+	    subsystem: string;
+	    func: string;
+	    msg: string;
+	    durationUs?: number;
+	    fields?: Record<string, any>;
+	
+	    static createFrom(source: any = {}) {
+	        return new TelemetryEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.seq = source["seq"];
+	        this.timestamp = source["timestamp"];
+	        this.unixMs = source["unixMs"];
+	        this.level = source["level"];
+	        this.subsystem = source["subsystem"];
+	        this.func = source["func"];
+	        this.msg = source["msg"];
+	        this.durationUs = source["durationUs"];
+	        this.fields = source["fields"];
+	    }
+	}
+	export class TelemetrySnapshot {
+	    events: TelemetryEvent[];
+	    stats: FunctionHealthStats[];
+	    droppedEvents: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TelemetrySnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.events = this.convertValues(source["events"], TelemetryEvent);
+	        this.stats = this.convertValues(source["stats"], FunctionHealthStats);
+	        this.droppedEvents = source["droppedEvents"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class UnityFontStatus {
 	    installed: boolean;

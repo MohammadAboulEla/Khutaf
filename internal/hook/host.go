@@ -17,6 +17,9 @@ import (
 
 const pipeBufSize = 64 * 1024
 
+// TelemetryFunc receives structured telemetry events from the hook host.
+type TelemetryFunc func(subsys, fnName string, durUs int64, level, msg string, fields map[string]any)
+
 // Host manages named-pipe sessions with khutaf-hook64.dll injected into game processes.
 type Host struct {
 	runtimeDir string
@@ -24,6 +27,28 @@ type Host struct {
 	mu      sync.RWMutex
 	handler Handler
 	procs   map[uint32]*procSession
+	telem   atomic.Pointer[TelemetryFunc]
+}
+
+// SetTelemetry registers an optional telemetry callback.
+func (h *Host) SetTelemetry(fn TelemetryFunc) {
+	if h == nil {
+		return
+	}
+	if fn == nil {
+		h.telem.Store(nil)
+		return
+	}
+	h.telem.Store(&fn)
+}
+
+func (h *Host) emitTelem(fnName string, durUs int64, level, msg string, fields map[string]any) {
+	if h == nil {
+		return
+	}
+	if p := h.telem.Load(); p != nil && *p != nil {
+		(*p)("IPC_PIPE", fnName, durUs, level, msg, fields)
+	}
 }
 
 type hookMeta struct {
@@ -264,6 +289,10 @@ func (h *Host) EmbedCallback(tp ThreadParam, text, trans string) {
 	}
 	reqID, ok := ps.popPending(tp.Key(), text)
 	if !ok {
+		h.emitTelem("EmbedCallback", 0, "warn", "popPending miss (late translation after timeout or detach)", map[string]any{
+			"pid": tp.ProcessID,
+			"key": tp.Key(),
+		})
 		return
 	}
 	_ = ps.send(&wireMsg{
@@ -289,6 +318,7 @@ func (h *Host) warn(msg string) {
 func (ps *procSession) serve() {
 	defer ps.wg.Done()
 
+	connStart := time.Now()
 	downCh := make(chan error, 1)
 	go func() { downCh <- ps.down.connect() }()
 
@@ -298,9 +328,15 @@ func (ps *procSession) serve() {
 	}
 	downErr := <-downCh
 	if upErr != nil || downErr != nil {
+		ps.host.emitTelem("procSession.serve", time.Since(connStart).Microseconds(), "error", "pipe connect failed", map[string]any{
+			"pid": ps.pid,
+		})
 		ps.cleanupUnexpected()
 		return
 	}
+	ps.host.emitTelem("procSession.serve", time.Since(connStart).Microseconds(), "info", "pipes connected", map[string]any{
+		"pid": ps.pid,
+	})
 
 	for {
 		m, err := readMsg(ps.up)

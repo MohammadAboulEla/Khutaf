@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"khutaf/internal/config"
@@ -16,10 +17,14 @@ import (
 
 const maxConcurrentRequests = 4
 
+// TelemetryFunc receives structured telemetry events from translators.
+type TelemetryFunc func(subsys, fnName string, durUs int64, level, msg string, fields map[string]any)
+
 type inflightCall struct {
-	done chan struct{}
-	val  string
-	err  error
+	done    chan struct{}
+	val     string
+	err     error
+	waiters atomic.Int64
 }
 
 // Manager holds the active provider, a persistent translation cache, and
@@ -33,6 +38,28 @@ type Manager struct {
 	cache    *pipeline.Cache
 	inflight map[string]*inflightCall
 	sem      chan struct{}
+	telem    atomic.Pointer[TelemetryFunc]
+}
+
+// SetTelemetry registers an optional telemetry callback.
+func (m *Manager) SetTelemetry(fn TelemetryFunc) {
+	if fn == nil {
+		m.telem.Store(nil)
+	} else {
+		m.telem.Store(&fn)
+	}
+	m.mu.RLock()
+	p := m.provider
+	m.mu.RUnlock()
+	if b, ok := p.(*Bing); ok {
+		b.SetTelemetry(fn)
+	}
+}
+
+func (m *Manager) emitTelem(fnName string, durUs int64, level, msg string, fields map[string]any) {
+	if p := m.telem.Load(); p != nil && *p != nil {
+		(*p)("TRANSLATOR", fnName, durUs, level, msg, fields)
+	}
 }
 
 // NewManager creates a manager backed by the given cache (or an in-memory cache if nil/omitted).
@@ -98,6 +125,11 @@ func (m *Manager) Configure(cfg config.TranslatorSettings) {
 	}
 
 	p := BuildProvider(cfg)
+	if b, ok := p.(*Bing); ok {
+		if tp := m.telem.Load(); tp != nil && *tp != nil {
+			b.SetTelemetry(*tp)
+		}
+	}
 	m.mu.Lock()
 	m.cfg = cfg
 	m.hasCfg = true
@@ -153,12 +185,17 @@ func (m *Manager) TranslateValidated(ctx context.Context, text string, valid fun
 	infKey := gameUID + "\x00" + provName + "\x00" + text
 
 	m.mu.Lock()
-	if cached, hit := m.cache.Get(gameUID, provName, text); hit {
+	if cached, hit := m.cache.GetSilent(gameUID, provName, text); hit {
 		m.mu.Unlock()
 		return cached, true, nil
 	}
 	if call, exists := m.inflight[infKey]; exists {
+		waiters := call.waiters.Add(1)
 		m.mu.Unlock()
+		m.emitTelem("Manager.Translate", 0, "debug", "singleflight coalesced", map[string]any{
+			"provider": provName,
+			"waiters":  waiters,
+		})
 		select {
 		case <-call.done:
 			return call.val, false, call.err
@@ -171,20 +208,32 @@ func (m *Manager) TranslateValidated(ctx context.Context, text string, valid fun
 	m.mu.Unlock()
 
 	go func() {
+		reqStart := time.Now()
 		reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer cancel()
 
 		var out string
 		var err error
+		semStart := time.Now()
 		select {
 		case m.sem <- struct{}{}:
+			semWait := time.Since(semStart)
+			if semWait > 500*time.Millisecond {
+				m.emitTelem("Manager.Translate", semWait.Microseconds(), "warn", "semaphore queue wait > 500ms", map[string]any{
+					"provider": provName,
+				})
+			}
 			out, err = p.Translate(reqCtx, text)
 			<-m.sem
 		case <-reqCtx.Done():
 			err = reqCtx.Err()
 		}
 
-		if err == nil && strings.TrimSpace(out) != "" {
+		if err == nil && strings.TrimSpace(out) == "" {
+			m.emitTelem("Manager.Translate", time.Since(reqStart).Microseconds(), "warn", "empty translation output rejected", map[string]any{
+				"provider": provName,
+			})
+		} else if err == nil {
 			if valid != nil {
 				if verr := valid(out); verr != nil {
 					err = verr
@@ -199,6 +248,19 @@ func (m *Manager) TranslateValidated(ctx context.Context, text string, valid fun
 		m.mu.Lock()
 		delete(m.inflight, infKey)
 		m.mu.Unlock()
+
+		durUs := time.Since(reqStart).Microseconds()
+		if err != nil {
+			m.emitTelem("Manager.Translate", durUs, "error", err.Error(), map[string]any{
+				"provider": provName,
+				"waiters":  call.waiters.Load(),
+			})
+		} else if strings.TrimSpace(out) != "" {
+			m.emitTelem("Manager.Translate", durUs, "debug", "ok", map[string]any{
+				"provider": provName,
+				"waiters":  call.waiters.Load(),
+			})
+		}
 
 		call.val, call.err = out, err
 		close(call.done)

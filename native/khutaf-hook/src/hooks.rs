@@ -27,12 +27,33 @@ pub unsafe fn enable_all() -> Result<(), String> {
 
 /// Disables every hook and waits (bounded) for running detours to return.
 pub fn shutdown() {
+    let start = Instant::now();
+    let initial_in_flight = IN_FLIGHT.load(Ordering::SeqCst);
     unsafe {
         let _ = MinHook::disable_all_hooks();
     }
     let deadline = Instant::now() + Duration::from_secs(3);
     while IN_FLIGHT.load(Ordering::SeqCst) > 0 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
+    }
+    let remaining = IN_FLIGHT.load(Ordering::SeqCst);
+    let dur_us = start.elapsed().as_micros() as u64;
+    if remaining > 0 {
+        crate::telemetry(
+            "HOOK_NATIVE",
+            "hooks::shutdown",
+            dur_us,
+            "error",
+            &format!("drain deadline expired | initial={initial_in_flight} remaining={remaining}"),
+        );
+    } else if initial_in_flight > 0 {
+        crate::telemetry(
+            "HOOK_NATIVE",
+            "hooks::shutdown",
+            dur_us,
+            "info",
+            &format!("drained detours | initial={initial_in_flight}"),
+        );
     }
     // Trampolines may still be referenced by a thread that just left a detour,
     // so MinHook is intentionally not uninitialized (its buffers are leaked).

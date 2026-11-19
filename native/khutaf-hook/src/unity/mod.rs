@@ -4,16 +4,20 @@ pub mod font;
 pub mod il2cpp;
 pub mod mono;
 
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CString};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use khutaf_proto::level;
+use khutaf_proto::{level, Msg};
 use windows_sys::Win32::Foundation::HMODULE;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::System::Memory::{VirtualQuery, MEMORY_BASIC_INFORMATION};
 
-use crate::{embed, hooks};
+use crate::{embed, hooks, ipc};
 
 pub const HOOK_TMP_SET_TEXT: u64 = 1;
 pub const HOOK_TMP_SETTEXT: u64 = 2;
@@ -91,6 +95,12 @@ type LookupFnEntryFn = unsafe extern "system" fn(u64, *mut u64, *mut c_void) -> 
 static CAPTURE_BT: OnceLock<Option<CaptureBackTraceFn>> = OnceLock::new();
 static LOOKUP_FN_ENTRY: OnceLock<Option<LookupFnEntryFn>> = OnceLock::new();
 
+const MAX_FRAME_CTX_CACHE: usize = 2048;
+
+thread_local! {
+    static FRAME_CTX_CACHE: RefCell<HashMap<usize, u64>> = RefCell::new(HashMap::new());
+}
+
 /// Returns the caller's function entry RVA (via `RtlLookupFunctionEntry`, falling
 /// back to raw return offset) skipping stack frames inside `khutaf-hook64.dll`.
 pub(crate) fn caller_rel_ctx() -> u64 {
@@ -118,6 +128,15 @@ pub(crate) fn caller_rel_ctx() -> u64 {
         if frame.is_null() {
             continue;
         }
+        let addr = frame as usize;
+        let cached = FRAME_CTX_CACHE.with(|c| c.borrow().get(&addr).copied());
+        if let Some(rva) = cached {
+            if rva == 0 {
+                continue;
+            }
+            return rva;
+        }
+
         let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
         let res = unsafe {
             VirtualQuery(
@@ -131,16 +150,31 @@ pub(crate) fn caller_rel_ctx() -> u64 {
         }
         let alloc_base = mbi.AllocationBase as usize;
         if alloc_base == self_base {
+            FRAME_CTX_CACHE.with(|c| {
+                let mut m = c.borrow_mut();
+                if m.len() >= MAX_FRAME_CTX_CACHE {
+                    m.clear();
+                }
+                m.insert(addr, 0);
+            });
             continue;
         }
+        let mut rva = (addr.wrapping_sub(alloc_base)) as u64;
         if let Some(lookup_fn) = lookup {
             let mut image_base: u64 = 0;
             let rf = unsafe { lookup_fn(frame as u64, &mut image_base, std::ptr::null_mut()) };
             if !rf.is_null() && image_base != 0 && image_base != self_base as u64 {
-                return unsafe { (*rf).begin_addr as u64 };
+                rva = unsafe { (*rf).begin_addr as u64 };
             }
         }
-        return (frame as usize).wrapping_sub(alloc_base) as u64;
+        FRAME_CTX_CACHE.with(|c| {
+            let mut m = c.borrow_mut();
+            if m.len() >= MAX_FRAME_CTX_CACHE {
+                m.clear();
+            }
+            m.insert(addr, rva);
+        });
+        return rva;
     }
     0
 }
@@ -154,9 +188,19 @@ fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
     hb.windows(nb.len()).position(|w| w.eq_ignore_ascii_case(nb))
 }
 
-fn strip_tag_prefix(s: &str, prefix: &str) -> String {
+fn strip_tag_prefix<'a>(s: &'a str, prefix: &str) -> Cow<'a, str> {
+    let Some(first) = find_ascii_ci(s, prefix) else {
+        return Cow::Borrowed(s);
+    };
     let mut out = String::with_capacity(s.len());
-    let mut rest = s;
+    out.push_str(&s[..first]);
+    let mut rest = &s[first + prefix.len()..];
+    if let Some(end) = rest.find('>') {
+        rest = &rest[end + 1..];
+    } else {
+        out.push_str(&s[first..]);
+        return Cow::Owned(out);
+    }
     while let Some(start) = find_ascii_ci(rest, prefix) {
         out.push_str(&rest[..start]);
         let after = &rest[start + prefix.len()..];
@@ -169,27 +213,31 @@ fn strip_tag_prefix(s: &str, prefix: &str) -> String {
         }
     }
     out.push_str(rest);
-    out
+    Cow::Owned(out)
 }
 
-fn strip_exact_ci(s: &str, needle: &str) -> String {
+fn strip_exact_ci<'a>(s: &'a str, needle: &str) -> Cow<'a, str> {
+    let Some(first) = find_ascii_ci(s, needle) else {
+        return Cow::Borrowed(s);
+    };
     let mut out = String::with_capacity(s.len());
-    let mut rest = s;
+    out.push_str(&s[..first]);
+    let mut rest = &s[first + needle.len()..];
     while let Some(pos) = find_ascii_ci(rest, needle) {
         out.push_str(&rest[..pos]);
         rest = &rest[pos + needle.len()..];
     }
     out.push_str(rest);
-    out
+    Cow::Owned(out)
 }
 
 /// Strips `<color=#00000000>` and its matching `</color>` used by typewriter effects
 /// while leaving all visible `<color=...>` tags intact.
-fn strip_typewriter_alpha_tags(s: &str) -> String {
+fn strip_typewriter_alpha_tags(s: &str) -> Cow<'_, str> {
     const TAG: &str = "<color=#00000000>";
     const CLOSE: &str = "</color>";
     if find_ascii_ci(s, TAG).is_none() {
-        return s.to_owned();
+        return Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -229,21 +277,34 @@ fn strip_typewriter_alpha_tags(s: &str) -> String {
         }
     }
     out.push_str(rest);
-    out
+    Cow::Owned(out)
 }
 
 /// Strips non-semantic TextMeshPro layout tags (`<noparse>`, `<line-height=...>`, `<sprite anim=...>`)
 /// and optionally typewriter alpha tags (`<color=#00000000>...</color>`).
-pub(crate) fn clean_tmp_tags(s: &str) -> String {
-    let s = strip_exact_ci(s, "<noparse>");
-    let s = strip_exact_ci(&s, "</noparse>");
-    let s = if embed::settings().strip_typewriter_tags {
-        strip_typewriter_alpha_tags(&s)
-    } else {
-        s
-    };
-    let s = strip_tag_prefix(&s, "<line-height=");
-    strip_tag_prefix(&s, "<sprite anim=")
+pub(crate) fn clean_tmp_tags(s: &str) -> Cow<'_, str> {
+    if !s.contains('<') {
+        return Cow::Borrowed(s);
+    }
+    let mut cur: Cow<'_, str> = Cow::Borrowed(s);
+    if let Cow::Owned(next) = strip_exact_ci(&cur, "<noparse>") {
+        cur = Cow::Owned(next);
+    }
+    if let Cow::Owned(next) = strip_exact_ci(&cur, "</noparse>") {
+        cur = Cow::Owned(next);
+    }
+    if embed::settings().strip_typewriter_tags {
+        if let Cow::Owned(next) = strip_typewriter_alpha_tags(&cur) {
+            cur = Cow::Owned(next);
+        }
+    }
+    if let Cow::Owned(next) = strip_tag_prefix(&cur, "<line-height=") {
+        cur = Cow::Owned(next);
+    }
+    if let Cow::Owned(next) = strip_tag_prefix(&cur, "<sprite anim=") {
+        cur = Cow::Owned(next);
+    }
+    cur
 }
 
 pub fn detect() -> Engine {
@@ -261,9 +322,60 @@ pub fn detect() -> Engine {
     }
 }
 
+static HOOKS_INSTALLED: AtomicBool = AtomicBool::new(false);
+static INSTALLED_HOOKS: LazyLock<Mutex<Vec<(u64, String, String)>>> = LazyLock::new(Default::default);
+
+pub(crate) fn record_and_emit_hook(hook_id: u64, code: &str, name: &str) {
+    {
+        let mut list = INSTALLED_HOOKS.lock().unwrap_or_else(|p| p.into_inner());
+        if !list.iter().any(|(id, _, _)| *id == hook_id) {
+            list.push((hook_id, code.to_owned(), name.to_owned()));
+        }
+    }
+    ipc::send(&Msg::HookAdded {
+        hook_id,
+        code: code.into(),
+        name: name.into(),
+        embeddable: true,
+    });
+}
+
 pub fn install(mut engine: Engine) {
+    let start = Instant::now();
+    if HOOKS_INSTALLED.load(Ordering::Acquire) {
+        if let Err(e) = unsafe { hooks::enable_all() } {
+            crate::telemetry(
+                "HOOK_NATIVE",
+                "unity::install",
+                start.elapsed().as_micros() as u64,
+                "error",
+                &format!("re-enable hooks failed: {e}"),
+            );
+            return;
+        }
+        let hooks_list = INSTALLED_HOOKS.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let count = hooks_list.len();
+        for (hook_id, code, name) in hooks_list {
+            ipc::send(&Msg::HookAdded { hook_id, code, name, embeddable: true });
+        }
+        crate::telemetry(
+            "HOOK_NATIVE",
+            "unity::install",
+            start.elapsed().as_micros() as u64,
+            "info",
+            &format!("re-enabled {count} hook(s)"),
+        );
+        return;
+    }
+
     if matches!(engine, Engine::Unknown) {
-        crate::log(level::WARN, "unknown engine; only Unity Mono/IL2CPP is supported");
+        crate::telemetry(
+            "HOOK_NATIVE",
+            "unity::install",
+            start.elapsed().as_micros() as u64,
+            "warn",
+            "unknown engine; only Unity Mono/IL2CPP is supported",
+        );
         return;
     }
 
@@ -301,13 +413,32 @@ pub fn install(mut engine: Engine) {
     };
 
     if count > 0 {
+        HOOKS_INSTALLED.store(true, Ordering::Release);
         if let Err(e) = unsafe { hooks::enable_all() } {
-            crate::log(level::ERROR, format!("enable hooks failed: {e}"));
+            crate::telemetry(
+                "HOOK_NATIVE",
+                "unity::install",
+                start.elapsed().as_micros() as u64,
+                "error",
+                &format!("enable hooks failed: {e}"),
+            );
         } else {
-            crate::log(level::INFO, format!("installed {count} {} text hook(s)", engine.name()));
+            crate::telemetry(
+                "HOOK_NATIVE",
+                "unity::install",
+                start.elapsed().as_micros() as u64,
+                "info",
+                &format!("installed {count} hook(s) | engine={}", engine.name()),
+            );
         }
     } else {
-        crate::log(level::WARN, format!("no text hooks found for {}", engine.name()));
+        crate::telemetry(
+            "HOOK_NATIVE",
+            "unity::install",
+            start.elapsed().as_micros() as u64,
+            "warn",
+            &format!("no text hooks found | engine={}", engine.name()),
+        );
     }
 }
 
@@ -358,5 +489,34 @@ pub trait UnityRuntime {
             klass = self.class_get_parent(klass);
         }
         std::ptr::null_mut()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_tmp_tags_borrows_plain_and_strips_tags() {
+        assert!(matches!(clean_tmp_tags("Hello world 123"), Cow::Borrowed("Hello world 123")));
+        assert!(matches!(clean_tmp_tags("<color=red>Hi</color>"), Cow::Borrowed("<color=red>Hi</color>")));
+
+        assert_eq!(clean_tmp_tags("<NoParse>HP</noparse>").as_ref(), "HP");
+        assert_eq!(
+            clean_tmp_tags("<line-height=120%>Hello<sprite anim=0,1,2>").as_ref(),
+            "Hello"
+        );
+
+        let prev = embed::settings().strip_typewriter_tags;
+        let mut s = (*embed::settings()).clone();
+        s.strip_typewriter_tags = true;
+        embed::set_settings(s);
+        assert_eq!(
+            clean_tmp_tags("A<COLOR=#00000000>B<color=red>C</color></color>D").as_ref(),
+            "AB<color=red>C</color>D"
+        );
+        let mut restore = (*embed::settings()).clone();
+        restore.strip_typewriter_tags = prev;
+        embed::set_settings(restore);
     }
 }
