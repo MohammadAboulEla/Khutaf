@@ -3,7 +3,7 @@ resolver = "2"
 members = ["khutaf-proto", "khutaf-hook"]
 
 [workspace.package]
-version = "0.1.2-beta"
+version = "0.1.3-beta"
 edition = "2021"
 license = "MIT"
 
