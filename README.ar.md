@@ -12,7 +12,7 @@
   <strong>العربية</strong> | <a href="README.md">English</a>
 </p>
 
-[![شاهد الفيديو](https://github.com/user-attachments/assets/6157c9eb-8d73-4070-832d-b1fa2757c6c3)](https://github.com/user-attachments/assets/6157c9eb-8d73-4070-832d-b1fa2757c6c3)
+[![شاهد الفيديو](https://github.com/user-attachments/assets/278497ac-f4b8-4a1c-a0cc-e942f136d3a1)](https://github.com/user-attachments/assets/278497ac-f4b8-4a1c-a0cc-e942f136d3a1)
 
 ---
 
