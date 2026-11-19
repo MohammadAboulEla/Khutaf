@@ -151,3 +151,59 @@ func isModuleLoaded(pid uint32, moduleName string) bool {
 	}
 	return false
 }
+
+// DetectAntiCheat checks the game directory and loaded modules of pids for common
+// anti-cheat drivers or runtime DLLs and returns the product name, or "" if none match.
+func DetectAntiCheat(pids []uint32, exePath string) string {
+	dirMarkers := []struct {
+		rel  string
+		name string
+	}{
+		{"EasyAntiCheat", "EasyAntiCheat"},
+		{"EasyAntiCheat_EOS", "EasyAntiCheat"},
+		{"BattlEye", "BattlEye"},
+	}
+	if exePath != "" {
+		gameDir := filepath.Dir(exePath)
+		for _, m := range dirMarkers {
+			if _, err := os.Stat(filepath.Join(gameDir, m.rel)); err == nil {
+				return m.name
+			}
+		}
+	}
+
+	modPatterns := []struct {
+		substr string
+		name   string
+	}{
+		{"easyanticheat", "EasyAntiCheat"},
+		{"beclient", "BattlEye"},
+		{"beservice", "BattlEye"},
+		{"vgk", "Riot Vanguard"},
+		{"vgc", "Riot Vanguard"},
+		{"mhyprot", "miHoYo Anti-Cheat"},
+		{"ace-base", "ACE Anti-Cheat"},
+		{"gameguard", "nProtect GameGuard"},
+		{"nprotect", "nProtect GameGuard"},
+		{"xigncode", "XIGNCODE3"},
+	}
+	for _, pid := range pids {
+		snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPMODULE|windows.TH32CS_SNAPMODULE32, pid)
+		if err != nil {
+			continue
+		}
+		var me windows.ModuleEntry32
+		me.Size = uint32(unsafe.Sizeof(me))
+		for err = windows.Module32First(snap, &me); err == nil; err = windows.Module32Next(snap, &me) {
+			mod := strings.ToLower(windows.UTF16ToString(me.Module[:]))
+			for _, p := range modPatterns {
+				if strings.Contains(mod, p.substr) {
+					_ = windows.CloseHandle(snap)
+					return p.name
+				}
+			}
+		}
+		_ = windows.CloseHandle(snap)
+	}
+	return ""
+}

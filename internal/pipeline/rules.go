@@ -55,7 +55,7 @@ func (rs *RuleSet) Apply(s string) string {
 }
 
 var protectedMarks = []*regexp.Regexp{
-	regexp.MustCompile(`\[(?:\d+|[A-Z0-9_]+|[a-z][a-z0-9_]*|[A-Za-z0-9_.:=-]*[:=_-][^\]]*)\]`),
+	regexp.MustCompile(`\[(?:\d+|[A-Z0-9_]+|[a-z][a-z0-9_]*|[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*|[A-Za-z0-9_.:=-]*[:=_-][^\]]*)\]`),
 	regexp.MustCompile(`\{[^\}]+\}`),
 }
 

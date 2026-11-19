@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,7 +18,10 @@ import (
 	"khutaf/internal/config"
 )
 
-const telemetryRingCap = 2000
+const (
+	telemetryRingCap = 2000
+	maxStatsKeys     = 256
+)
 
 // LogSubsystem identifies the subsystem emitting a telemetry event.
 type LogSubsystem string
@@ -121,33 +125,36 @@ func (t *telemetryStore) record(sub LogSubsystem, fnName, level, msg string, dur
 		t.pending = append(t.pending, ev)
 	}
 
-	st, ok := t.stats[fnName]
-	if !ok {
+	statsKey := string(sub) + ":" + fnName
+	st, ok := t.stats[statsKey]
+	if !ok && len(t.stats) < maxStatsKeys {
 		st = &FunctionHealthStats{
 			Func:      fnName,
 			Subsystem: sub,
 		}
-		t.stats[fnName] = st
+		t.stats[statsKey] = st
 	}
-	st.Calls++
-	st.LastDurUs = durUs
-	st.totalDurUs += durUs
-	st.AvgDurUs = st.totalDurUs / int64(st.Calls)
-	if durUs > st.MaxDurUs {
-		st.MaxDurUs = durUs
-	}
-	if level == "error" || errStr != "" {
-		st.Errors++
-		if errStr != "" {
-			st.LastError = errStr
-		} else {
-			st.LastError = msg
+	if st != nil {
+		st.Calls++
+		st.LastDurUs = durUs
+		st.totalDurUs += durUs
+		st.AvgDurUs = st.totalDurUs / int64(st.Calls)
+		if durUs > st.MaxDurUs {
+			st.MaxDurUs = durUs
 		}
+		if level == "error" || errStr != "" {
+			st.Errors++
+			if errStr != "" {
+				st.LastError = errStr
+			} else {
+				st.LastError = msg
+			}
+		}
+		if isTimeout {
+			st.Timeouts++
+		}
+		st.LastCalledAt = ev.Timestamp
 	}
-	if isTimeout {
-		st.Timeouts++
-	}
-	st.LastCalledAt = ev.Timestamp
 	t.mu.Unlock()
 	return ev
 }
@@ -225,8 +232,17 @@ func normalizeTelemetryLevel(level string) string {
 	}
 }
 
+func normalizeSubsystem(s string) LogSubsystem {
+	switch LogSubsystem(strings.TrimSpace(s)) {
+	case SubHookNative, SubUnityFont, SubIPCPipe, SubPipelineCache, SubTranslator, SubArabicShaper:
+		return LogSubsystem(strings.TrimSpace(s))
+	default:
+		return SubHookNative
+	}
+}
+
 // ParseNativeTelemetry parses Rust DLL log lines formatted as:
-// [telemetry|<SUBSYSTEM>|<FUNC>|<DURATION_US>] <MESSAGE> | key=val ...
+// [telemetry|<SUBSYSTEM>|<FUNC>|<DURATION_US>|<LEVEL>] <MESSAGE> | key=val ...
 func ParseNativeTelemetry(raw, defaultLevel string) (TelemetryEvent, bool) {
 	if !strings.HasPrefix(raw, "[telemetry|") {
 		return TelemetryEvent{}, false
@@ -241,7 +257,7 @@ func ParseNativeTelemetry(raw, defaultLevel string) (TelemetryEvent, bool) {
 		return TelemetryEvent{}, false
 	}
 
-	sub := LogSubsystem(strings.TrimSpace(parts[0]))
+	sub := normalizeSubsystem(parts[0])
 	fnName := strings.TrimSpace(parts[1])
 	durUs, _ := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
 	lvl := normalizeTelemetryLevel(defaultLevel)
@@ -312,7 +328,7 @@ func (s *Session) recordTelemetry(subsystem LogSubsystem, fnName, level, msg str
 }
 
 func (s *Session) recordRawTelemetry(sub, fnName string, durUs int64, level, msg string, fields map[string]any) {
-	s.recordTelemetry(LogSubsystem(sub), fnName, level, msg, durUs, isTimeoutMsg(msg), fields)
+	s.recordTelemetry(normalizeSubsystem(sub), fnName, level, msg, durUs, isTimeoutMsg(msg), fields)
 }
 
 // GetTelemetrySnapshot returns the current ring-buffer events, function health stats, and dropped count.
@@ -331,10 +347,36 @@ func (s *Session) ClearTelemetry() {
 	})
 }
 
+var (
+	reURLUserInfo    = regexp.MustCompile(`(https?://)[^/@\s]+@`)
+	reWinUsersPath   = regexp.MustCompile(`(?i)([A-Za-z]:\\Users\\)[^\\/\s"']+`)
+	reCLIAPIKeyEqual = regexp.MustCompile(`(?i)(--?(?:api[_-]?key|token|secret)\s*=\s*)(\S+)`)
+	reCLIAPIKeySpace = regexp.MustCompile(`(?i)(--?(?:api[_-]?key|token|secret)\s+)("[^"]*"|'[^']*'|\S+)`)
+)
+
+func redactString(s string) string {
+	if s == "" {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		s = strings.ReplaceAll(s, home, "<USER_HOME>")
+	}
+	s = reWinUsersPath.ReplaceAllString(s, `${1}<USER>`)
+	s = reURLUserInfo.ReplaceAllString(s, `${1}***@`)
+	s = reCLIAPIKeyEqual.ReplaceAllString(s, `${1}***`)
+	s = reCLIAPIKeySpace.ReplaceAllString(s, `${1}***`)
+	return s
+}
+
 func sanitizeConfigForExport(c config.Config) config.Config {
 	if c.Translator.LLM.APIKey != "" {
 		c.Translator.LLM.APIKey = "***"
 	}
+	c.Translator.LLM.BaseURL = redactString(c.Translator.LLM.BaseURL)
+	c.Translator.OfflineLLM.BaseURL = redactString(c.Translator.OfflineLLM.BaseURL)
+	c.Translator.LlamaCpp.BinaryPath = redactString(c.Translator.LlamaCpp.BinaryPath)
+	c.Translator.LlamaCpp.ModelPath = redactString(c.Translator.LlamaCpp.ModelPath)
+	c.Translator.LlamaCpp.ExtraArgs = redactString(c.Translator.LlamaCpp.ExtraArgs)
 	return c
 }
 
@@ -353,18 +395,19 @@ func (s *Session) ExportDiagnosticBundle() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
 
 	w := bufio.NewWriter(f)
 	snap := s.GetTelemetrySnapshot()
+	st := s.Status()
+	st.GamePath = redactString(st.GamePath)
 	meta := map[string]any{
 		"type":          "header",
 		"exportedAt":    time.Now().Format(time.RFC3339Nano),
-		"status":        s.Status(),
+		"status":        st,
 		"config":        sanitizeConfigForExport(s.Config()),
 		"droppedEvents": snap.DroppedEvents,
 		"stats":         snap.Stats,
-		"llamaLogs":     s.llama.Status().RecentLogs,
+		"llamaLogs":     redactString(s.llama.Status().RecentLogs),
 	}
 	writeJSONLine(w, meta)
 	for _, ev := range snap.Events {
@@ -374,6 +417,10 @@ func (s *Session) ExportDiagnosticBundle() (string, error) {
 		})
 	}
 	if err := w.Flush(); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
 		return "", err
 	}
 	return outPath, nil

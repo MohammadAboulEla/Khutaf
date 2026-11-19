@@ -749,7 +749,7 @@ fn has_all_non_ascii(
     let mut m_has: *mut c_void = std::ptr::null_mut();
     for ch in text.chars() {
         let code = ch as u32;
-        if code < 0x0080 || code > 0xFFFF {
+        if !(0x0080..=0xFFFF).contains(&code) {
             continue;
         }
         if let Some(&ok) = cache.get(&code) {

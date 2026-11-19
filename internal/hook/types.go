@@ -1,5 +1,3 @@
-//go:build windows
-
 // Package hook provides the pure-Go overlapped named-pipe host for khutaf-hook64.dll,
 // Win32 process discovery, and CreateRemoteThread(LoadLibraryW) DLL injection.
 package hook

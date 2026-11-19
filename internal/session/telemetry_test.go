@@ -157,3 +157,62 @@ func TestRecordSpanCountsTimedOutErrors(t *testing.T) {
 		t.Fatalf("expected Timeouts=1 Errors=1, got %+v", snap.Stats[0])
 	}
 }
+
+func TestExportDiagnosticBundleRedactsPathsURLsAndArgs(t *testing.T) {
+	dir := t.TempDir()
+	store, err := config.Open(dir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	cfg := store.Config()
+	cfg.Translator.LLM.BaseURL = "https://user:superpass@api.example.com/v1"
+	cfg.Translator.LlamaCpp.BinaryPath = `C:\Users\AliceSecret\bin\llama-server.exe`
+	cfg.Translator.LlamaCpp.ModelPath = `C:\Users\AliceSecret\models\gemma.gguf`
+	cfg.Translator.LlamaCpp.ExtraArgs = `--api-key my-llama-secret --threads 4`
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	s := New(store, dir, nil)
+	defer s.Close()
+	s.mu.Lock()
+	s.gamePath = `C:\Users\AliceSecret\Games\Wonderia.exe`
+	s.mu.Unlock()
+
+	outPath, err := s.ExportDiagnosticBundle()
+	if err != nil {
+		t.Fatalf("ExportDiagnosticBundle: %v", err)
+	}
+	raw, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read bundle: %v", err)
+	}
+	content := string(raw)
+	for _, secret := range []string{"superpass", "AliceSecret", "my-llama-secret"} {
+		if strings.Contains(content, secret) {
+			t.Fatalf("exported bundle leaked sensitive string %q", secret)
+		}
+	}
+}
+
+func TestTelemetrySubsystemWhitelistStatsCapAndCompositeKey(t *testing.T) {
+	ev, ok := ParseNativeTelemetry(`[telemetry|UNKNOWN_SUB|foo|42|warn] test`, "info")
+	if !ok || ev.Subsystem != SubHookNative {
+		t.Fatalf("expected unknown subsystem to normalize to HOOK_NATIVE, got %+v (ok=%v)", ev, ok)
+	}
+
+	ts := newTelemetryStore()
+	ts.record(SubIPCPipe, "sharedName", "info", "a", 10, false, "", nil)
+	ts.record(SubTranslator, "sharedName", "info", "b", 20, false, "", nil)
+	snap := ts.snapshot(0)
+	if len(snap.Stats) != 2 {
+		t.Fatalf("expected 2 stats entries for same func across subsystems, got %d", len(snap.Stats))
+	}
+
+	for i := 0; i < maxStatsKeys+50; i++ {
+		ts.record(SubTranslator, "fn_"+string(rune('A'+i%26))+"_"+time.Now().Format("150405")+string(rune(i)), "info", "x", 1, false, "", nil)
+	}
+	if len(ts.snapshot(0).Stats) > maxStatsKeys {
+		t.Fatalf("stats map exceeded cap %d: got %d", maxStatsKeys, len(ts.snapshot(0).Stats))
+	}
+}

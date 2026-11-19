@@ -22,6 +22,11 @@ pub(crate) fn module_base() -> usize {
     MODULE.load(Ordering::Relaxed) as usize
 }
 
+/// DLL entry point invoked by the Windows loader.
+///
+/// # Safety
+/// Must only be called by the Windows loader under standard `DllMain` guarantees
+/// with a valid module handle and reason code.
 #[no_mangle]
 pub unsafe extern "system" fn DllMain(module: HMODULE, reason: u32, _reserved: *mut c_void) -> i32 {
     if reason == DLL_PROCESS_ATTACH {

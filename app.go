@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,11 +40,19 @@ func NewApp() *App { return &App{} }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	store, err := config.Open(configDir())
+	primaryDir := configDir()
+	store, err := config.Open(primaryDir)
 	if err != nil {
 		runtime.LogError(ctx, err.Error())
-		// Fall back to a temp dir so the UI still opens.
-		store, _ = config.Open(filepath.Join(os.TempDir(), "Khutaf"))
+		tempDir := filepath.Join(os.TempDir(), "Khutaf")
+		if fallback, ferr := config.Open(tempDir); ferr == nil {
+			fallback.SetInitWarning(fmt.Sprintf("config folder %s is not writable (%v); using temporary fallback %s", primaryDir, err, tempDir))
+			store = fallback
+		} else {
+			mem := config.NewMemoryStore()
+			mem.SetInitWarning(fmt.Sprintf("config folder %s is not writable (%v); running with in-memory defaults (settings will not persist)", primaryDir, err))
+			store = mem
+		}
 	}
 	a.session = session.New(store, session.ResolveRuntimeDir(), func(name string, data any) {
 		runtime.EventsEmit(ctx, name, data)

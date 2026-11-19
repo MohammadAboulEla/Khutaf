@@ -241,7 +241,7 @@ impl Dec<'_> {
     fn str(&mut self) -> io::Result<String> {
         let n = self.u32()? as usize;
         let raw = self.take(n.checked_mul(2).ok_or_else(|| invalid("string too long".into()))?)?;
-        let units: Vec<u16> = raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = raw.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect();
         Ok(String::from_utf16_lossy(&units))
     }
 }

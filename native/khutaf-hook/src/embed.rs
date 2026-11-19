@@ -18,6 +18,19 @@ const MAX_RECENT_TRANS: usize = 4096;
 const MAX_LAST_SENT: usize = 512;
 const TEXT_RATE_LIMIT: Duration = Duration::from_millis(50);
 const ERROR_CACHE_COOLDOWN: Duration = Duration::from_secs(5);
+const TIMEOUT_CACHE_COOLDOWN: Duration = Duration::from_secs(4);
+const CB_THRESHOLD: u32 = 3;
+const CB_OPEN_DURATION: Duration = Duration::from_secs(8);
+const TELEMETRY_RATE_LIMIT: Duration = Duration::from_secs(1);
+const MAX_LATE_PENDING: usize = 32;
+
+#[derive(Default)]
+struct CircuitState {
+    consecutive_timeouts: u32,
+    open_until: Option<Instant>,
+    last_telem_at: Option<Instant>,
+    suppressed_telem: u32,
+}
 
 #[derive(Default)]
 struct OwnOutputs {
@@ -76,11 +89,14 @@ static ENABLED: LazyLock<Mutex<HashSet<(u64, u64, u64)>>> = LazyLock::new(Defaul
 static COMPONENT_CTX: LazyLock<Mutex<HashMap<(u64, usize), u64>>> = LazyLock::new(Default::default);
 static RECENT_TRANSLATIONS: LazyLock<Mutex<RecentCache>> = LazyLock::new(Default::default);
 static OWN_OUTPUTS: LazyLock<Mutex<OwnOutputs>> = LazyLock::new(Default::default);
-static LAST_SENT_TEXT: LazyLock<Mutex<HashMap<(u64, u64, u64), (String, Instant)>>> =
-    LazyLock::new(Default::default);
+type LastSentMap = HashMap<(u64, u64, u64), (String, Instant)>;
+
+static LAST_SENT_TEXT: LazyLock<Mutex<LastSentMap>> = LazyLock::new(Default::default);
 
 /// req_id -> None while waiting, Some(reply) once answered.
 static PENDING: LazyLock<Mutex<HashMap<u64, Option<Option<String>>>>> = LazyLock::new(Default::default);
+static LATE_PENDING: LazyLock<Mutex<VecDeque<(u64, String)>>> = LazyLock::new(Default::default);
+static CIRCUIT: LazyLock<Mutex<CircuitState>> = LazyLock::new(Default::default);
 static PENDING_CV: Condvar = Condvar::new();
 static NEXT_REQ: AtomicU64 = AtomicU64::new(1);
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -261,6 +277,15 @@ pub fn process(
         return Some(out);
     }
 
+    {
+        let cb = CIRCUIT.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(until) = cb.open_until {
+            if Instant::now() < until {
+                return None;
+            }
+        }
+    }
+
     let wait = Duration::from_millis(cfg.wait_ms.max(1) as u64);
     let req_id = NEXT_REQ.fetch_add(1, Ordering::Relaxed);
     PENDING.lock().unwrap_or_else(|p| p.into_inner()).insert(req_id, None);
@@ -288,22 +313,54 @@ pub fn process(
     drop(pending);
     let wait_elapsed = wait_start.elapsed();
     let wait_us = wait_elapsed.as_micros() as u64;
+
     if timed_out {
-        crate::telemetry(
-            "IPC_PIPE",
-            "embed::process",
-            wait_us,
-            "error",
-            &format!("embed wait timeout | hook_id={hook_id} wait_ms={}", wait.as_millis()),
-        );
-    } else if wait_elapsed.as_millis() * 100 >= wait.as_millis() * 80 {
-        crate::telemetry(
-            "IPC_PIPE",
-            "embed::process",
-            wait_us,
-            "warn",
-            &format!("embed wait > 80% of wait_ms | hook_id={hook_id} wait_ms={}", wait.as_millis()),
-        );
+        let mut late = LATE_PENDING.lock().unwrap_or_else(|p| p.into_inner());
+        if late.len() >= MAX_LATE_PENDING {
+            late.pop_front();
+        }
+        late.push_back((req_id, text.to_owned()));
+    }
+
+    let slow_warn = !timed_out && wait_elapsed.as_millis() * 100 >= wait.as_millis() * 80;
+    {
+        let mut cb = CIRCUIT.lock().unwrap_or_else(|p| p.into_inner());
+        if timed_out {
+            cb.consecutive_timeouts = cb.consecutive_timeouts.saturating_add(1);
+            if cb.consecutive_timeouts >= CB_THRESHOLD {
+                cb.open_until = Some(Instant::now() + CB_OPEN_DURATION);
+            }
+        } else {
+            cb.consecutive_timeouts = 0;
+            cb.open_until = None;
+        }
+
+        if timed_out || slow_warn {
+            let now = Instant::now();
+            let allow = cb
+                .last_telem_at
+                .is_none_or(|prev| now.duration_since(prev) >= TELEMETRY_RATE_LIMIT);
+            if allow {
+                let sup = cb.suppressed_telem;
+                cb.suppressed_telem = 0;
+                cb.last_telem_at = Some(now);
+                drop(cb);
+                let (lvl, prefix) = if timed_out {
+                    ("error", "embed wait timeout")
+                } else {
+                    ("warn", "embed wait > 80% of wait_ms")
+                };
+                crate::telemetry(
+                    "IPC_PIPE",
+                    "embed::process",
+                    wait_us,
+                    lvl,
+                    &format!("{prefix} | hook_id={hook_id} wait_ms={} suppressed={sup}", wait.as_millis()),
+                );
+            } else {
+                cb.suppressed_telem = cb.suppressed_telem.saturating_add(1);
+            }
+        }
     }
 
     match reply {
@@ -324,11 +381,16 @@ pub fn process(
             None
         }
         None => {
-            if !timed_out && !SHUTDOWN.load(Ordering::Relaxed) {
+            if !SHUTDOWN.load(Ordering::Relaxed) {
+                let cooldown = if timed_out {
+                    TIMEOUT_CACHE_COOLDOWN
+                } else {
+                    ERROR_CACHE_COOLDOWN
+                };
                 RECENT_TRANSLATIONS
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .insert(text.to_owned(), None, Some(Instant::now() + ERROR_CACHE_COOLDOWN));
+                    .insert(text.to_owned(), None, Some(Instant::now() + cooldown));
             }
             None
         }
@@ -340,6 +402,24 @@ pub fn complete(req_id: u64, text: Option<String>) {
     if let Some(slot) = pending.get_mut(&req_id) {
         *slot = Some(text);
         PENDING_CV.notify_all();
+        return;
+    }
+    drop(pending);
+
+    let orig = {
+        let mut late = LATE_PENDING.lock().unwrap_or_else(|p| p.into_inner());
+        late.iter()
+            .position(|(id, _)| *id == req_id)
+            .and_then(|idx| late.remove(idx))
+            .map(|(_, s)| s)
+    };
+    if let (Some(orig), Some(t)) = (orig, text) {
+        if !t.is_empty() && t != orig {
+            RECENT_TRANSLATIONS
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(orig, Some(t), None);
+        }
     }
 }
 
@@ -366,6 +446,8 @@ pub fn reset_for_session() {
         own.set.clear();
     }
     PENDING.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    LATE_PENDING.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    *CIRCUIT.lock().unwrap_or_else(|p| p.into_inner()) = CircuitState::default();
 }
 
 pub fn is_shutting_down() -> bool {
@@ -398,5 +480,32 @@ mod tests {
         RECENT_TRANSLATIONS.lock().unwrap().clear();
         LAST_SENT_TEXT.lock().unwrap().clear();
         COMPONENT_CTX.lock().unwrap().clear();
+    }
+
+    #[test]
+    fn circuit_breaker_skips_when_open_and_resets() {
+        reset_for_session();
+        set_enabled(1, 10, 0, true);
+        {
+            let mut cb = CIRCUIT.lock().unwrap();
+            cb.consecutive_timeouts = CB_THRESHOLD;
+            cb.open_until = Some(Instant::now() + Duration::from_secs(30));
+        }
+        // Should return None immediately without calling IPC or waiting.
+        assert!(process(1, || 10, 0, 0, "Hello World").is_none());
+        reset_for_session();
+        let cb = CIRCUIT.lock().unwrap();
+        assert_eq!(cb.consecutive_timeouts, 0);
+        assert!(cb.open_until.is_none());
+    }
+
+    #[test]
+    fn late_reply_warms_recent_cache() {
+        reset_for_session();
+        LATE_PENDING.lock().unwrap().push_back((777, "Late line".to_owned()));
+        complete(777, Some("سطر متأخر".to_owned()));
+        let cached = RECENT_TRANSLATIONS.lock().unwrap().get("Late line");
+        assert_eq!(cached, Some(Some("سطر متأخر".to_owned())));
+        reset_for_session();
     }
 }

@@ -54,6 +54,10 @@ function onAttach() {
       </button>
     </div>
 
+    <p class="notice">
+      Single-player offline Unity games only — do not attach to online or anti-cheat protected games.
+    </p>
+
     <div v-if="props.status.attached" class="row meta-row">
       <span class="badge ok">Attached</span>
       <span class="mono">{{ props.status.gameName }}</span>
@@ -153,6 +157,11 @@ function onAttach() {
 .muted {
   color: var(--fg-muted);
   font-family: var(--mono);
+}
+.notice {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11px;
 }
 .spacer {
   flex: 1;

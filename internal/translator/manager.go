@@ -1,9 +1,9 @@
-//go:build windows
-
 package translator
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -214,6 +214,32 @@ func (m *Manager) TranslateValidated(ctx context.Context, text string, valid fun
 
 		var out string
 		var err error
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("translator panic: %v", r)
+				out = ""
+			}
+			m.mu.Lock()
+			delete(m.inflight, infKey)
+			m.mu.Unlock()
+
+			durUs := time.Since(reqStart).Microseconds()
+			if err != nil {
+				m.emitTelem("Manager.Translate", durUs, "error", err.Error(), map[string]any{
+					"provider": provName,
+					"waiters":  call.waiters.Load(),
+				})
+			} else {
+				m.emitTelem("Manager.Translate", durUs, "debug", "ok", map[string]any{
+					"provider": provName,
+					"waiters":  call.waiters.Load(),
+				})
+			}
+
+			call.val, call.err = out, err
+			close(call.done)
+		}()
+
 		semStart := time.Now()
 		select {
 		case m.sem <- struct{}{}:
@@ -223,16 +249,17 @@ func (m *Manager) TranslateValidated(ctx context.Context, text string, valid fun
 					"provider": provName,
 				})
 			}
-			out, err = p.Translate(reqCtx, text)
-			<-m.sem
+			func() {
+				defer func() { <-m.sem }()
+				out, err = p.Translate(reqCtx, text)
+			}()
 		case <-reqCtx.Done():
 			err = reqCtx.Err()
 		}
 
 		if err == nil && strings.TrimSpace(out) == "" {
-			m.emitTelem("Manager.Translate", time.Since(reqStart).Microseconds(), "warn", "empty translation output rejected", map[string]any{
-				"provider": provName,
-			})
+			err = errors.New("provider returned empty translation")
+			out = ""
 		} else if err == nil {
 			if valid != nil {
 				if verr := valid(out); verr != nil {
@@ -244,26 +271,6 @@ func (m *Manager) TranslateValidated(ctx context.Context, text string, valid fun
 				m.cache.PutAuto(gameUID, provName, text, out)
 			}
 		}
-
-		m.mu.Lock()
-		delete(m.inflight, infKey)
-		m.mu.Unlock()
-
-		durUs := time.Since(reqStart).Microseconds()
-		if err != nil {
-			m.emitTelem("Manager.Translate", durUs, "error", err.Error(), map[string]any{
-				"provider": provName,
-				"waiters":  call.waiters.Load(),
-			})
-		} else if strings.TrimSpace(out) != "" {
-			m.emitTelem("Manager.Translate", durUs, "debug", "ok", map[string]any{
-				"provider": provName,
-				"waiters":  call.waiters.Load(),
-			})
-		}
-
-		call.val, call.err = out, err
-		close(call.done)
 	}()
 
 	select {

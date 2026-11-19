@@ -208,6 +208,9 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 	if cacheErr != nil {
 		s.log("warn", "translation cache fallback to memory: "+cacheErr.Error())
 	}
+	if w := store.InitWarning(); w != "" {
+		s.log("warn", w)
+	}
 	cache.SetTelemetry(s.recordRawTelemetry)
 	s.translator.SetTelemetry(s.recordRawTelemetry)
 	s.llama.SetTelemetry(s.recordRawTelemetry)
@@ -468,7 +471,11 @@ func (s *Session) SavedGames() []SavedGame {
 		curPath = strings.ToLower(filepath.Clean(rawGamePath))
 	}
 
-	runningByPath := hook.RunningPathsMap()
+	basenames := make(map[string]bool, len(games))
+	for exePath := range games {
+		basenames[strings.ToLower(filepath.Base(filepath.Clean(exePath)))] = true
+	}
+	runningByPath := hook.RunningPathsFor(basenames)
 
 	out := make([]SavedGame, 0, len(games))
 	for exePath, prof := range games {
@@ -638,9 +645,15 @@ func (s *Session) Attach(pid uint32) error {
 		}
 	}
 	s.log("info", fmt.Sprintf("attaching to %s (pids %v, %s)", filepath.Base(path), pids, archName(is64)))
+	if ac := hook.DetectAntiCheat(pids, path); ac != "" {
+		s.log("warn", fmt.Sprintf("detected %s in %s — injecting into anti-cheat or online games may cause bans or crashes", ac, filepath.Base(path)))
+	}
 	injectStart := time.Now()
 	err = hook.Inject(s.runtimeDir, needInject, is64)
 	s.RecordSpan(SubIPCPipe, "hook.Inject", injectStart, err, map[string]any{"pids": needInject})
+	if err == nil {
+		err = s.host.WaitConnected(pids, 8*time.Second)
+	}
 	if err != nil {
 		for _, p := range pids {
 			s.host.DetachProcess(p)
@@ -819,17 +832,23 @@ func (s *Session) translateWith(ctx context.Context, text, providerName string, 
 
 // ShapeForEmbed applies wrapping, shaping and visual ordering with current settings.
 func (s *Session) ShapeForEmbed(trans string) string {
-	start := time.Now()
+	var start time.Time
+	debugging := s.debugMode.Load()
+	if debugging {
+		start = time.Now()
+	}
 	cfg := s.embedCfg.Load()
 	out := arabic.Process(trans, arabic.Options{
 		MaxLineLength: cfg.MaxLineLength,
 		ForceWrap:     cfg.LimitLineLength,
 		DisplayMode:   arabic.DisplayMode(cfg.DisplayMode),
 	})
-	s.recordTelemetry(SubArabicShaper, "arabic.Process", "trace", "shaped", time.Since(start).Microseconds(), false, map[string]any{
-		"inRunes":  len([]rune(trans)),
-		"outRunes": len([]rune(out)),
-	})
+	if debugging {
+		s.recordTelemetry(SubArabicShaper, "arabic.Process", "trace", "shaped", time.Since(start).Microseconds(), false, map[string]any{
+			"inRunes":  len([]rune(trans)),
+			"outRunes": len([]rune(out)),
+		})
+	}
 	return out
 }
 
@@ -918,10 +937,6 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 	line.ElapsedMs = totalDur.Milliseconds()
 	s.post(EventEmbedLine, line)
 
-	glossaryMode := "Apply"
-	if isLLMProvider(provName) {
-		glossaryMode = "PromptContext"
-	}
 	timeoutMs := int64(s.embedCfg.Load().TimeoutMs)
 	if timeoutMs <= 0 {
 		timeoutMs = 2000
@@ -936,25 +951,29 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 		} else {
 			lvl = "error"
 		}
-		if strings.Contains(strings.ToLower(msg), "timeout") || strings.Contains(strings.ToLower(msg), "deadline") {
-			isTimeout = true
-		}
+		isTimeout = isTimeoutMsg(msg)
 	} else if totalDur.Milliseconds() > (timeoutMs*80)/100 {
 		lvl = "warn"
 		msg = "embed latency > 80% of TimeoutMs"
 	}
-	s.recordTelemetry(SubPipelineCache, "Session.handleEmbed", lvl, msg, totalDur.Microseconds(), isTimeout, map[string]any{
-		"key":          line.Key,
-		"cached":       cached,
-		"glossaryMode": glossaryMode,
-		"preRulesUs":   preUs,
-		"translateUs":  transUs,
-		"postRulesUs":  postUs,
-		"shapeUs":      shapeUs,
-		"callbackUs":   callbackUs,
-		"totalUs":      totalDur.Microseconds(),
-		"origLen":      len([]rune(text)),
-	})
+	if debugging || lvl == "warn" || lvl == "error" {
+		glossaryMode := "Apply"
+		if isLLMProvider(provName) {
+			glossaryMode = "PromptContext"
+		}
+		s.recordTelemetry(SubPipelineCache, "Session.handleEmbed", lvl, msg, totalDur.Microseconds(), isTimeout, map[string]any{
+			"key":          line.Key,
+			"cached":       cached,
+			"glossaryMode": glossaryMode,
+			"preRulesUs":   preUs,
+			"translateUs":  transUs,
+			"postRulesUs":  postUs,
+			"shapeUs":      shapeUs,
+			"callbackUs":   callbackUs,
+			"totalUs":      totalDur.Microseconds(),
+			"origLen":      len([]rune(text)),
+		})
+	}
 
 	if debugging {
 		s.post(EventDebugTrace, DebugTrace{

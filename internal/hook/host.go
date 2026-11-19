@@ -3,19 +3,34 @@
 package hook
 
 import (
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-const pipeBufSize = 64 * 1024
+const (
+	pipeBufSize         = 64 * 1024
+	handshakeVersion    = uint32(1)
+	handshakeNonceBytes = 16
+	handshakeSize       = 64
+)
+
+var (
+	handshakeMagic       = [4]byte{'K', 'H', 'U', 'T'}
+	procOpenFileMappingW = kernel32.NewProc("OpenFileMappingW")
+)
 
 // TelemetryFunc receives structured telemetry events from the hook host.
 type TelemetryFunc func(subsys, fnName string, durUs int64, level, msg string, fields map[string]any)
@@ -73,8 +88,13 @@ type procSession struct {
 	up        *overlappedPipe
 	down      *overlappedPipe
 	stopEvent windows.Handle
+	shmMu     sync.Mutex
+	shmHandle windows.Handle
+	shmAddr   uintptr
 	connected atomic.Bool
 	detached  atomic.Bool
+	helloCh   chan struct{}
+	helloOnce sync.Once
 
 	writeMu sync.Mutex
 
@@ -129,15 +149,29 @@ func (h *Host) ConnectProcess(pid uint32) {
 	}
 	h.mu.Unlock()
 
+	nonceBuf := make([]byte, handshakeNonceBytes)
+	if _, err := rand.Read(nonceBuf); err != nil {
+		h.warn(fmt.Sprintf("nonce(%d): %v", pid, err))
+		return
+	}
+	nonce := hex.EncodeToString(nonceBuf)
+
+	sd, err := ownerOnlySecurityDescriptor()
+	if err != nil {
+		h.warn(fmt.Sprintf("security descriptor(%d): %v", pid, err))
+		return
+	}
+
 	stopEv, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
 		h.warn(fmt.Sprintf("CreateEvent(%d): %v", pid, err))
 		return
 	}
 	up, err := createOverlappedPipe(
-		fmt.Sprintf(`\\.\pipe\khutaf_%d_up`, pid),
+		fmt.Sprintf(`\\.\pipe\khutaf_%d_%s_up`, pid, nonce),
 		windows.PIPE_ACCESS_INBOUND|windows.FILE_FLAG_OVERLAPPED,
 		stopEv,
+		sd,
 	)
 	if err != nil {
 		_ = windows.CloseHandle(stopEv)
@@ -145,9 +179,10 @@ func (h *Host) ConnectProcess(pid uint32) {
 		return
 	}
 	down, err := createOverlappedPipe(
-		fmt.Sprintf(`\\.\pipe\khutaf_%d_down`, pid),
+		fmt.Sprintf(`\\.\pipe\khutaf_%d_%s_down`, pid, nonce),
 		windows.PIPE_ACCESS_OUTBOUND|windows.FILE_FLAG_OVERLAPPED,
 		stopEv,
+		sd,
 	)
 	if err != nil {
 		up.close()
@@ -155,15 +190,26 @@ func (h *Host) ConnectProcess(pid uint32) {
 		h.warn(fmt.Sprintf("create down pipe(%d): %v", pid, err))
 		return
 	}
+	shmHandle, shmAddr, err := createHandshakeMapping(pid, nonce, sd)
+	if err != nil {
+		down.close()
+		up.close()
+		_ = windows.CloseHandle(stopEv)
+		h.warn(fmt.Sprintf("create handshake(%d): %v", pid, err))
+		return
+	}
 
 	ps := &procSession{
-		host:         h,
-		pid:          pid,
-		up:           up,
-		down:         down,
-		stopEvent:    stopEv,
-		hooks:        map[uint64]hookMeta{},
-		threads:      map[string]HookInfo{},
+		host:      h,
+		pid:       pid,
+		up:        up,
+		down:      down,
+		stopEvent: stopEv,
+		shmHandle: shmHandle,
+		shmAddr:   shmAddr,
+		helloCh:   make(chan struct{}),
+		hooks:     map[uint64]hookMeta{},
+		threads:   map[string]HookInfo{},
 		embedEnabled: map[string]bool{},
 		pending:      map[pendingKey][]pendingEntry{},
 	}
@@ -179,6 +225,50 @@ func (h *Host) ConnectProcess(pid uint32) {
 
 	ps.wg.Add(1)
 	go ps.serve()
+}
+
+// WaitConnected waits until at least one process in pids completes the Hello handshake.
+func (h *Host) WaitConnected(pids []uint32, timeout time.Duration) error {
+	if len(pids) == 0 {
+		return nil
+	}
+	var chs []<-chan struct{}
+	for _, pid := range pids {
+		ps := h.getProc(pid)
+		if ps == nil {
+			continue
+		}
+		if ps.connected.Load() {
+			return nil
+		}
+		chs = append(chs, ps.helloCh)
+	}
+	if len(chs) == 0 {
+		return errors.New("hook session closed before handshake")
+	}
+	ready := make(chan struct{}, 1)
+	stop := make(chan struct{})
+	defer close(stop)
+	for _, ch := range chs {
+		go func(c <-chan struct{}) {
+			select {
+			case <-c:
+				select {
+				case ready <- struct{}{}:
+				default:
+				}
+			case <-stop:
+			}
+		}(ch)
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ready:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("timed out waiting for hook handshake after %s", timeout)
+	}
 }
 
 // CheckIfNeedInject reports whether khutaf-hook64.dll is not yet loaded into pid.
@@ -337,13 +427,16 @@ func (ps *procSession) serve() {
 	ps.host.emitTelem("procSession.serve", time.Since(connStart).Microseconds(), "info", "pipes connected", map[string]any{
 		"pid": ps.pid,
 	})
+	ps.closeHandshake()
 
 	for {
 		m, err := readMsg(ps.up)
 		if err != nil {
 			break
 		}
-		ps.dispatch(m)
+		if !ps.dispatch(m) {
+			break
+		}
 	}
 	ps.cleanupUnexpected()
 }
@@ -372,14 +465,24 @@ func (ps *procSession) cleanupUnexpected() {
 	}
 }
 
-func (ps *procSession) dispatch(m *wireMsg) {
+func (ps *procSession) dispatch(m *wireMsg) bool {
 	hd := ps.host.currentHandler()
 	switch m.Kind {
 	case msgHello:
+		if m.Proto != protoVersion {
+			msg := fmt.Sprintf("protocol version mismatch: hook=%d host=%d (restart the game to load the updated hook)", m.Proto, protoVersion)
+			ps.host.emitTelem("procSession.dispatch", 0, "error", msg, map[string]any{
+				"pid":   ps.pid,
+				"proto": m.Proto,
+			})
+			ps.host.warn(msg)
+			return false
+		}
 		ps.mu.Lock()
 		ws := ps.lastSettings
 		ps.connected.Store(true)
 		ps.mu.Unlock()
+		ps.helloOnce.Do(func() { close(ps.helloCh) })
 		if ws != nil {
 			_ = ps.send(&wireMsg{Kind: msgSettings, Settings: *ws})
 		}
@@ -441,6 +544,7 @@ func (ps *procSession) dispatch(m *wireMsg) {
 			hd.OnHostInfo(kind, m.Text)
 		}
 	}
+	return true
 }
 
 func (ps *procSession) ensureThread(hookID, ctx, ctx2 uint64, hd Handler) HookInfo {
@@ -527,7 +631,24 @@ func (ps *procSession) sendWithTimeout(m *wireMsg, timeout time.Duration) error 
 	return ps.down.writeAll(m.encode(), timeout)
 }
 
+func (ps *procSession) closeHandshake() {
+	ps.shmMu.Lock()
+	defer ps.shmMu.Unlock()
+	if ps.shmAddr != 0 {
+		p := *(*unsafe.Pointer)(unsafe.Pointer(&ps.shmAddr))
+		dst := unsafe.Slice((*byte)(p), 4)
+		clear(dst)
+		_ = windows.UnmapViewOfFile(ps.shmAddr)
+		ps.shmAddr = 0
+	}
+	if ps.shmHandle != 0 {
+		_ = windows.CloseHandle(ps.shmHandle)
+		ps.shmHandle = 0
+	}
+}
+
 func (ps *procSession) closeHandles() {
+	ps.closeHandshake()
 	ps.mu.Lock()
 	ps.pending = map[pendingKey][]pendingEntry{}
 	ps.mu.Unlock()
@@ -545,6 +666,117 @@ func (ps *procSession) closeHandles() {
 	ps.writeMu.Unlock()
 }
 
+func handshakeMappingName(pid uint32) string {
+	return fmt.Sprintf(`Local\khutaf_ipc_%d`, pid)
+}
+
+func ownerOnlySecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
+	tok := windows.GetCurrentProcessToken()
+	tu, err := tok.GetTokenUser()
+	if err != nil {
+		return nil, fmt.Errorf("token user: %w", err)
+	}
+	sddl := fmt.Sprintf("D:P(A;;GA;;;%s)(A;;GA;;;SY)(A;;GA;;;BA)", tu.User.Sid.String())
+
+	// Grant the current AppContainer SID when running inside a sandboxed process.
+	const tokenAppContainerSid = 31
+	var buf [16]uintptr
+	var retLen uint32
+	if err := windows.GetTokenInformation(tok, tokenAppContainerSid, (*byte)(unsafe.Pointer(&buf[0])), uint32(unsafe.Sizeof(buf)), &retLen); err == nil && retLen >= uint32(unsafe.Sizeof(uintptr(0))) {
+		if acPtr := *(*unsafe.Pointer)(unsafe.Pointer(&buf[0])); acPtr != nil {
+			acSid := (*windows.SID)(acPtr)
+			sddl += fmt.Sprintf("(A;;GA;;;%s)", acSid.String())
+		}
+	}
+	return windows.SecurityDescriptorFromString(sddl)
+}
+
+func newSecurityAttributes(sd *windows.SECURITY_DESCRIPTOR) *windows.SecurityAttributes {
+	if sd == nil {
+		return nil
+	}
+	return &windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		SecurityDescriptor: sd,
+	}
+}
+
+func createHandshakeMapping(pid uint32, nonce string, sd *windows.SECURITY_DESCRIPTOR) (windows.Handle, uintptr, error) {
+	wname, err := windows.UTF16PtrFromString(handshakeMappingName(pid))
+	if err != nil {
+		return 0, 0, err
+	}
+	sa := newSecurityAttributes(sd)
+	h, err := windows.CreateFileMapping(windows.InvalidHandle, sa, windows.PAGE_READWRITE, 0, handshakeSize, wname)
+	runtime.KeepAlive(sa)
+	runtime.KeepAlive(sd)
+	runtime.KeepAlive(wname)
+	if err != nil {
+		return 0, 0, fmt.Errorf("CreateFileMapping: %w", err)
+	}
+	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		_ = windows.CloseHandle(h)
+		return 0, 0, errors.New("handshake mapping already exists")
+	}
+	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_WRITE, 0, 0, handshakeSize)
+	if err != nil {
+		_ = windows.CloseHandle(h)
+		return 0, 0, fmt.Errorf("MapViewOfFile: %w", err)
+	}
+	p := *(*unsafe.Pointer)(unsafe.Pointer(&addr))
+	dst := unsafe.Slice((*byte)(p), handshakeSize)
+	clear(dst)
+	binary.LittleEndian.PutUint32(dst[4:8], handshakeVersion)
+	binary.LittleEndian.PutUint32(dst[8:12], pid)
+	binary.LittleEndian.PutUint32(dst[12:16], uint32(len(nonce)))
+	copy(dst[16:48], nonce)
+	// Write magic last so readers never observe a half-initialized block.
+	copy(dst[0:4], handshakeMagic[:])
+	return h, addr, nil
+}
+
+func readHandshakeNonce(pid uint32) (string, error) {
+	wname, err := windows.UTF16PtrFromString(handshakeMappingName(pid))
+	if err != nil {
+		return "", err
+	}
+	r, _, openErr := procOpenFileMappingW.Call(windows.FILE_MAP_READ, 0, uintptr(unsafe.Pointer(wname)))
+	runtime.KeepAlive(wname)
+	if r == 0 {
+		return "", fmt.Errorf("OpenFileMappingW(%d): %w", pid, openErr)
+	}
+	h := windows.Handle(r)
+	defer windows.CloseHandle(h)
+
+	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, 0, 0, handshakeSize)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = windows.UnmapViewOfFile(addr) }()
+
+	p := *(*unsafe.Pointer)(unsafe.Pointer(&addr))
+	var buf [handshakeSize]byte
+	copy(buf[:], unsafe.Slice((*byte)(p), handshakeSize))
+
+	if string(buf[0:4]) != string(handshakeMagic[:]) {
+		return "", errors.New("invalid handshake magic")
+	}
+	if binary.LittleEndian.Uint32(buf[4:8]) != handshakeVersion {
+		return "", errors.New("invalid handshake version")
+	}
+	if binary.LittleEndian.Uint32(buf[8:12]) != pid {
+		return "", errors.New("handshake PID mismatch")
+	}
+	if binary.LittleEndian.Uint32(buf[12:16]) != handshakeNonceBytes*2 {
+		return "", errors.New("invalid handshake nonce length")
+	}
+	nonce := string(buf[16:48])
+	if _, err := hex.DecodeString(nonce); err != nil {
+		return "", fmt.Errorf("invalid handshake nonce: %w", err)
+	}
+	return nonce, nil
+}
+
 // ---- overlapped Windows named pipe wrapper ----
 
 type overlappedPipe struct {
@@ -553,11 +785,12 @@ type overlappedPipe struct {
 	stopEvent windows.Handle
 }
 
-func createOverlappedPipe(name string, openMode uint32, stopEvent windows.Handle) (*overlappedPipe, error) {
+func createOverlappedPipe(name string, openMode uint32, stopEvent windows.Handle, sd *windows.SECURITY_DESCRIPTOR) (*overlappedPipe, error) {
 	wname, err := windows.UTF16PtrFromString(name)
 	if err != nil {
 		return nil, err
 	}
+	sa := newSecurityAttributes(sd)
 	const pipeRejectRemoteClients = 0x00000008
 	h, err := windows.CreateNamedPipe(
 		wname,
@@ -567,8 +800,11 @@ func createOverlappedPipe(name string, openMode uint32, stopEvent windows.Handle
 		pipeBufSize,
 		pipeBufSize,
 		0,
-		nil,
+		sa,
 	)
+	runtime.KeepAlive(sa)
+	runtime.KeepAlive(sd)
+	runtime.KeepAlive(wname)
 	if err != nil {
 		return nil, err
 	}

@@ -63,6 +63,12 @@ wails build
 
 ---
 
+## Safety, Anti-Cheat & Privacy
+* **Offline Single-Player Games Only:** Khutaf injects a native hook DLL (`khutaf-hook64.dll`) via `CreateRemoteThread(LoadLibraryW)`. Do **not** attach to online multiplayer games or games protected by anti-cheat systems (e.g., EasyAntiCheat, BattlEye, Riot Vanguard), as DLL injection may trigger bans or crashes.
+* **Translation Privacy:** Captured game dialogue is sent to whichever translation provider you configure (Bing or your OpenAI-compatible endpoint). Use the built-in `llama.cpp` / Offline LLM mode if you want 100% local, offline translation.
+
+---
+
 ## Technical Architecture
 
 ```mermaid

@@ -40,8 +40,10 @@ type bingSession struct {
 
 // Bing translates using Bing's free web translator endpoint (no API key).
 type Bing struct {
-	cfg    config.BingSettings
-	client *http.Client
+	cfg          config.BingSettings
+	hostURL      string
+	translateURL string
+	client       *http.Client
 
 	mu    sync.Mutex
 	sess  *bingSession
@@ -65,9 +67,15 @@ func (b *Bing) emitTelem(fnName string, durUs int64, level, msg string, fields m
 
 // NewBing creates a free Bing translator client and pre-warms its session.
 func NewBing(cfg config.BingSettings) *Bing {
+	return newBing(cfg, bingHostURL, bingTranslateURL, true)
+}
+
+func newBing(cfg config.BingSettings, hostURL, translateURL string, prewarm bool) *Bing {
 	jar, _ := cookiejar.New(nil)
 	b := &Bing{
-		cfg: cfg,
+		cfg:          cfg,
+		hostURL:      hostURL,
+		translateURL: translateURL,
 		client: &http.Client{
 			Timeout:   15 * time.Second,
 			Transport: newHTTPTransport(),
@@ -76,15 +84,20 @@ func NewBing(cfg config.BingSettings) *Bing {
 				if len(via) > 0 && via[0].Method == http.MethodPost {
 					return http.ErrUseLastResponse
 				}
+				if len(via) >= 10 {
+					return errors.New("stopped after 10 redirects")
+				}
 				return nil
 			},
 		},
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, _ = b.getSession(ctx, false)
-	}()
+	if prewarm {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_, _ = b.getSession(ctx, false)
+		}()
+	}
 	return b
 }
 
@@ -117,7 +130,7 @@ func (b *Bing) getSession(ctx context.Context, force bool) (*bingSession, error)
 		return b.sess, nil
 	}
 	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bingHostURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.hostURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +205,7 @@ func (b *Bing) postTranslate(ctx context.Context, sess *bingSession, text string
 		q.Set("IID", sess.iid)
 	}
 
-	targetURL := bingTranslateURL + "?" + q.Encode()
+	targetURL := b.translateURL + "?" + q.Encode()
 	resp, raw, err := b.doPostForm(ctx, targetURL, form)
 	if err != nil {
 		return "", err
@@ -229,7 +242,7 @@ func (b *Bing) doPostForm(ctx context.Context, targetURL string, form url.Values
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", bingUserAgent)
-	req.Header.Set("Referer", bingHostURL)
+	req.Header.Set("Referer", b.hostURL)
 	resp, err := b.client.Do(req)
 	if err != nil {
 		return nil, nil, err

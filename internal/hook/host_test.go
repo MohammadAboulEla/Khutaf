@@ -76,13 +76,25 @@ func TestHostPipeRoundTrip(t *testing.T) {
 	h.ConnectProcess(pid)
 	defer h.DetachProcess(pid)
 
-	up, err := os.OpenFile(fmt.Sprintf(`\\.\pipe\khutaf_%d_up`, pid), os.O_WRONLY, 0)
+	nonce, err := readHandshakeNonce(pid)
+	if err != nil {
+		t.Fatalf("readHandshakeNonce: %v", err)
+	}
+	if len(nonce) != handshakeNonceBytes*2 {
+		t.Fatalf("nonce len = %d, want %d", len(nonce), handshakeNonceBytes*2)
+	}
+	if f, oerr := os.OpenFile(fmt.Sprintf(`\\.\pipe\khutaf_%d_up`, pid), os.O_WRONLY, 0); oerr == nil {
+		f.Close()
+		t.Fatal("predictable pipe name unexpectedly opened")
+	}
+
+	up, err := os.OpenFile(fmt.Sprintf(`\\.\pipe\khutaf_%d_%s_up`, pid, nonce), os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatalf("open up pipe: %v", err)
 	}
 	defer up.Close()
 
-	down, err := os.OpenFile(fmt.Sprintf(`\\.\pipe\khutaf_%d_down`, pid), os.O_RDONLY, 0)
+	down, err := os.OpenFile(fmt.Sprintf(`\\.\pipe\khutaf_%d_%s_down`, pid, nonce), os.O_RDONLY, 0)
 	if err != nil {
 		t.Fatalf("open down pipe: %v", err)
 	}
@@ -106,6 +118,11 @@ func TestHostPipeRoundTrip(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for OnProcessConnect")
+	}
+
+	// Handshake shared-memory mapping should be closed once pipes connect.
+	if _, err := readHandshakeNonce(pid); err == nil {
+		t.Fatal("expected handshake mapping to close after pipe connection")
 	}
 
 	// Host pushes cached/OnProcessConnect Settings on Hello.
@@ -212,5 +229,41 @@ func TestHostPipeRoundTrip(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for OnProcessRemove")
+	}
+}
+
+func TestHostPipeReattachRotatesNonce(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, nativeHookDLL), []byte("stub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHost(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Start(newTestHandler(h)); err != nil {
+		t.Fatal(err)
+	}
+
+	pid := uint32(os.Getpid()) + 900001
+	h.ConnectProcess(pid)
+	nonce1, err := readHandshakeNonce(pid)
+	if err != nil {
+		t.Fatalf("first readHandshakeNonce: %v", err)
+	}
+	h.DetachProcess(pid)
+
+	if _, err := readHandshakeNonce(pid); err == nil {
+		t.Fatal("expected handshake mapping to be removed on detach")
+	}
+
+	h.ConnectProcess(pid)
+	defer h.DetachProcess(pid)
+	nonce2, err := readHandshakeNonce(pid)
+	if err != nil {
+		t.Fatalf("second readHandshakeNonce: %v", err)
+	}
+	if nonce1 == nonce2 {
+		t.Fatalf("expected fresh nonce per session, both were %q", nonce1)
 	}
 }

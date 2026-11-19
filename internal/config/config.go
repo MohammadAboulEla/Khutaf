@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // EmbedSettings controls in-game embedded translation.
@@ -183,11 +184,12 @@ func Default() Config {
 
 // Store loads and saves config.json and games.json under dir.
 type Store struct {
-	dir   string
-	mu    sync.RWMutex
-	ioMu  sync.Mutex
-	cfg   Config
-	games map[string]GameProfile
+	dir      string
+	mu       sync.RWMutex
+	ioMu     sync.Mutex
+	cfg      Config
+	games    map[string]GameProfile
+	initWarn string
 }
 
 // NewMemoryStore creates an in-memory Store with default settings and no disk backing.
@@ -195,14 +197,61 @@ func NewMemoryStore() *Store {
 	return &Store{cfg: Default(), games: map[string]GameProfile{}}
 }
 
+// InitWarning returns any non-fatal warning encountered while opening the store.
+func (s *Store) InitWarning() string { return s.initWarn }
+
+// SetInitWarning sets or appends a non-fatal startup warning for display in the UI.
+func (s *Store) SetInitWarning(msg string) {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return
+	}
+	if s.initWarn == "" {
+		s.initWarn = msg
+		return
+	}
+	s.initWarn += "; " + msg
+}
+
 // Open loads (or initializes) the store in dir.
 func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create config dir: %w", err)
 	}
+	// Probe writability up front so read-only locations fail even when config.json already exists.
+	probe, err := os.CreateTemp(dir, ".khutaf-write-probe-*")
+	if err != nil {
+		return nil, fmt.Errorf("config dir not writable (%s): %w", dir, err)
+	}
+	probePath := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(probePath)
+
 	s := &Store{dir: dir, cfg: Default(), games: map[string]GameProfile{}}
-	if err := readJSON(filepath.Join(dir, "config.json"), &s.cfg); err != nil {
-		return nil, err
+	cfgPath := filepath.Join(dir, "config.json")
+	if err := readJSON(cfgPath, &s.cfg); err != nil {
+		var syn *json.SyntaxError
+		var typ *json.UnmarshalTypeError
+		if errors.As(err, &syn) || errors.As(err, &typ) {
+			badPath := fmt.Sprintf("%s.bad-%s", cfgPath, time.Now().Format("20060102-150405"))
+			if rerr := os.Rename(cfgPath, badPath); rerr == nil {
+				s.initWarn = fmt.Sprintf("corrupt config.json backed up to %s; loaded defaults", filepath.Base(badPath))
+			} else {
+				s.initWarn = fmt.Sprintf("corrupt config.json (%v); loaded defaults", err)
+			}
+			s.cfg = Default()
+		} else {
+			return nil, err
+		}
+	}
+	if s.cfg.Translator.LLM.APIKey != "" {
+		plain, err := unprotectSecret(s.cfg.Translator.LLM.APIKey)
+		if err != nil {
+			s.cfg.Translator.LLM.APIKey = ""
+			s.SetInitWarning("stored LLM API key could not be decrypted on this Windows account; please re-enter it in Settings")
+		} else {
+			s.cfg.Translator.LLM.APIKey = plain
+		}
 	}
 	if err := readJSON(filepath.Join(dir, "games.json"), &s.games); err != nil {
 		return nil, err
@@ -239,6 +288,18 @@ func (s *Store) Config() Config {
 // SaveConfig replaces and persists the config.
 func (s *Store) SaveConfig(c Config) error {
 	c = cloneConfig(c)
+	diskCfg := cloneConfig(c)
+	if s.dir != "" && diskCfg.Translator.LLM.APIKey != "" {
+		enc, err := protectSecret(diskCfg.Translator.LLM.APIKey)
+		if err != nil {
+			return fmt.Errorf("protect LLM API key: %w", err)
+		}
+		diskCfg.Translator.LLM.APIKey = enc
+	}
+	if s.dir != "" {
+		s.ioMu.Lock()
+		defer s.ioMu.Unlock()
+	}
 	s.mu.Lock()
 	s.cfg = c
 	games := s.gamesSnapshotLocked()
@@ -246,9 +307,7 @@ func (s *Store) SaveConfig(c Config) error {
 	if s.dir == "" {
 		return nil
 	}
-	s.ioMu.Lock()
-	defer s.ioMu.Unlock()
-	if err := writeJSON(filepath.Join(s.dir, "config.json"), c); err != nil {
+	if err := writeJSON(filepath.Join(s.dir, "config.json"), diskCfg); err != nil {
 		return err
 	}
 	return s.saveGlossaryFile(c.Pipeline.Glossary, games)
@@ -270,6 +329,10 @@ func (s *Store) Games() map[string]GameProfile {
 
 // DeleteGame removes a saved game profile and persists games.json.
 func (s *Store) DeleteGame(exePath string) error {
+	if s.dir != "" {
+		s.ioMu.Lock()
+		defer s.ioMu.Unlock()
+	}
 	s.mu.Lock()
 	delete(s.games, gameKey(exePath))
 	snapshot := s.gamesSnapshotLocked()
@@ -278,8 +341,6 @@ func (s *Store) DeleteGame(exePath string) error {
 	if s.dir == "" {
 		return nil
 	}
-	s.ioMu.Lock()
-	defer s.ioMu.Unlock()
 	if err := writeJSON(filepath.Join(s.dir, "games.json"), snapshot); err != nil {
 		return err
 	}
@@ -296,6 +357,10 @@ func (s *Store) gamesSnapshotLocked() map[string]GameProfile {
 
 // UpdateGame mutates and persists the profile for exePath.
 func (s *Store) UpdateGame(exePath string, fn func(*GameProfile)) error {
+	if s.dir != "" {
+		s.ioMu.Lock()
+		defer s.ioMu.Unlock()
+	}
 	s.mu.Lock()
 	key := gameKey(exePath)
 	g := cloneGameProfile(s.games[key])
@@ -307,8 +372,6 @@ func (s *Store) UpdateGame(exePath string, fn func(*GameProfile)) error {
 	if s.dir == "" {
 		return nil
 	}
-	s.ioMu.Lock()
-	defer s.ioMu.Unlock()
 	if err := writeJSON(filepath.Join(s.dir, "games.json"), snapshot); err != nil {
 		return err
 	}
@@ -407,6 +470,10 @@ func writeJSON(path string, v any) error {
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync %s: %w", path, err)
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)

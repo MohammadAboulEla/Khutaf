@@ -5,6 +5,8 @@ package session
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +19,9 @@ import (
 
 // UnityFontBundleURL is the release asset URL for TMP_Font_AssetBundles.zip.
 var UnityFontBundleURL = "https://github.com/MohammadAboulEla/Khutaf/releases/download/unity-fonts/TMP_Font_AssetBundles.zip"
+
+// UnityFontBundleSHA256 is the expected lowercase SHA-256 hex digest of TMP_Font_AssetBundles.zip.
+var UnityFontBundleSHA256 = "88eff0018fbc6602343690e975cb833b96463b2655dd14b6a1036fe3d76642c3"
 
 // UnityFontStatus describes the installation and download state of Unity TMP font bundles.
 type UnityFontStatus struct {
@@ -117,6 +122,7 @@ func (s *Session) runUnityFontDownload(ctx context.Context) error {
 
 	total := resp.ContentLength
 	var downloaded int64
+	hasher := sha256.New()
 	buf := make([]byte, 64*1024)
 	lastEmit := time.Now()
 
@@ -127,6 +133,7 @@ func (s *Session) runUnityFontDownload(ctx context.Context) error {
 				tmpZip.Close()
 				return werr
 			}
+			_, _ = hasher.Write(buf[:n])
 			downloaded += int64(n)
 			if time.Since(lastEmit) >= 150*time.Millisecond {
 				lastEmit = time.Now()
@@ -152,6 +159,12 @@ func (s *Session) runUnityFontDownload(ctx context.Context) error {
 	}
 	if err := tmpZip.Close(); err != nil {
 		return err
+	}
+	if expected := strings.TrimSpace(UnityFontBundleSHA256); expected != "" {
+		actual := hex.EncodeToString(hasher.Sum(nil))
+		if !strings.EqualFold(actual, expected) {
+			return fmt.Errorf("unity font bundle SHA-256 mismatch: got %s, expected %s", actual, expected)
+		}
 	}
 
 	s.updateUnityFontState(func(st *UnityFontStatus) {
@@ -201,15 +214,20 @@ func extractSingleBundle(f *zip.File, dstPath string) error {
 	}
 	defer rc.Close()
 
+	const maxBundleBytes = 256 << 20
 	tmpPath := dstPath + ".tmp"
 	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, io.LimitReader(rc, 256<<20)); err != nil {
+	n, err := io.Copy(out, io.LimitReader(rc, maxBundleBytes+1))
+	if err != nil || n > maxBundleBytes {
 		out.Close()
 		os.Remove(tmpPath)
-		return err
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("bundle entry exceeds %d bytes", maxBundleBytes)
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmpPath)
