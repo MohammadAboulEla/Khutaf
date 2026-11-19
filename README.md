@@ -12,7 +12,7 @@
   <a href="README.ar.md">العربية</a> | <strong>English</strong>
 </p>
 
-[![Watch the video](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)](https://github.com/user-attachments/assets/16eaacee-185e-48e4-a2b0-f3a556139d63)
+[![Watch the video](https://github.com/user-attachments/assets/6157c9eb-8d73-4070-832d-b1fa2757c6c3)](https://github.com/user-attachments/assets/6157c9eb-8d73-4070-832d-b1fa2757c6c3)
 
 ---
 
