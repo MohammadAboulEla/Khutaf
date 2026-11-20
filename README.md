@@ -16,7 +16,7 @@
 
 ---
 
-## Download (`v0.1.3-beta`)
+## Download (`v0.1.4-beta`)
 
 Download the latest portable Windows release (`Khutaf.exe` + `runtime/khutaf-hook64.dll`) from [GitHub Releases](https://github.com/MohammadAboulEla/Khutaf/releases):
 
