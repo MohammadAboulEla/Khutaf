@@ -2,13 +2,16 @@
 import { shallowRef, computed } from "vue";
 import Icon from "../Icon.vue";
 import Tooltip from "../Tooltip.vue";
+import { useI18n } from "../../composables/useI18n.js";
+import { formatHookLabel } from "../../utils/hookLabels.js";
 
 const props = defineProps({
   hooks: { type: Array, required: true },
   outputs: { type: Object, required: true },
 });
 
-const emit = defineEmits(["toggle-embed"]);
+const emit = defineEmits(["toggle-embed", "smart-embed"]);
+const { t, lang } = useI18n();
 
 const query = shallowRef("");
 const embedOnly = shallowRef(true);
@@ -38,37 +41,39 @@ const filteredHooks = computed(() => {
         <input
           v-model="query"
           class="search-input"
-          placeholder="Filter hooks by name, H-code, or captured text…"
+          :placeholder="t('htFilterPlaceholder')"
         />
       </div>
       <label class="chk">
         <input v-model="embedOnly" type="checkbox" />
-        <span
-          >Embeddable only ({{ filteredHooks.length }}/{{
-            props.hooks.length
-          }})</span
-        >
+        <span>{{ t("htEmbedOnly", { shown: filteredHooks.length, total: props.hooks.length }) }}</span>
       </label>
+      <button
+        class="smart-btn"
+        type="button"
+        :disabled="!props.hooks.length"
+        @click="emit('smart-embed')"
+      >
+        <Icon name="Wand" :size="12" />
+        <span>{{ t("htSmartEmbed") }}</span>
+      </button>
     </div>
 
     <div class="scroll">
       <table class="tbl">
         <thead>
           <tr>
-            <th class="col-embed">Embed</th>
-            <th class="col-name">Engine / Hook</th>
-            <th>Latest Captured Text</th>
+            <th class="col-embed">{{ t("htColEmbed") }}</th>
+            <th class="col-name">{{ t("htColName") }}</th>
+            <th>{{ t("htColText") }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="!filteredHooks.length">
-            <td colspan="3" class="empty">
-              No text hooks discovered yet. Attach to a running game and advance
-              dialogue.
-            </td>
+            <td colspan="3" class="empty">{{ t("htEmpty") }}</td>
           </tr>
           <tr
-            v-for="h in filteredHooks"
+            v-for="(h, idx) in filteredHooks"
             :key="h.key"
             :class="{ active: h.embedding }"
           >
@@ -87,7 +92,7 @@ const filteredHooks = computed(() => {
                   placement="top"
                   mono
                 >
-                  <span class="name">{{ h.hookName }}</span>
+                  <span class="name">{{ formatHookLabel(h, idx, lang) }}</span>
                 </Tooltip>
                 <span v-if="h.ctx" class="ctx-tag">#{{ h.ctx.toString(16) }}</span>
                 <span v-if="h.embeddable" class="tag">embed</span>
@@ -149,6 +154,25 @@ const filteredHooks = computed(() => {
   font-size: 12px;
   color: var(--fg-muted);
   cursor: pointer;
+}
+.smart-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.smart-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .scroll {
   flex: 1;

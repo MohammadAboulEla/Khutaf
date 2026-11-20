@@ -1,32 +1,44 @@
 <script setup>
+import { computed } from "vue";
 import Icon from "./Icon.vue";
 import Tooltip from "./Tooltip.vue";
+import { useI18n } from "../composables/useI18n.js";
 
 const props = defineProps({
   side: { type: String, default: "right" },
   collapsed: { type: Boolean, default: false },
-  active: { type: String, default: "hooks" },
-  items: {
-    type: Array,
-    default: () => [
-      { id: "games", name: "Games", icon: "Folder" },
-      { id: "hooks", name: "Hook Console", icon: "Code" },
-      { id: "embed", name: "Embed & Arabic", icon: "BookOpen" },
-      { id: "translators", name: "Translators", icon: "Quote" },
-      { id: "pipeline", name: "Text Pipeline", icon: "Workflow" },
-      { id: "debug", name: "Debug", icon: "Activity" },
-    ],
-  },
+  active: { type: String, default: "quickplay" },
+  simple: { type: Boolean, default: true },
 });
 
 const emit = defineEmits(["select", "toggle-collapsed"]);
+const { t } = useI18n();
+
+const navItems = computed(() => {
+  if (props.simple) {
+    return [
+      { id: "quickplay", name: t("navQuickplay"), icon: "Gamepad" },
+      { id: "translators", name: t("navTranslators"), icon: "Quote" },
+      { id: "embed", name: t("navEmbed"), icon: "BookOpen" },
+    ];
+  }
+  return [
+    { id: "quickplay", name: t("navQuickplay"), icon: "Gamepad" },
+    { id: "games", name: t("navGames"), icon: "Folder" },
+    { id: "hooks", name: t("navHooks"), icon: "Code" },
+    { id: "embed", name: t("navEmbed"), icon: "BookOpen" },
+    { id: "translators", name: t("navTranslators"), icon: "Quote" },
+    { id: "pipeline", name: t("navPipeline"), icon: "Workflow" },
+    { id: "debug", name: t("navDebug"), icon: "Activity" },
+  ];
+});
 </script>
 
 <template>
   <aside class="sidebar" :data-side="props.side" :data-collapsed="props.collapsed">
     <nav class="nav">
       <Tooltip
-        v-for="i in props.items"
+        v-for="i in navItems"
         :key="i.id"
         :text="props.collapsed ? i.name : ''"
         :placement="props.side === 'left' ? 'right' : 'left'"
@@ -46,7 +58,7 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
 
     <div class="bottom">
       <Tooltip
-        :text="props.collapsed ? 'Expand sidebar' : ''"
+        :text="props.collapsed ? t('navExpand') : ''"
         :placement="props.side === 'left' ? 'right' : 'left'"
         class="nav-tip"
       >
@@ -58,7 +70,7 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
           <span class="chev" :class="{ flip: props.collapsed }">
             <Icon name="PanelLeft" :size="18" />
           </span>
-          <span class="label">Collapse</span>
+          <span class="label">{{ t("navCollapse") }}</span>
         </button>
       </Tooltip>
     </div>
@@ -71,7 +83,7 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
   grid-template-rows: 1fr auto;
   background: var(--bg-elev);
   border-right: 1px solid var(--border);
-  width: 180px;
+  width: 185px;
   overflow: hidden;
   transition: width 0.15s ease;
 }
@@ -104,7 +116,7 @@ const emit = defineEmits(["select", "toggle-collapsed"]);
   border-radius: 6px;
   color: var(--fg);
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

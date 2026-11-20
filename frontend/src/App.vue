@@ -1,9 +1,12 @@
 <script setup>
-import { shallowRef, computed } from "vue";
+import { shallowRef, computed, watch } from "vue";
 import AppHeader from "./components/AppHeader.vue";
 import AppSidebar from "./components/AppSidebar.vue";
 import AppFooter from "./components/AppFooter.vue";
 import AboutModal from "./components/AboutModal.vue";
+import OnboardingWizard from "./components/OnboardingWizard.vue";
+import TroubleshooterModal from "./components/TroubleshooterModal.vue";
+import QuickPlayView from "./views/QuickPlayView.vue";
 import HookConsoleView from "./views/HookConsoleView.vue";
 import GamesView from "./views/GamesView.vue";
 import EmbedSettingsView from "./views/EmbedSettingsView.vue";
@@ -13,6 +16,9 @@ import DebugView from "./views/DebugView.vue";
 import { useTheme } from "./composables/useTheme.js";
 import { useSidebar } from "./composables/useSidebar.js";
 import { useSession } from "./composables/useSession.js";
+import { useI18n } from "./composables/useI18n.js";
+import { useUiMode } from "./composables/useUiMode.js";
+import { formatFriendlyError } from "./utils/friendlyErrors.js";
 
 const { theme, toggle: toggleTheme } = useTheme();
 const {
@@ -22,28 +28,125 @@ const {
   toggleCollapsed: toggleSidebarCollapsed,
 } = useSidebar();
 
-const { status, logs, errorBanner, clearError, appVersion, pipelineTarget } = useSession();
+const { lang, t, toggleLang, setLang, syncFromConfig: syncLang } = useI18n();
+const { uiMode, isSimple, toggleUiMode, setUiMode, syncFromConfig: syncMode } = useUiMode();
+
+const {
+  status,
+  logs,
+  config,
+  saveConfig,
+  errorBanner,
+  clearError,
+  appVersion,
+  pipelineTarget,
+  restartAsAdmin,
+  downloadUnityFonts,
+} = useSession();
+
+const activeTab = shallowRef(isSimple.value ? "quickplay" : "games");
+const aboutOpen = shallowRef(false);
+const wizardOpen = shallowRef(false);
+const troubleshooterOpen = shallowRef(false);
+let configSynced = false;
+
+watch(
+  config,
+  (cfg) => {
+    if (!cfg || configSynced) return;
+    configSynced = true;
+    syncLang(cfg.ui);
+    syncMode(cfg.ui);
+    if (cfg.ui?.mode === "advanced") {
+      activeTab.value = "games";
+    } else {
+      activeTab.value = "quickplay";
+    }
+    const alreadyLocal =
+      typeof localStorage !== "undefined" && localStorage.getItem("khutaf.onboarded") === "1";
+    if (!cfg.ui?.onboarded && !alreadyLocal) {
+      wizardOpen.value = true;
+    }
+  },
+  { immediate: true },
+);
+
+watch(isSimple, (simple) => {
+  if (simple && !["quickplay", "translators", "embed"].includes(activeTab.value)) {
+    activeTab.value = "quickplay";
+  }
+});
+
+function persistUI(patch) {
+  if (!config.value) return;
+  saveConfig({
+    ...config.value,
+    ui: {
+      language: config.value.ui?.language || lang.value,
+      mode: config.value.ui?.mode || uiMode.value,
+      onboarded: Boolean(config.value.ui?.onboarded),
+      ...patch,
+    },
+  });
+}
+
+function onToggleLang() {
+  toggleLang();
+  persistUI({ language: lang.value });
+}
+
+function onToggleMode() {
+  toggleUiMode();
+  persistUI({ mode: uiMode.value });
+}
+
+function onWizardComplete(payload) {
+  wizardOpen.value = false;
+  try {
+    localStorage.setItem("khutaf.onboarded", "1");
+  } catch {
+    // ignore
+  }
+  const nextLang = payload?.language || lang.value;
+  const nextMode = payload?.mode || uiMode.value;
+  setLang(nextLang);
+  setUiMode(nextMode);
+  persistUI({ language: nextLang, mode: nextMode, onboarded: true });
+  activeTab.value = nextMode === "simple" ? "quickplay" : "games";
+}
 
 function onEditGameRules(exePath) {
   pipelineTarget.value = exePath;
   activeTab.value = "pipeline";
 }
 
-const activeTab = shallowRef("games");
-const aboutOpen = shallowRef(false);
+const formattedError = computed(() => formatFriendlyError(errorBanner.value, lang.value));
+
+async function onErrorAction() {
+  const act = formattedError.value.action;
+  if (act === "admin") {
+    await restartAsAdmin();
+  } else if (act === "benchmark") {
+    clearError();
+    activeTab.value = "translators";
+  } else if (act === "fonts") {
+    clearError();
+    await downloadUnityFonts();
+  }
+}
 
 const footerText = computed(() => {
   const last = logs.value[0];
   const base = status.value.attached
-    ? `Attached: ${status.value.gameName} (${status.value.engine || "native"})`
-    : "Idle — select a process to attach";
+    ? t("statusAttached", { game: status.value.gameName, engine: status.value.engine || "native" })
+    : t("statusIdle");
   const prov = status.value.debugMode
     ? status.value.debugRealTrans
-      ? " · Translator: debugging (real)"
-      : " · Translator: debugging (test mode)"
+      ? ` · ${t("statusDebugReal")}`
+      : ` · ${t("statusDebugMock")}`
     : status.value.provider
-      ? ` · Translator: ${status.value.provider}`
-      : " · Translator: off";
+      ? ` · ${t("statusTranslator", { provider: status.value.provider })}`
+      : ` · ${t("statusTranslatorOff")}`;
   const logPart = last ? ` · [${last.time}] ${last.msg}` : "";
   return base + prov + logPart;
 });
@@ -59,6 +162,9 @@ const footerText = computed(() => {
       @toggle-theme="toggleTheme"
       @toggle-sidebar="toggleSidebar"
       @open-about="aboutOpen = true"
+      @open-troubleshooter="troubleshooterOpen = true"
+      @toggle-mode="onToggleMode"
+      @toggle-lang="onToggleLang"
     />
 
     <AppSidebar
@@ -66,22 +172,62 @@ const footerText = computed(() => {
       :side="sidebar"
       :collapsed="sidebarCollapsed"
       :active="activeTab"
+      :simple="isSimple"
       @select="activeTab = $event"
       @toggle-collapsed="toggleSidebarCollapsed"
     />
 
     <main class="content">
       <div v-if="errorBanner" class="banner">
-        <span>{{ errorBanner }}</span>
-        <button class="banner-close" type="button" @click="clearError">×</button>
+        <div class="banner-body">
+          <strong>{{ formattedError.title }}</strong>
+          <span v-if="formattedError.hint" class="banner-hint">{{ formattedError.hint }}</span>
+        </div>
+        <div class="banner-actions">
+          <button
+            v-if="formattedError.action === 'admin'"
+            class="banner-act"
+            type="button"
+            @click="onErrorAction"
+          >
+            {{ t("errActionAdmin") }}
+          </button>
+          <button
+            v-else-if="formattedError.action === 'benchmark'"
+            class="banner-act"
+            type="button"
+            @click="onErrorAction"
+          >
+            {{ t("errActionBench") }}
+          </button>
+          <button
+            v-else-if="formattedError.action === 'fonts'"
+            class="banner-act"
+            type="button"
+            @click="onErrorAction"
+          >
+            {{ t("errActionFonts") }}
+          </button>
+          <button class="banner-close" type="button" @click="clearError">×</button>
+        </div>
       </div>
+
+      <QuickPlayView
+        v-if="activeTab === 'quickplay'"
+        @open-translators="activeTab = 'translators'"
+        @open-troubleshooter="troubleshooterOpen = true"
+        @open-wizard="wizardOpen = true"
+      />
       <GamesView
         v-if="activeTab === 'games'"
         @open-hooks="activeTab = 'hooks'"
         @edit-rules="onEditGameRules"
       />
       <HookConsoleView v-show="activeTab === 'hooks'" />
-      <EmbedSettingsView v-if="activeTab === 'embed'" />
+      <EmbedSettingsView
+        v-if="activeTab === 'embed'"
+        :onboarding-open="wizardOpen"
+      />
       <TranslatorsView v-if="activeTab === 'translators'" />
       <TextPipelineView v-if="activeTab === 'pipeline'" />
       <DebugView v-if="activeTab === 'debug'" />
@@ -90,6 +236,12 @@ const footerText = computed(() => {
     <AppFooter class="foot" :status="footerText" :version="appVersion" />
 
     <AboutModal :open="aboutOpen" :version="appVersion" @close="aboutOpen = false" />
+    <OnboardingWizard :open="wizardOpen" @complete="onWizardComplete" @close="wizardOpen = false" />
+    <TroubleshooterModal
+      :open="troubleshooterOpen"
+      @close="troubleshooterOpen = false"
+      @open-translators="activeTab = 'translators'"
+    />
   </div>
 </template>
 
@@ -130,13 +282,42 @@ const footerText = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   margin: 10px 12px 0;
-  padding: 6px 12px;
+  padding: 8px 12px;
   background: color-mix(in oklab, #dc2626 20%, var(--bg-elev));
   border: 1px solid #dc2626;
-  border-radius: 5px;
-  color: #fca5a5;
+  border-radius: 6px;
+  color: #fecaca;
   font-size: 12px;
+}
+.banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.banner-hint {
+  font-size: 11px;
+  opacity: 0.9;
+}
+.banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.banner-act {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
 }
 .banner-close {
   background: transparent;

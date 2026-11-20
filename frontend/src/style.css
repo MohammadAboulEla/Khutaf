@@ -94,3 +94,12 @@ select option:checked {
   background: var(--accent);
   color: #fff;
 }
+
+html[dir="rtl"] body {
+  font-family: var(--arabic);
+}
+html[dir="rtl"] select {
+  padding-right: 10px !important;
+  padding-left: 30px !important;
+  background-position: left 10px center !important;
+}

@@ -3,8 +3,11 @@ import { onMounted, ref, shallowRef } from "vue";
 import Icon from "../components/Icon.vue";
 import Tooltip from "../components/Tooltip.vue";
 import { useSession } from "../composables/useSession.js";
+import { useI18n } from "../composables/useI18n.js";
+import { formatHookLabel } from "../utils/hookLabels.js";
 
 const emit = defineEmits(["open-hooks", "edit-rules"]);
+const { t, lang } = useI18n();
 
 const {
   savedGames,
@@ -48,19 +51,6 @@ async function onClearCache() {
   }, 1500);
 }
 
-function formatHookLabel(h, idx) {
-  const src = `${h.hookCode || ""} ${h.hookName || ""}`.toLowerCase();
-  let base = h.hookName || h.hookCode || "Text Hook";
-  if (src.includes("textmeshprougui")) base = "Unity TextMeshPro UI";
-  else if (src.includes("textmeshpro") || src.includes("tmp_text")) base = "Unity TextMeshPro";
-  else if (src.includes("unityengine.ui") || src.includes("ui.text")) base = "Unity UI Text";
-  else if (src.includes("uielements")) base = "Unity UI Toolkit";
-  else if (src.includes("uilabel")) base = "Unity NGUI Label";
-  else if (src.includes("naninovel")) base = "Naninovel Dialogue";
-  else if (src.includes("unity")) base = "Unity Text Hook";
-  return `${base} #${idx + 1}`;
-}
-
 function hookTooltip(h) {
   return `${h.hookName || h.hookCode} · ctx ${h.ctx.toString(16)}`;
 }
@@ -74,24 +64,24 @@ function ruleCount(g) {
   <div class="page">
     <div class="toolbar">
       <div>
-        <h2 class="h2">Games &amp; Saved Hooks</h2>
-        <p class="sub">Quick-attach to previously hooked games, manage saved embed hooks, or clear cached translations.</p>
+        <h2 class="h2">{{ t("gvTitle") }}</h2>
+        <p class="sub">{{ t("gvSub") }}</p>
       </div>
       <div class="actions">
         <button class="btn" type="button" @click="refreshSavedGames">
           <Icon name="RefreshCw" :size="13" />
-          <span>Refresh</span>
+          <span>{{ t("qpRefresh") }}</span>
         </button>
         <button class="btn" type="button" :disabled="cacheCount === 0 && !cacheCleared" @click="onClearCache">
           <Icon name="Trash" :size="13" />
-          <span>{{ cacheCleared ? "Cache Cleared ✓" : `Clear Cache (${cacheCount})` }}</span>
+          <span>{{ cacheCleared ? t("gvCacheCleared") : t("gvClearCache", { count: cacheCount }) }}</span>
         </button>
       </div>
     </div>
 
     <div v-if="!savedGames.length" class="empty-card">
-      <p>No saved games yet. Attach to a running game in Hook Console and enable Embed on a hook to save it here.</p>
-      <button class="btn primary" type="button" @click="emit('open-hooks')">Open Hook Console</button>
+      <p>{{ t("gvEmpty") }}</p>
+      <button class="btn primary" type="button" @click="emit('open-hooks')">{{ t("gvOpenHooks") }}</button>
     </div>
 
     <div v-else class="grid">
@@ -164,7 +154,7 @@ function ruleCount(g) {
                 class="hook-item"
               >
                 <Tooltip :text="hookTooltip(h)" mono class="hname-tip">
-                  <span class="hname">{{ formatHookLabel(h, idx) }}</span>
+                  <span class="hname">{{ formatHookLabel(h, idx, lang) }}</span>
                 </Tooltip>
                 <span class="hctx">ctx {{ h.ctx.toString(16) }}</span>
                 <Tooltip text="Remove hook">

@@ -1,11 +1,14 @@
 <script setup>
 import { shallowRef, watch } from "vue";
+import { useI18n } from "../../composables/useI18n.js";
 
 const props = defineProps({
   feed: { type: Array, required: true },
   previewFn: { type: Function, required: true },
   translateFn: { type: Function, required: true },
 });
+
+const { t } = useI18n();
 
 const tab = shallowRef("feed");
 const sampleText = shallowRef("مرحباً يا Ahmed في عالم <color=red>Khutaf</color> نقاط الصحة الخاصة بك <color=#4ade80>100</color> الحالة ممتازة.");
@@ -63,7 +66,7 @@ function parseColorSegments(text) {
           :class="{ active: tab === 'feed' }"
           @click="tab = 'feed'"
         >
-          Live Embedded Feed ({{ props.feed.length }})
+          {{ t("aiTabFeed", { count: props.feed.length }) }}
         </button>
         <button
           type="button"
@@ -71,7 +74,7 @@ function parseColorSegments(text) {
           :class="{ active: tab === 'tester' }"
           @click="tab = 'tester'"
         >
-          Arabic Preview &amp; Test
+          {{ t("aiTabTester") }}
         </button>
       </div>
 
@@ -82,13 +85,13 @@ function parseColorSegments(text) {
         :disabled="transBusy"
         @click="onTestTranslate"
       >
-        {{ transBusy ? "Translating…" : "Translate with Active Provider" }}
+        {{ transBusy ? t("trTesting") : t("aiTranslateActive") }}
       </button>
     </div>
 
     <div v-if="tab === 'feed'" class="feed">
       <div v-if="!props.feed.length" class="empty">
-        Lines injected into the game appear here in real time.
+        {{ t("aiFeedEmpty") }}
       </div>
       <div v-for="(item, idx) in props.feed" :key="idx" class="feed-item">
         <div class="feed-meta">
@@ -112,11 +115,11 @@ function parseColorSegments(text) {
       <div v-if="transError" class="err">{{ transError }}</div>
       <div class="out-grid">
         <div class="box">
-          <div class="lbl">Readable Arabic (Line Wrapped)</div>
+          <div class="lbl">{{ t("aiLogicalLbl") }}</div>
           <pre class="val rtl" dir="rtl">{{ preview.logical }}</pre>
         </div>
         <div class="box">
-          <div class="lbl">In-Game Output Preview</div>
+          <div class="lbl">{{ t("aiVisualLbl") }}</div>
           <pre class="val ltr-override"><template v-for="(seg, i) in parseColorSegments(preview.shaped)" :key="i"><span v-if="seg.color" :style="{ color: seg.color }">{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template></pre>
         </div>
       </div>

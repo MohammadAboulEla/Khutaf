@@ -1,6 +1,9 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, shallowRef, watch } from "vue";
+import TranslatorBenchmark from "../components/TranslatorBenchmark.vue";
 import { useSession } from "../composables/useSession.js";
+import { useI18n } from "../composables/useI18n.js";
+import { useUiMode } from "../composables/useUiMode.js";
 
 const {
   config,
@@ -13,6 +16,9 @@ const {
   browseLlamaBinary,
   browseGGUFModel,
 } = useSession();
+
+const { t } = useI18n();
+const { isSimple } = useUiMode();
 
 const TRADITIONAL_PROVIDERS = [
   { id: "bing", label: "Bing" },
@@ -192,6 +198,11 @@ async function onSave() {
   });
 }
 
+async function onSelectBenchmarkProvider(id) {
+  form.active = id;
+  await onSave();
+}
+
 async function onTest() {
   testing.value = true;
   testErr.value = "";
@@ -252,24 +263,24 @@ async function onStopLlama() {
   <div class="page">
     <div class="card">
       <div class="head">
-        <h2 class="h2">Translation Provider</h2>
+        <h2 class="h2">{{ t("trTitle") }}</h2>
         <select v-model="form.active" class="select">
-          <optgroup label="Free Traditional Web Translators (No API Key)">
+          <optgroup :label="t('trCatTraditional')">
             <option v-for="p in TRADITIONAL_PROVIDERS" :key="p.id" :value="p.id">
-              {{ p.label }} (Free Web)
+              {{ p.label }}
             </option>
           </optgroup>
-          <optgroup label="Local &amp; Cloud LLMs">
+          <optgroup :label="t('trCatLLM')">
             <option value="offline_llm">Local Offline Translation Model (GGUF / llama.cpp)</option>
             <option value="llm">OpenAI-Compatible LLM (Cloud / Ollama / llama.cpp)</option>
           </optgroup>
-          <option value="none">Disabled (Pass-through)</option>
+          <option value="none">{{ t("trDisabled") }}</option>
         </select>
       </div>
 
       <template v-if="isTraditional">
         <div class="presets">
-          <span class="lbl">Traditional Translators:</span>
+          <span class="lbl">{{ t("trTradListLbl") }}</span>
           <button
             v-for="p in TRADITIONAL_PROVIDERS"
             :key="p.id"
@@ -282,58 +293,60 @@ async function onStopLlama() {
           </button>
         </div>
 
-        <div v-if="form.active === 'bing'" class="grid">
-          <label class="field">
-            <span class="lbl">Source Language Code</span>
-            <input v-model="form.bingSourceLang" class="input mono" placeholder="auto-detect, en, ja" />
-          </label>
-          <label class="field">
-            <span class="lbl">Target Language Code</span>
-            <input v-model="form.bingTargetLang" class="input mono" placeholder="ar" />
-          </label>
-        </div>
-        <div v-else class="grid">
-          <label class="field">
-            <span class="lbl">Source Language Code</span>
-            <input v-model="form.tradSourceLang" class="input mono" placeholder="auto, en, ja, zh-CN" />
-          </label>
-          <label class="field">
-            <span class="lbl">Target Language Code</span>
-            <input v-model="form.tradTargetLang" class="input mono" placeholder="ar" />
-          </label>
+        <div v-if="!isSimple || form.active === 'bing'" class="grid">
+          <template v-if="form.active === 'bing'">
+            <label class="field">
+              <span class="lbl">{{ t("trSourceLangCode") }}</span>
+              <input v-model="form.bingSourceLang" class="input mono" placeholder="auto-detect, en, ja" />
+            </label>
+            <label class="field">
+              <span class="lbl">{{ t("trTargetLangCode") }}</span>
+              <input v-model="form.bingTargetLang" class="input mono" placeholder="ar" />
+            </label>
+          </template>
+          <template v-else>
+            <label class="field">
+              <span class="lbl">{{ t("trSourceLangCode") }}</span>
+              <input v-model="form.tradSourceLang" class="input mono" placeholder="auto, en, ja, zh-CN" />
+            </label>
+            <label class="field">
+              <span class="lbl">{{ t("trTargetLangCode") }}</span>
+              <input v-model="form.tradTargetLang" class="input mono" placeholder="ar" />
+            </label>
+          </template>
         </div>
       </template>
 
       <template v-else-if="form.active === 'offline_llm'">
         <div class="grid">
           <label class="field">
-            <span class="lbl">Prompt Template</span>
+            <span class="lbl">{{ t("trPromptTemplate") }}</span>
             <select v-model="form.offTemplate" class="select">
-              <option v-for="t in OFFLINE_TEMPLATES" :key="t.id" :value="t.id">{{ t.label }}</option>
+              <option v-for="tp in OFFLINE_TEMPLATES" :key="tp.id" :value="tp.id">{{ tp.label }}</option>
             </select>
           </label>
 
           <label class="field">
-            <span class="lbl">Local Server Base URL</span>
+            <span class="lbl">{{ t("trLocalUrl") }}</span>
             <input v-model="form.offBaseUrl" class="input mono" placeholder="http://127.0.0.1:8080/v1" />
           </label>
 
           <label class="field">
-            <span class="lbl">Model Name</span>
+            <span class="lbl">{{ t("trModelName") }}</span>
             <input v-model="form.offModel" class="input mono" placeholder="local-model" />
           </label>
 
           <div class="inline3">
             <label class="field">
-              <span class="lbl">Source Lang</span>
+              <span class="lbl">{{ t("trSourceLang") }}</span>
               <input v-model="form.offSourceLang" class="input" />
             </label>
             <label class="field">
-              <span class="lbl">Target Lang</span>
+              <span class="lbl">{{ t("trTargetLang") }}</span>
               <input v-model="form.offTargetLang" class="input" />
             </label>
             <label class="field">
-              <span class="lbl">Temp</span>
+              <span class="lbl">{{ t("trTemp") }}</span>
               <input v-model.number="form.offTemperature" type="number" step="0.05" min="0" max="2" class="input" />
             </label>
           </div>
@@ -342,7 +355,7 @@ async function onStopLlama() {
 
       <template v-else-if="form.active === 'llm'">
         <div class="presets">
-          <span class="lbl">Quick Endpoint Presets:</span>
+          <span class="lbl">{{ t("trQuickPresets") }}</span>
           <button
             v-for="p in PRESETS"
             :key="p.name"
@@ -356,127 +369,138 @@ async function onStopLlama() {
 
         <div class="grid">
           <label class="field">
-            <span class="lbl">Base URL (`/chat/completions` appended automatically)</span>
+            <span class="lbl">{{ t("trBaseUrl") }}</span>
             <input v-model="form.baseUrl" class="input mono" placeholder="https://api.openai.com/v1" />
           </label>
 
           <label class="field">
-            <span class="lbl">Model Name</span>
+            <span class="lbl">{{ t("trModelName") }}</span>
             <input v-model="form.model" class="input mono" placeholder="gpt-4o-mini" />
           </label>
 
           <label class="field">
-            <span class="lbl">API Key (leave empty for local Ollama / llama.cpp)</span>
+            <span class="lbl">{{ t("trApiKey") }}</span>
             <input v-model="form.apiKey" type="password" class="input mono" placeholder="sk-…" />
           </label>
 
           <div class="inline3">
             <label class="field">
-              <span class="lbl">Source Lang</span>
+              <span class="lbl">{{ t("trSourceLang") }}</span>
               <input v-model="form.sourceLang" class="input" />
             </label>
             <label class="field">
-              <span class="lbl">Target Lang</span>
+              <span class="lbl">{{ t("trTargetLang") }}</span>
               <input v-model="form.targetLang" class="input" />
             </label>
             <label class="field">
-              <span class="lbl">Temp</span>
+              <span class="lbl">{{ t("trTemp") }}</span>
               <input v-model.number="form.temperature" type="number" step="0.05" min="0" max="2" class="input" />
             </label>
           </div>
         </div>
 
         <label class="field">
-          <span class="lbl">System Prompt (`{source}` and `{target}` are substituted)</span>
+          <span class="lbl">{{ t("trSystemPrompt") }}</span>
           <textarea v-model="form.systemPrompt" rows="3" class="textarea" />
         </label>
       </template>
 
       <div class="test-box">
         <div class="test-row">
-          <input v-model="testInput" class="input flex1" />
+          <input v-model="testInput" class="input flex1" dir="auto" />
           <button class="btn" type="button" :disabled="testing" @click="onTest">
-            {{ testing ? "Testing…" : "Test Translate" }}
+            {{ testing ? t("trTesting") : t("trTestBtn") }}
           </button>
           <button class="btn primary" type="button" @click="onSave">
-            {{ saveState === "saved" ? "Saved ✓" : "Save" }}
+            {{ saveState === "saved" ? t("trSavedBtn") : t("trSaveBtn") }}
           </button>
         </div>
         <div v-if="testErr" class="err">{{ testErr }}</div>
         <div v-if="testResult" class="res">
-          <div><strong>Arabic (Logical):</strong> <span class="ar" dir="rtl">{{ testResult.translated }}</span></div>
-          <div><strong>Shaped (Visual):</strong> <span class="ar">{{ testResult.shaped }}</span> ({{ testResult.elapsedMs }} ms)</div>
+          <div><strong>{{ t("trOutLogical") }}</strong> <span class="ar" dir="rtl">{{ testResult.translated }}</span></div>
+          <div><strong>{{ t("trOutShaped") }}</strong> <span class="ar">{{ testResult.shaped }}</span> ({{ testResult.elapsedMs }} ms)</div>
         </div>
       </div>
     </div>
 
     <div class="card">
-      <div class="head">
-        <div class="head-left">
-          <h2 class="h2">Local `llama.cpp` Server Runner</h2>
-          <span class="status-pill" :class="{ ready: llamaStatus.ready, running: llamaStatus.running && !llamaStatus.ready }">
-            {{ llamaStatus.ready ? `Ready · PID ${llamaStatus.pid}` : llamaStatus.running ? "Starting…" : "Stopped" }}
-          </span>
-        </div>
-        <div class="btn-row">
-          <button class="btn" type="button" @click="showLlamaLogs = !showLlamaLogs">
-            {{ showLlamaLogs ? "Hide Logs" : "Logs" }}
-          </button>
-          <button v-if="llamaStatus.running" class="btn danger" type="button" :disabled="llamaBusy" @click="onStopLlama">
-            Stop Server
-          </button>
-          <button v-else class="btn primary" type="button" :disabled="llamaBusy" @click="onStartLlama">
-            {{ llamaBusy ? "Starting…" : "Start Server" }}
-          </button>
-        </div>
-      </div>
-
-      <div class="grid">
-        <label class="field">
-          <span class="lbl">llama-server.exe Path</span>
-          <div class="browse-row">
-            <input v-model="form.llamaBinaryPath" class="input mono flex1" placeholder="C:\llama.cpp\llama-server.exe" />
-            <button class="btn" type="button" @click="onBrowseBinary">Browse</button>
-          </div>
-        </label>
-
-        <label class="field">
-          <span class="lbl">GGUF Model File</span>
-          <div class="browse-row">
-            <input v-model="form.llamaModelPath" class="input mono flex1" placeholder="C:\Models\model.gguf" />
-            <button class="btn" type="button" @click="onBrowseModel">Browse</button>
-          </div>
-        </label>
-
-        <div class="inline3">
-          <label class="field">
-            <span class="lbl">Port</span>
-            <input v-model.number="form.llamaPort" type="number" min="1" max="65535" class="input mono" />
-          </label>
-          <label class="field">
-            <span class="lbl">GPU Layers (-ngl)</span>
-            <input v-model.number="form.llamaGpuLayers" type="number" min="0" max="999" class="input mono" />
-          </label>
-          <label class="field">
-            <span class="lbl">Ctx Size (-c)</span>
-            <input v-model.number="form.llamaCtxSize" type="number" min="512" step="512" class="input mono" />
-          </label>
-        </div>
-
-        <label class="field">
-          <span class="lbl">Extra CLI Args (optional)</span>
-          <input v-model="form.llamaExtraArgs" class="input mono" placeholder="--threads 8 --flash-attn" />
-        </label>
-      </div>
-
-      <label class="chk">
-        <input v-model="form.llamaAutoStart" type="checkbox" />
-        <span>Auto-start `llama-server.exe` when Khutaf launches</span>
-      </label>
-
-      <div v-if="llamaErr || llamaStatus.lastError" class="err">{{ llamaErr || llamaStatus.lastError }}</div>
-      <pre v-if="showLlamaLogs" class="llama-logs">{{ llamaStatus.recentLogs || "No server output yet." }}</pre>
+      <TranslatorBenchmark
+        :translator-config="buildTranslatorConfig()"
+        :active-provider="form.active"
+        @select-provider="onSelectBenchmarkProvider"
+      />
     </div>
+
+    <details class="card llama-details" :open="!isSimple || form.active === 'offline_llm'">
+      <summary class="llama-summary">{{ t("trAdvancedSection") }}</summary>
+      <div class="llama-body">
+        <div class="head">
+          <div class="head-left">
+            <h2 class="h2">Local `llama.cpp` Server Runner</h2>
+            <span class="status-pill" :class="{ ready: llamaStatus.ready, running: llamaStatus.running && !llamaStatus.ready }">
+              {{ llamaStatus.ready ? `Ready · PID ${llamaStatus.pid}` : llamaStatus.running ? "Starting…" : "Stopped" }}
+            </span>
+          </div>
+          <div class="btn-row">
+            <button class="btn" type="button" @click="showLlamaLogs = !showLlamaLogs">
+              {{ showLlamaLogs ? "Hide Logs" : "Logs" }}
+            </button>
+            <button v-if="llamaStatus.running" class="btn danger" type="button" :disabled="llamaBusy" @click="onStopLlama">
+              Stop Server
+            </button>
+            <button v-else class="btn primary" type="button" :disabled="llamaBusy" @click="onStartLlama">
+              {{ llamaBusy ? "Starting…" : "Start Server" }}
+            </button>
+          </div>
+        </div>
+
+        <div class="grid">
+          <label class="field">
+            <span class="lbl">llama-server.exe Path</span>
+            <div class="browse-row">
+              <input v-model="form.llamaBinaryPath" class="input mono flex1" placeholder="C:\llama.cpp\llama-server.exe" />
+              <button class="btn" type="button" @click="onBrowseBinary">Browse</button>
+            </div>
+          </label>
+
+          <label class="field">
+            <span class="lbl">GGUF Model File</span>
+            <div class="browse-row">
+              <input v-model="form.llamaModelPath" class="input mono flex1" placeholder="C:\Models\model.gguf" />
+              <button class="btn" type="button" @click="onBrowseModel">Browse</button>
+            </div>
+          </label>
+
+          <div class="inline3">
+            <label class="field">
+              <span class="lbl">Port</span>
+              <input v-model.number="form.llamaPort" type="number" min="1" max="65535" class="input mono" />
+            </label>
+            <label class="field">
+              <span class="lbl">GPU Layers (-ngl)</span>
+              <input v-model.number="form.llamaGpuLayers" type="number" min="0" max="999" class="input mono" />
+            </label>
+            <label class="field">
+              <span class="lbl">Ctx Size (-c)</span>
+              <input v-model.number="form.llamaCtxSize" type="number" min="512" step="512" class="input mono" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="lbl">Extra CLI Args (optional)</span>
+            <input v-model="form.llamaExtraArgs" class="input mono" placeholder="--threads 8 --flash-attn" />
+          </label>
+        </div>
+
+        <label class="chk">
+          <input v-model="form.llamaAutoStart" type="checkbox" />
+          <span>Auto-start `llama-server.exe` when Khutaf launches</span>
+        </label>
+
+        <div v-if="llamaErr || llamaStatus.lastError" class="err">{{ llamaErr || llamaStatus.lastError }}</div>
+        <pre v-if="showLlamaLogs" class="llama-logs">{{ llamaStatus.recentLogs || "No server output yet." }}</pre>
+      </div>
+    </details>
   </div>
 </template>
 
@@ -490,7 +514,8 @@ async function onStopLlama() {
   gap: 12px;
 }
 .card {
-  max-width: 860px;
+  max-width: 980px;
+  width: 100%;
   padding: 16px 18px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -498,6 +523,18 @@ async function onStopLlama() {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.llama-summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.llama-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 8px;
 }
 .head {
   display: flex;

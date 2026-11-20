@@ -1,6 +1,7 @@
 <script setup>
-import { computed, onMounted, onUnmounted, shallowRef } from "vue";
+import { computed, onMounted, onUnmounted, shallowRef, watch } from "vue";
 import Icon from "./Icon.vue";
+import { useI18n } from "../composables/useI18n.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -9,17 +10,23 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["close"]);
+const { lang: appLang } = useI18n();
 
 const STORAGE_KEY = "khutaf.aboutLang";
 const readInitialLang = () => {
   try {
-    return typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY) === "ar" ? "ar" : "en";
+    const saved = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+    if (saved === "ar" || saved === "en") return saved;
   } catch {
-    return "en";
+    // ignore
   }
+  return appLang.value === "en" ? "en" : "ar";
 };
 
 const lang = shallowRef(readInitialLang());
+watch(appLang, (next) => {
+  if (next === "ar" || next === "en") lang.value = next;
+});
 const isRtl = computed(() => lang.value === "ar");
 
 function setLang(next) {

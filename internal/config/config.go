@@ -113,11 +113,19 @@ type PipelineSettings struct {
 	Glossary  []GlossaryEntry `json:"glossary,omitempty"`
 }
 
+// UISettings stores user-interface preferences.
+type UISettings struct {
+	Language  string `json:"language"`  // "ar" | "en"
+	Mode      string `json:"mode"`      // "simple" | "advanced"
+	Onboarded bool   `json:"onboarded"` // true after first-run wizard completes or is skipped
+}
+
 // Config is the root of config.json.
 type Config struct {
 	Embed      EmbedSettings      `json:"embed"`
 	Translator TranslatorSettings `json:"translator"`
 	Pipeline   PipelineSettings   `json:"pipeline"`
+	UI         UISettings         `json:"ui"`
 }
 
 // EmbedHook identifies a hook whose embedding is re-enabled on reattach.
@@ -182,6 +190,11 @@ func Default() Config {
 				GPULayers: 99,
 				CtxSize:   4096,
 			},
+		},
+		UI: UISettings{
+			Language:  "ar",
+			Mode:      "simple",
+			Onboarded: false,
 		},
 	}
 }

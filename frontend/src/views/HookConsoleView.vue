@@ -15,6 +15,7 @@ const {
   attach,
   detach,
   setEmbed,
+  smartAutoEmbed,
   previewArabic,
   testTranslate,
 } = useSession();
@@ -71,6 +72,7 @@ onUnmounted(() => {
       :hooks="hooks"
       :outputs="hookOutputs"
       @toggle-embed="setEmbed"
+      @smart-embed="smartAutoEmbed"
     />
 
     <div

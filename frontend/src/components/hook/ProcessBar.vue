@@ -1,6 +1,7 @@
 <script setup>
 import { shallowRef, computed } from "vue";
 import Icon from "../Icon.vue";
+import { useI18n } from "../../composables/useI18n.js";
 
 const props = defineProps({
   status: { type: Object, required: true },
@@ -8,8 +9,17 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["attach", "detach", "refresh"]);
+const { t } = useI18n();
 
 const selectedPid = shallowRef("");
+const unityOnly = shallowRef(true);
+
+const visibleProcesses = computed(() => {
+  if (!unityOnly.value) return props.processes;
+  return props.processes.filter(
+    (p) => p.supported || Number(p.pid) === Number(selectedPid.value),
+  );
+});
 
 const selectedProcess = computed(
   () => props.processes.find((p) => Number(p.pid) === Number(selectedPid.value)) || null,
@@ -25,17 +35,22 @@ function onAttach() {
   <section class="panel">
     <div class="row">
       <select v-model="selectedPid" class="select">
-        <option value="">Select running game process…</option>
-        <option v-for="p in props.processes" :key="p.pid" :value="p.pid">
+        <option value="">{{ t("pbSelectPlaceholder") }}</option>
+        <option v-for="p in visibleProcesses" :key="p.pid" :value="p.pid">
           [{{ p.pid }}] {{ p.name }} — {{ p.title }}
           {{ p.engine ? `(${p.engine})` : "" }}
           {{ !p.is64 ? "[x86 - unsupported]" : !p.supported ? "[unsupported engine]" : "" }}
         </option>
       </select>
 
+      <label class="chk">
+        <input v-model="unityOnly" type="checkbox" />
+        <span>{{ t("pbUnityOnly", { shown: visibleProcesses.length, total: props.processes.length }) }}</span>
+      </label>
+
       <button class="btn" type="button" @click="emit('refresh')">
         <Icon name="RefreshCw" :size="13" />
-        <span>Refresh</span>
+        <span>{{ t("pbRefresh") }}</span>
       </button>
 
       <button
@@ -46,20 +61,18 @@ function onAttach() {
         @click="onAttach"
       >
         <Icon name="Play" :size="13" />
-        <span>Attach</span>
+        <span>{{ t("pbAttach") }}</span>
       </button>
       <button v-else class="btn danger" type="button" @click="emit('detach')">
         <Icon name="Stop" :size="13" />
-        <span>Detach</span>
+        <span>{{ t("pbDetach") }}</span>
       </button>
     </div>
 
-    <p class="notice">
-      Single-player offline Unity games only — do not attach to online or anti-cheat protected games.
-    </p>
+    <p class="notice">{{ t("qpOfflineNotice") }}</p>
 
     <div v-if="props.status.attached" class="row meta-row">
-      <span class="badge ok">Attached</span>
+      <span class="badge ok">{{ t("pbAttached") }}</span>
       <span class="mono">{{ props.status.gameName }}</span>
       <span v-if="props.status.engine" class="badge">{{ props.status.engine }}</span>
       <span class="badge">{{ props.status.is64 ? "x64" : "x86" }}</span>
@@ -162,6 +175,14 @@ function onAttach() {
   margin: 0;
   color: var(--fg-muted);
   font-size: 11px;
+}
+.chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  cursor: pointer;
 }
 .spacer {
   flex: 1;

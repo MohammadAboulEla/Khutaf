@@ -175,3 +175,34 @@ func TestAPIKeyDPAPIRoundTripAndMigration(t *testing.T) {
 		t.Fatal("expected InitWarning when dpapi secret fails to decrypt")
 	}
 }
+
+func TestUISettingsDefaultsAndPersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	// Legacy config.json without ui object should inherit UI defaults.
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"embed":{"timeoutMs":2500}}`), 0o644); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open legacy: %v", err)
+	}
+	cfg := st.Config()
+	if cfg.UI.Language != "ar" || cfg.UI.Mode != "simple" || cfg.UI.Onboarded {
+		t.Fatalf("unexpected UI defaults on legacy config: %+v", cfg.UI)
+	}
+
+	cfg.UI = UISettings{Language: "en", Mode: "advanced", Onboarded: true}
+	if err := st.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	got := reopened.Config().UI
+	if got.Language != "en" || got.Mode != "advanced" || !got.Onboarded {
+		t.Fatalf("UI settings did not round-trip: %+v", got)
+	}
+}

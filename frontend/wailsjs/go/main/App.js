@@ -10,6 +10,10 @@ export function Attach(arg1) {
   return window['go']['main']['App']['Attach'](arg1);
 }
 
+export function BenchmarkTranslators(arg1) {
+  return window['go']['main']['App']['BenchmarkTranslators'](arg1);
+}
+
 export function BrowseGGUFModel() {
   return window['go']['main']['App']['BrowseGGUFModel']();
 }
@@ -20,6 +24,10 @@ export function BrowseLlamaBinary() {
 
 export function CacheCount() {
   return window['go']['main']['App']['CacheCount']();
+}
+
+export function CancelBenchmark() {
+  return window['go']['main']['App']['CancelBenchmark']();
 }
 
 export function ClearSavedGameHooks(arg1) {
@@ -70,6 +78,10 @@ export function Hooks() {
   return window['go']['main']['App']['Hooks']();
 }
 
+export function IsAdmin() {
+  return window['go']['main']['App']['IsAdmin']();
+}
+
 export function ListCacheEntries(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ListCacheEntries'](arg1, arg2, arg3, arg4);
 }
@@ -98,6 +110,10 @@ export function RemoveSavedGameHook(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['RemoveSavedGameHook'](arg1, arg2, arg3, arg4);
 }
 
+export function RestartAsAdmin() {
+  return window['go']['main']['App']['RestartAsAdmin']();
+}
+
 export function SaveCacheEntry(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SaveCacheEntry'](arg1, arg2, arg3, arg4);
 }
@@ -120,6 +136,10 @@ export function SetDebugMode(arg1, arg2) {
 
 export function SetEmbed(arg1, arg2) {
   return window['go']['main']['App']['SetEmbed'](arg1, arg2);
+}
+
+export function SmartAutoEmbed() {
+  return window['go']['main']['App']['SmartAutoEmbed']();
 }
 
 export function StartLlamaServer(arg1) {

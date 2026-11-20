@@ -1,16 +1,27 @@
 <script setup>
 import Icon from "./Icon.vue";
+import Tooltip from "./Tooltip.vue";
+import { useI18n } from "../composables/useI18n.js";
+import { useUiMode } from "../composables/useUiMode.js";
 
 defineProps({
-  title: { type: String, default: "Khutفـا" },
-  subtitle: { type: String, default: " · Embedded Arabic Hook" },
   version: { type: String, default: "0.1.0" },
   theme: { type: String, default: "dark" },
   sidebar: { type: String, default: "left" },
   hostReady: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["toggle-theme", "toggle-sidebar", "open-about"]);
+const emit = defineEmits([
+  "toggle-theme",
+  "toggle-sidebar",
+  "open-about",
+  "open-troubleshooter",
+  "toggle-mode",
+  "toggle-lang",
+]);
+
+const { t } = useI18n();
+const { isSimple } = useUiMode();
 
 const wails = () => window.runtime || (window.go && window.runtime);
 const minimize = () => wails()?.WindowMinimise();
@@ -22,36 +33,63 @@ const close = () => wails()?.Quit();
   <header class="app-header drag">
     <div class="brand">
       <div class="brand-mark">Kh</div>
-      <div class="ar">{{ title }}</div>
-      <div class="en">{{ subtitle }} · v{{ version }}</div>
+      <div class="ar">{{ t("appTitle") }}</div>
+      <div class="en">{{ t("appSubtitle") }} · v{{ version }}</div>
     </div>
 
     <div class="crumbs">
       <span class="dot" :class="{ ok: hostReady }" />
-      <span>{{ hostReady ? "khutaf-hook64 Ready" : "Host Offline" }}</span>
+      <span>{{ hostReady ? t("hostReady") : t("hostOffline") }}</span>
     </div>
 
     <div class="header-actions no-drag">
-      <button class="btn" @click="emit('toggle-theme')">
-        <Icon :name="theme === 'dark' ? 'Sun' : 'Moon'" :size="14" />
-      </button>
-      <button class="btn" @click="emit('toggle-sidebar')">
-        <span class="panel-icon" :class="{ flipped: sidebar === 'left' }">
-          <Icon name="PanelLeft" :size="14" />
-        </span>
-      </button>
+      <Tooltip :text="t('modeToggleTip')">
+        <button class="pill-btn" :class="{ adv: !isSimple }" type="button" @click="emit('toggle-mode')">
+          <span>{{ isSimple ? t("modeSimple") : t("modeAdvanced") }}</span>
+        </button>
+      </Tooltip>
+
+      <Tooltip :text="t('langToggleTip')">
+        <button class="btn text-btn" type="button" @click="emit('toggle-lang')">
+          {{ t("langToggleLabel") }}
+        </button>
+      </Tooltip>
+
+      <Tooltip :text="t('helpBtnTip')">
+        <button class="btn text-btn" type="button" @click="emit('open-troubleshooter')">
+          <Icon name="HelpCircle" :size="13" />
+          <span>{{ t("helpBtn") }}</span>
+        </button>
+      </Tooltip>
+
       <span class="vdivider" />
-      <button class="btn" type="button" @click="emit('open-about')">
-        <Icon name="Info" :size="12" />
-      </button>
+
+      <Tooltip :text="t('themeTip')">
+        <button class="btn" type="button" @click="emit('toggle-theme')">
+          <Icon :name="theme === 'dark' ? 'Sun' : 'Moon'" :size="14" />
+        </button>
+      </Tooltip>
+      <Tooltip :text="t('sidebarSideTip')">
+        <button class="btn" type="button" @click="emit('toggle-sidebar')">
+          <span class="panel-icon" :class="{ flipped: sidebar === 'left' }">
+            <Icon name="PanelLeft" :size="14" />
+          </span>
+        </button>
+      </Tooltip>
+      <Tooltip :text="t('aboutTip')">
+        <button class="btn" type="button" @click="emit('open-about')">
+          <Icon name="Info" :size="12" />
+        </button>
+      </Tooltip>
+
       <span class="vdivider" />
-      <button class="btn wctl" @click="minimize">
+      <button class="btn wctl" type="button" @click="minimize">
         <Icon name="Minus" :size="14" />
       </button>
-      <button class="btn wctl" @click="toggleMax">
+      <button class="btn wctl" type="button" @click="toggleMax">
         <Icon name="Square" :size="12" />
       </button>
-      <button class="btn wctl close" @click="close">
+      <button class="btn wctl close" type="button" @click="close">
         <Icon name="X" :size="14" />
       </button>
     </div>
@@ -67,12 +105,12 @@ const close = () => wails()?.Quit();
   border-bottom: 1px solid var(--border);
   background: var(--bg-elev);
   padding: 0 12px;
-  gap: 16px;
+  gap: 14px;
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   font-weight: 600;
 }
 .brand-mark {
@@ -83,8 +121,9 @@ const close = () => wails()?.Quit();
   color: #fff;
   display: grid;
   place-items: center;
-  font-family: var(--arabic);
-  font-size: 13px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 700;
 }
 .ar {
   font-family: var(--arabic);
@@ -93,9 +132,6 @@ const close = () => wails()?.Quit();
 .en {
   color: var(--fg-faint);
   font-size: 11px;
-  font-family: var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 .crumbs {
   display: flex;
@@ -103,11 +139,14 @@ const close = () => wails()?.Quit();
   gap: 6px;
   color: var(--fg-muted);
   font-size: var(--fs-small);
-  font-family: var(--mono);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 .dot {
   width: 7px;
   height: 7px;
+  flex: none;
   border-radius: 50%;
   background: #ef4444;
 }
@@ -119,13 +158,30 @@ const close = () => wails()?.Quit();
   align-items: center;
   gap: 4px;
 }
+.pill-btn {
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in oklab, var(--accent) 55%, var(--border));
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pill-btn.adv {
+  border-color: var(--border);
+  background: var(--paper);
+  color: var(--fg);
+}
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 26px;
   min-width: 26px;
-  padding: 0 8px;
+  padding: 0 7px;
   background: transparent;
   border: none;
   border-radius: 5px;
@@ -133,6 +189,10 @@ const close = () => wails()?.Quit();
   font: inherit;
   font-size: var(--fs-small);
   cursor: pointer;
+}
+.btn.text-btn {
+  font-size: 11.5px;
+  font-weight: 600;
 }
 .btn:hover {
   background: color-mix(in oklab, var(--fg) 10%, transparent);
@@ -150,7 +210,7 @@ const close = () => wails()?.Quit();
   width: 1px;
   height: 16px;
   background: var(--border);
-  margin: 0 4px;
+  margin: 0 3px;
 }
 .panel-icon {
   display: inline-flex;

@@ -317,6 +317,40 @@ func (a *App) TestTranslateWithConfig(text string, cfg config.TranslatorSettings
 	})
 }
 
+// BenchmarkTranslators benchmarks multiple providers in parallel and streams per-provider results.
+func (a *App) BenchmarkTranslators(req session.BenchmarkRequest) (session.BenchmarkSummary, error) {
+	return a.session.BenchmarkTranslators(a.ctx, req)
+}
+
+// CancelBenchmark cancels any running translator benchmark.
+func (a *App) CancelBenchmark() {
+	a.session.CancelBenchmark()
+}
+
+// SmartAutoEmbed automatically enables embedding on the best discovered Unity text hooks.
+func (a *App) SmartAutoEmbed() (session.SmartAutoEmbedResult, error) {
+	return a.session.SmartAutoEmbed()
+}
+
+// IsAdmin reports whether Khutaf is currently running with administrator privileges.
+func (a *App) IsAdmin() bool {
+	return hook.IsAdmin()
+}
+
+// RestartAsAdmin launches an elevated Khutaf instance and quits the current process.
+func (a *App) RestartAsAdmin() error {
+	if err := hook.RestartAsAdmin(); err != nil {
+		return err
+	}
+	if a.ctx != nil {
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			runtime.Quit(a.ctx)
+		}()
+	}
+	return nil
+}
+
 func (a *App) runTestTranslate(text string, fn func(context.Context, string) (string, bool, error)) (TranslateResult, error) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(a.ctx, 60*time.Second)

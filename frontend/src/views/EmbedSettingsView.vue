@@ -3,9 +3,17 @@ import { reactive, ref, shallowRef, watch, onMounted } from "vue";
 import Icon from "../components/Icon.vue";
 import Tooltip from "../components/Tooltip.vue";
 import { useSession } from "../composables/useSession.js";
+import { useI18n } from "../composables/useI18n.js";
+import { useUiMode } from "../composables/useUiMode.js";
+
+const props = defineProps({
+  onboardingOpen: { type: Boolean, default: false },
+});
 
 const { config, saveConfig, saveState, listFonts, unityFontStatus, refreshUnityFontStatus, downloadUnityFonts } =
   useSession();
+const { t } = useI18n();
+const { isSimple } = useUiMode();
 
 const fonts = shallowRef(["Tahoma", "Arial", "Segoe UI"]);
 const confirmRedownload = ref(false);
@@ -13,7 +21,14 @@ const showBundleModal = ref(false);
 
 onMounted(async () => {
   const st = await refreshUnityFontStatus();
-  if (st && !st.installed && !st.downloading && !localStorage.getItem("khutaf.unityBundlePrompted")) {
+  if (
+    !props.onboardingOpen &&
+    config.value?.ui?.onboarded !== false &&
+    st &&
+    !st.installed &&
+    !st.downloading &&
+    !localStorage.getItem("khutaf.unityBundlePrompted")
+  ) {
     localStorage.setItem("khutaf.unityBundlePrompted", "1");
     showBundleModal.value = true;
   }
@@ -89,21 +104,19 @@ function onSave() {
       <div class="bundle-row">
         <div class="bundle-header">
           <div class="bundle-title-row">
-            <h2 class="h2">Unity TMP Font AssetBundles</h2>
+            <h2 class="h2">{{ t("embBundlesTitle") }}</h2>
             <span class="badge" :class="unityFontStatus.installed ? 'ok' : 'missing'">
-              {{ unityFontStatus.installed ? `Installed (${unityFontStatus.count})` : "Not Installed" }}
+              {{ unityFontStatus.installed ? t("embInstalled", { count: unityFontStatus.count }) : t("embNotInstalled") }}
             </span>
           </div>
-          <p class="bundle-desc">
-            Optional ~139 MB fallback font pack for Unity games when OS dynamic font creation fails.
-          </p>
+          <p class="bundle-desc">{{ t("embBundlesDesc") }}</p>
         </div>
 
         <div class="bundle-actions">
           <template v-if="unityFontStatus.installed && confirmRedownload && !unityFontStatus.downloading">
-            <span class="confirm-hint">Re-download ~139 MB?</span>
-            <button class="btn secondary" type="button" @click="confirmRedownload = false">Cancel</button>
-            <button class="btn secondary warn" type="button" @click="onDownloadClick">Confirm</button>
+            <span class="confirm-hint">~139 MB?</span>
+            <button class="btn secondary" type="button" @click="confirmRedownload = false">{{ t("benchCancel") }}</button>
+            <button class="btn secondary warn" type="button" @click="onDownloadClick">{{ t("embRedownload") }}</button>
           </template>
           <button
             v-else
@@ -114,10 +127,10 @@ function onSave() {
           >
             {{
               unityFontStatus.downloading
-                ? "Downloading…"
+                ? t("embDownloading")
                 : unityFontStatus.installed
-                  ? "Re-download"
-                  : "Download Bundles (~139 MB)"
+                  ? t("embRedownload")
+                  : t("embDownloadBtn")
             }}
           </button>
         </div>
@@ -139,51 +152,49 @@ function onSave() {
             type="checkbox"
             :disabled="!unityFontStatus.installed"
           />
-          <span>Use Unity Arial SDF Bundle (fallback if OS font fails)</span>
+          <span>{{ t("embUseBundleChk") }}</span>
         </label>
       </Tooltip>
     </div>
 
     <div class="card">
-      <h2 class="h2">In-Game Embedded Arabic Settings</h2>
+      <h2 class="h2">{{ t("embTitle") }}</h2>
 
       <div class="grid-3">
         <label class="field">
-          <span class="lbl">Display Mode</span>
+          <span class="lbl">{{ t("embDisplayMode") }}</span>
           <select v-model.number="form.displayMode" class="input">
-            <option :value="0">Translation Only (Arabic)</option>
-            <option :value="1">Original + Translation (Newline Below)</option>
-            <option :value="2">Translation + Original</option>
-            <option :value="3">Original Only (Bypass)</option>
+            <option :value="0">{{ t("embOptTransOnly") }}</option>
+            <option :value="1">{{ t("embOptOriTrans") }}</option>
+            <option :value="2">{{ t("embOptTransOri") }}</option>
+            <option :value="3">{{ t("embOptOriOnly") }}</option>
           </select>
         </label>
 
-        <label class="field">
-          <span class="lbl">Translation Timeout (ms)</span>
+        <label v-if="!isSimple" class="field">
+          <span class="lbl">{{ t("embTimeout") }}</span>
           <input v-model.number="form.timeoutMs" type="number" min="200" max="15000" step="100" class="input" />
         </label>
 
         <label class="field">
-          <span class="lbl">Logical Line Wrap Length (chars)</span>
+          <span class="lbl">{{ t("embLineLen") }}</span>
           <input v-model.number="form.maxLineLength" type="number" min="15" max="120" class="input" />
         </label>
       </div>
 
       <div class="grid-2">
-        <Tooltip text="Takes effect on next game launch" class="field-tip">
-          <label class="field">
-            <span class="lbl">Override Game Font Family <span class="hint">(next game launch)</span></span>
-            <select v-model="form.fontFamily" class="input">
-              <option v-if="form.fontFamily && !fonts.includes(form.fontFamily)" :value="form.fontFamily">
-                {{ form.fontFamily }}
-              </option>
-              <option v-for="f in fonts" :key="f" :value="f">{{ f }}</option>
-            </select>
-          </label>
-        </Tooltip>
+        <label class="field">
+          <span class="lbl">{{ t("embFontFamily") }}</span>
+          <select v-model="form.fontFamily" class="input">
+            <option v-if="form.fontFamily && !fonts.includes(form.fontFamily)" :value="form.fontFamily">
+              {{ form.fontFamily }}
+            </option>
+            <option v-for="f in fonts" :key="f" :value="f">{{ f }}</option>
+          </select>
+        </label>
 
         <label class="field">
-          <span class="lbl">Relative Font Scale</span>
+          <span class="lbl">{{ t("embFontScale") }}</span>
           <input v-model.number="form.fontSizeRelative" type="number" min="0.5" max="2.5" step="0.05" class="input" />
         </label>
       </div>
@@ -191,67 +202,62 @@ function onSave() {
       <div class="checks">
         <label class="chk">
           <input v-model="form.changeFont" type="checkbox" />
-          <span>Override Game Font (OS Font / Unity Dynamic TMP)</span>
+          <span>{{ t("embChangeFont") }}</span>
         </label>
         <label class="chk">
           <input v-model="form.changeFontSize" type="checkbox" />
-          <span>Apply Relative Font Scale</span>
+          <span>{{ t("embChangeScale") }}</span>
         </label>
-        <label class="chk">
-          <input v-model="form.clearText" type="checkbox" />
-          <span>Clear Original In-Game Text Buffer</span>
-        </label>
-        <label class="chk">
-          <input v-model="form.limitLineLength" type="checkbox" />
-          <span>Force Line Wrap on Non-Arabic Output Too</span>
-        </label>
-        <Tooltip text="Strips invisible <color=#00000000> typewriter tags while preserving visible text colors. Improves performance and prevents lag in animated dialogue.">
-          <label class="chk">
-            <input v-model="form.stripTypewriterTags" type="checkbox" />
-            <span>Strip Typewriter Alpha Tags — may improve performance</span>
-          </label>
-        </Tooltip>
-        <Tooltip text="Returns immediately without freezing the game while translating; replaces text on the next game frame once ready.">
-          <label class="chk">
-            <input v-model="form.nonBlocking" type="checkbox" />
-            <span>Non-blocking translation (no freeze while translating)</span>
-          </label>
-        </Tooltip>
       </div>
 
-      <label class="field" :class="{ disabled: !form.nonBlocking }">
-        <span class="lbl">Pending Placeholder Text (empty = keep original text)</span>
-        <div class="pending-controls">
-          <input
-            v-model="form.pendingText"
-            type="text"
-            maxlength="64"
-            placeholder="Empty = show original text (or type ...)"
-            :disabled="!form.nonBlocking"
-            class="input"
-          />
-          <button
-            class="btn secondary"
-            type="button"
-            :disabled="!form.nonBlocking"
-            @click="form.pendingText = ''"
-          >
-            Original
-          </button>
-          <button
-            class="btn secondary"
-            type="button"
-            :disabled="!form.nonBlocking"
-            @click="form.pendingText = '...'"
-          >
-            ...
-          </button>
+      <details class="adv-details" :open="!isSimple">
+        <summary class="adv-summary">{{ t("embAdvancedGroup") }}</summary>
+        <div class="adv-body">
+          <label v-if="isSimple" class="field">
+            <span class="lbl">{{ t("embTimeout") }}</span>
+            <input v-model.number="form.timeoutMs" type="number" min="200" max="15000" step="100" class="input" />
+          </label>
+          <div class="checks">
+            <label class="chk">
+              <input v-model="form.clearText" type="checkbox" />
+              <span>{{ t("embClearBuffer") }}</span>
+            </label>
+            <label class="chk">
+              <input v-model="form.limitLineLength" type="checkbox" />
+              <span>{{ t("embWrapNonArabic") }}</span>
+            </label>
+            <label class="chk">
+              <input v-model="form.stripTypewriterTags" type="checkbox" />
+              <span>{{ t("embStripTypewriter") }}</span>
+            </label>
+            <label class="chk">
+              <input v-model="form.nonBlocking" type="checkbox" />
+              <span>{{ t("embNonBlocking") }}</span>
+            </label>
+          </div>
+
+          <div class="field pending-box" :class="{ disabled: !form.nonBlocking }">
+            <span class="lbl pending-title">{{ t("embPendingTitle") }}</span>
+            <p class="pending-desc">{{ t("embPendingDesc") }}</p>
+            <input
+              v-model="form.pendingText"
+              type="text"
+              maxlength="64"
+              dir="auto"
+              :placeholder="t('embPendingPlaceholder')"
+              :disabled="!form.nonBlocking"
+              class="input"
+            />
+            <span v-if="!form.nonBlocking" class="pending-disabled-hint">
+              {{ t("embPendingDisabledHint") }}
+            </span>
+          </div>
         </div>
-      </label>
+      </details>
 
       <div class="actions">
         <button class="btn primary" type="button" @click="onSave">
-          {{ saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : "Apply & Save" }}
+          {{ saveState === "saving" ? t("embSaving") : saveState === "saved" ? t("trSavedBtn") : t("embApplySave") }}
         </button>
       </div>
     </div>
@@ -382,10 +388,26 @@ function onSave() {
 .field.disabled {
   opacity: 0.55;
 }
-.pending-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.pending-box {
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  gap: 6px;
+}
+.pending-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+.pending-desc {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  line-height: 1.5;
+}
+.pending-disabled-hint {
+  font-size: 11px;
+  color: var(--fg-muted);
 }
 .chk.disabled {
   opacity: 0.55;
@@ -394,6 +416,22 @@ function onSave() {
 .actions {
   display: flex;
   justify-content: flex-end;
+}
+.adv-details {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.adv-summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+.adv-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 10px;
 }
 .bundle-header {
   display: flex;

@@ -14,6 +14,22 @@ export namespace config {
 	        this.targetLang = source["targetLang"];
 	    }
 	}
+	export class UISettings {
+	    language: string;
+	    mode: string;
+	    onboarded: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new UISettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.language = source["language"];
+	        this.mode = source["mode"];
+	        this.onboarded = source["onboarded"];
+	    }
+	}
 	export class GlossaryEntry {
 	    enabled: boolean;
 	    source: string;
@@ -248,6 +264,7 @@ export namespace config {
 	    embed: EmbedSettings;
 	    translator: TranslatorSettings;
 	    pipeline: PipelineSettings;
+	    ui: UISettings;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -258,6 +275,7 @@ export namespace config {
 	        this.embed = this.convertValues(source["embed"], EmbedSettings);
 	        this.translator = this.convertValues(source["translator"], TranslatorSettings);
 	        this.pipeline = this.convertValues(source["pipeline"], PipelineSettings);
+	        this.ui = this.convertValues(source["ui"], UISettings);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -296,6 +314,7 @@ export namespace config {
 	        this.ctx2 = source["ctx2"];
 	    }
 	}
+	
 	
 	
 	
@@ -404,6 +423,185 @@ export namespace pipeline {
 
 export namespace session {
 	
+	export class BenchmarkSampleResult {
+	    source: string;
+	    translated: string;
+	    shaped: string;
+	    elapsedMs: number;
+	    error?: string;
+	    tagsPreserved: boolean;
+	    placeholdersPreserved: boolean;
+	    hasArabic: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BenchmarkSampleResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = source["source"];
+	        this.translated = source["translated"];
+	        this.shaped = source["shaped"];
+	        this.elapsedMs = source["elapsedMs"];
+	        this.error = source["error"];
+	        this.tagsPreserved = source["tagsPreserved"];
+	        this.placeholdersPreserved = source["placeholdersPreserved"];
+	        this.hasArabic = source["hasArabic"];
+	    }
+	}
+	export class BenchmarkItem {
+	    runId: string;
+	    providerId: string;
+	    label: string;
+	    category: string;
+	    status: string;
+	    error?: string;
+	    avgMs: number;
+	    totalMs: number;
+	    speedTier: string;
+	    sampleOutput: string;
+	    sampleShaped: string;
+	    tagsPreserved: boolean;
+	    placeholdersPreserved: boolean;
+	    hasArabic: boolean;
+	    qualityScore: number;
+	    succeeded: number;
+	    totalSamples: number;
+	    samples: BenchmarkSampleResult[];
+	
+	    static createFrom(source: any = {}) {
+	        return new BenchmarkItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.runId = source["runId"];
+	        this.providerId = source["providerId"];
+	        this.label = source["label"];
+	        this.category = source["category"];
+	        this.status = source["status"];
+	        this.error = source["error"];
+	        this.avgMs = source["avgMs"];
+	        this.totalMs = source["totalMs"];
+	        this.speedTier = source["speedTier"];
+	        this.sampleOutput = source["sampleOutput"];
+	        this.sampleShaped = source["sampleShaped"];
+	        this.tagsPreserved = source["tagsPreserved"];
+	        this.placeholdersPreserved = source["placeholdersPreserved"];
+	        this.hasArabic = source["hasArabic"];
+	        this.qualityScore = source["qualityScore"];
+	        this.succeeded = source["succeeded"];
+	        this.totalSamples = source["totalSamples"];
+	        this.samples = this.convertValues(source["samples"], BenchmarkSampleResult);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class BenchmarkRequest {
+	    runId: string;
+	    mode: string;
+	    text: string;
+	    providers: string[];
+	    includeTraditional: boolean;
+	    includeLlm: boolean;
+	    includeOfflineLlm: boolean;
+	    timeoutMs: number;
+	    config: config.TranslatorSettings;
+	
+	    static createFrom(source: any = {}) {
+	        return new BenchmarkRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.runId = source["runId"];
+	        this.mode = source["mode"];
+	        this.text = source["text"];
+	        this.providers = source["providers"];
+	        this.includeTraditional = source["includeTraditional"];
+	        this.includeLlm = source["includeLlm"];
+	        this.includeOfflineLlm = source["includeOfflineLlm"];
+	        this.timeoutMs = source["timeoutMs"];
+	        this.config = this.convertValues(source["config"], config.TranslatorSettings);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class BenchmarkSummary {
+	    runId: string;
+	    total: number;
+	    succeeded: number;
+	    failed: number;
+	    cancelled: boolean;
+	    elapsedMs: number;
+	    items: BenchmarkItem[];
+	
+	    static createFrom(source: any = {}) {
+	        return new BenchmarkSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.runId = source["runId"];
+	        this.total = source["total"];
+	        this.succeeded = source["succeeded"];
+	        this.failed = source["failed"];
+	        this.cancelled = source["cancelled"];
+	        this.elapsedMs = source["elapsedMs"];
+	        this.items = this.convertValues(source["items"], BenchmarkItem);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class FunctionHealthStats {
 	    func: string;
 	    subsystem: string;
@@ -501,6 +699,22 @@ export namespace session {
 		    }
 		    return a;
 		}
+	}
+	export class SmartAutoEmbedResult {
+	    enabledNow: number;
+	    totalActive: number;
+	    totalEmbeddable: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SmartAutoEmbedResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabledNow = source["enabledNow"];
+	        this.totalActive = source["totalActive"];
+	        this.totalEmbeddable = source["totalEmbeddable"];
+	    }
 	}
 	export class Status {
 	    hostReady: boolean;
