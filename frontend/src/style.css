@@ -20,7 +20,7 @@
 
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --arabic: "Segoe UI", "Tahoma", sans-serif;
-  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", "Tahoma", sans-serif;
   --serif: "Newsreader", Georgia, serif;
 
   --fs-small: 12px;
