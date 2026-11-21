@@ -295,6 +295,11 @@ func TestHotkeysAndAutoAttachPersistence(t *testing.T) {
 	cfg.Hotkeys.CycleMode = "Ctrl+Shift+M"
 	cfg.Hotkeys.TogglePause = ""
 	cfg.Hotkeys.ToggleHooksMenu = "Ctrl+Alt+K"
+	cfg.Hotkeys.PopupW = 520
+	cfg.Hotkeys.PopupH = 410
+	cfg.Hotkeys.PopupX = -1200
+	cfg.Hotkeys.PopupY = 140
+	cfg.Hotkeys.PopupHasPos = true
 	if err := st.SaveConfig(cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
@@ -314,6 +319,9 @@ func TestHotkeysAndAutoAttachPersistence(t *testing.T) {
 	hk := reopened.Config().Hotkeys
 	if hk.Enabled || !hk.MinimizeToTray || hk.CycleMode != "Ctrl+Shift+M" || hk.TogglePause != "" || hk.ToggleHooksMenu != "Ctrl+Alt+K" {
 		t.Fatalf("reopened hotkeys = %+v", hk)
+	}
+	if hk.PopupW != 520 || hk.PopupH != 410 || hk.PopupX != -1200 || hk.PopupY != 140 || !hk.PopupHasPos {
+		t.Fatalf("reopened popup bounds = (%d,%d,%d,%d,hasPos=%v)", hk.PopupW, hk.PopupH, hk.PopupX, hk.PopupY, hk.PopupHasPos)
 	}
 	if !reopened.Game(exe).AutoAttach {
 		t.Fatal("expected AutoAttach=true to persist")

@@ -131,6 +131,11 @@ type HotkeySettings struct {
 	FontScaleUp     string `json:"fontScaleUp"`
 	FontScaleDown   string `json:"fontScaleDown"`
 	ToggleHooksMenu string `json:"toggleHooksMenu"`
+	PopupW          int    `json:"popupW,omitempty"`
+	PopupH          int    `json:"popupH,omitempty"`
+	PopupX          int    `json:"popupX,omitempty"`
+	PopupY          int    `json:"popupY,omitempty"`
+	PopupHasPos     bool   `json:"popupHasPos,omitempty"`
 }
 
 // Config is the root of config.json.

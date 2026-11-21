@@ -85,6 +85,7 @@ function onSave() {
   saveConfig({
     ...config.value,
     hotkeys: {
+      ...config.value.hotkeys,
       enabled: Boolean(hotkeyForm.enabled),
       minimizeToTray: Boolean(hotkeyForm.minimizeToTray),
       cycleMode: hotkeyForm.cycleMode.trim(),

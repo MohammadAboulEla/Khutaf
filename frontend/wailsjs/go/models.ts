@@ -23,6 +23,11 @@ export namespace config {
 	    fontScaleUp: string;
 	    fontScaleDown: string;
 	    toggleHooksMenu: string;
+	    popupW?: number;
+	    popupH?: number;
+	    popupX?: number;
+	    popupY?: number;
+	    popupHasPos?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new HotkeySettings(source);
@@ -38,6 +43,11 @@ export namespace config {
 	        this.fontScaleUp = source["fontScaleUp"];
 	        this.fontScaleDown = source["fontScaleDown"];
 	        this.toggleHooksMenu = source["toggleHooksMenu"];
+	        this.popupW = source["popupW"];
+	        this.popupH = source["popupH"];
+	        this.popupX = source["popupX"];
+	        this.popupY = source["popupY"];
+	        this.popupHasPos = source["popupHasPos"];
 	    }
 	}
 	export class UISettings {
