@@ -1,17 +1,27 @@
 <script setup>
-import { shallowRef, computed } from "vue";
+import { shallowRef, computed, watch } from "vue";
 import Icon from "../Icon.vue";
 import Tooltip from "../Tooltip.vue";
 import { useI18n } from "../../composables/useI18n.js";
 import { formatHookLabel } from "../../utils/hookLabels.js";
+import { usePinnedHookSort } from "../../composables/usePinnedHookSort.js";
 
 const props = defineProps({
   hooks: { type: Array, required: true },
   outputs: { type: Object, required: true },
+  active: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["toggle-embed"]);
 const { t, lang } = useI18n();
+const { snapshotPinned, sortPinned, needsSort } = usePinnedHookSort(() => props.hooks);
+
+watch(
+  () => props.active,
+  (isActive) => {
+    if (isActive) snapshotPinned();
+  },
+);
 
 const query = shallowRef("");
 const embedOnly = shallowRef(true);
@@ -30,9 +40,7 @@ const filteredHooks = computed(() => {
       sample.includes(q)
     );
   });
-  return [...filtered].sort((a, b) =>
-    Boolean(a.embedding) === Boolean(b.embedding) ? 0 : a.embedding ? -1 : 1,
-  );
+  return sortPinned(filtered);
 });
 </script>
 
@@ -51,6 +59,18 @@ const filteredHooks = computed(() => {
         <input v-model="embedOnly" type="checkbox" />
         <span>{{ t("htEmbedOnly", { shown: filteredHooks.length, total: props.hooks.length }) }}</span>
       </label>
+      <Tooltip :text="t('sortCheckedTopTip')">
+        <button
+          class="sort-btn"
+          :class="{ dirty: needsSort }"
+          type="button"
+          :disabled="!filteredHooks.length"
+          @click="snapshotPinned"
+        >
+          <Icon name="ArrowUpDown" :size="12" />
+          <span>{{ t("sortCheckedTop") }}</span>
+        </button>
+      </Tooltip>
     </div>
 
     <div class="scroll">
@@ -148,6 +168,29 @@ const filteredHooks = computed(() => {
   font-size: 12px;
   color: var(--fg-muted);
   cursor: pointer;
+}
+.sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  background: var(--paper);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.sort-btn.dirty {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sort-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .scroll {
   flex: 1;

@@ -263,7 +263,7 @@ onBeforeUnmount(() => window.removeEventListener("focus", onWindowFocus));
         @open-hooks="activeTab = 'hooks'"
         @edit-rules="onEditGameRules"
       />
-      <HookConsoleView v-show="activeTab === 'hooks'" />
+      <HookConsoleView v-show="activeTab === 'hooks'" :active="activeTab === 'hooks'" />
       <EmbedSettingsView
         v-if="activeTab === 'embed'"
         :onboarding-open="wizardOpen"

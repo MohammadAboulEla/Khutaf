@@ -3,6 +3,7 @@ import { computed, shallowRef } from "vue";
 import Icon from "../components/Icon.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
+import { usePinnedHookSort } from "../composables/usePinnedHookSort.js";
 import { formatHookLabel } from "../utils/hookLabels.js";
 
 const emit = defineEmits(["open-translators", "open-troubleshooter", "open-wizard"]);
@@ -27,6 +28,7 @@ const {
 } = useSession();
 
 const { t, lang } = useI18n();
+const { snapshotPinned, sortPinned, needsSort } = usePinnedHookSort(() => hooks.value);
 
 const showAllProcs = shallowRef(false);
 
@@ -44,9 +46,7 @@ const visibleProcesses = computed(() => {
 });
 
 const embeddableHooks = computed(() =>
-  hooks.value
-    .filter((h) => h.embeddable)
-    .sort((a, b) => (Boolean(a.embedding) === Boolean(b.embedding) ? 0 : a.embedding ? -1 : 1)),
+  sortPinned(hooks.value.filter((h) => h.embeddable)),
 );
 
 const activeDisplayMode = computed(() => config.value?.embed?.displayMode ?? 1);
@@ -235,6 +235,17 @@ function isProcessSaved(p) {
           <h3 class="h3">{{ t("qpStep2Title") }}</h3>
           <p class="sub">{{ t("qpStep2Hint") }}</p>
         </div>
+        <button
+          class="btn small sort-btn"
+          :class="{ dirty: needsSort }"
+          type="button"
+          :title="t('sortCheckedTopTip')"
+          :disabled="!embeddableHooks.length"
+          @click="snapshotPinned"
+        >
+          <Icon name="ArrowUpDown" :size="12" />
+          <span>{{ t("sortCheckedTop") }}</span>
+        </button>
       </div>
 
       <details open class="hooks-details">
@@ -531,6 +542,10 @@ function isProcessSaved(p) {
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.sort-btn.dirty {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .notice {
   margin: 0;

@@ -5,6 +5,10 @@ import HookTable from "../components/hook/HookTable.vue";
 import ArabicInspector from "../components/hook/ArabicInspector.vue";
 import { useSession } from "../composables/useSession.js";
 
+defineProps({
+  active: { type: Boolean, default: false },
+});
+
 const {
   status,
   processes,
@@ -70,6 +74,7 @@ onUnmounted(() => {
       class="hooks-pane"
       :hooks="hooks"
       :outputs="hookOutputs"
+      :active="active"
       @toggle-embed="setEmbed"
     />
 

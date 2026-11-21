@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from "vue";
 import Icon from "./Icon.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
+import { usePinnedHookSort } from "../composables/usePinnedHookSort.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -12,11 +13,15 @@ const props = defineProps({
 const emit = defineEmits(["close"]);
 const { t } = useI18n();
 const { hooks, hookOutputs, status, config, setEmbed, refreshHooks } = useSession();
+const { snapshotPinned, sortPinned, needsSort } = usePinnedHookSort(() => hooks.value);
 
 watch(
   () => props.open,
-  (isOpen) => {
-    if (isOpen) refreshHooks();
+  async (isOpen) => {
+    if (isOpen) {
+      await refreshHooks();
+      snapshotPinned();
+    }
   },
   { immediate: true },
 );
@@ -45,13 +50,7 @@ const embeddableHooks = computed(() => {
       })
     : list;
 
-  // Keep enabled (checked) hooks at the top of the list.
-  return [...filtered].sort((a, b) => {
-    if (Boolean(a.embedding) !== Boolean(b.embedding)) {
-      return a.embedding ? -1 : 1;
-    }
-    return 0;
-  });
+  return sortPinned(filtered);
 });
 
 const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.embedding).length);
@@ -97,6 +96,17 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
               type="text"
               :placeholder="t('qhSearchPlaceholder')"
             />
+            <button
+              class="btn sort-btn"
+              :class="{ dirty: needsSort }"
+              type="button"
+              :title="t('sortCheckedTopTip')"
+              :disabled="!embeddableHooks.length"
+              @click="snapshotPinned"
+            >
+              <Icon name="ArrowUpDown" :size="13" />
+              <span>{{ t("sortCheckedTop") }}</span>
+            </button>
           </div>
 
           <div class="modal-body">
@@ -339,5 +349,9 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+.sort-btn.dirty {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 </style>

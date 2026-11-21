@@ -73,6 +73,8 @@ const PATHS = {
     '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>',
   ALargeSmall:
     '<path d="m2 19 5-14 5 14"/><path d="M3.8 15h6.4"/><circle cx="18" cy="15.5" r="3.5"/><path d="M21.5 12v7"/>',
+  ArrowUpDown:
+    '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
 };
 </script>
 
