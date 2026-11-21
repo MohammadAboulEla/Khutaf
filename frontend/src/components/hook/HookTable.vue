@@ -10,7 +10,7 @@ const props = defineProps({
   outputs: { type: Object, required: true },
 });
 
-const emit = defineEmits(["toggle-embed", "smart-embed"]);
+const emit = defineEmits(["toggle-embed"]);
 const { t, lang } = useI18n();
 
 const query = shallowRef("");
@@ -48,15 +48,6 @@ const filteredHooks = computed(() => {
         <input v-model="embedOnly" type="checkbox" />
         <span>{{ t("htEmbedOnly", { shown: filteredHooks.length, total: props.hooks.length }) }}</span>
       </label>
-      <button
-        class="smart-btn"
-        type="button"
-        :disabled="!props.hooks.length"
-        @click="emit('smart-embed')"
-      >
-        <Icon name="Wand" :size="12" />
-        <span>{{ t("htSmartEmbed") }}</span>
-      </button>
     </div>
 
     <div class="scroll">
@@ -154,25 +145,6 @@ const filteredHooks = computed(() => {
   font-size: 12px;
   color: var(--fg-muted);
   cursor: pointer;
-}
-.smart-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 10px;
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: 5px;
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 500;
-  cursor: pointer;
-}
-.smart-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 .scroll {
   flex: 1;

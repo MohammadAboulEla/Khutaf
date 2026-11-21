@@ -1,11 +1,12 @@
 <script setup>
-import { shallowRef, computed, watch } from "vue";
+import { shallowRef, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import AppHeader from "./components/AppHeader.vue";
 import AppSidebar from "./components/AppSidebar.vue";
 import AppFooter from "./components/AppFooter.vue";
 import AboutModal from "./components/AboutModal.vue";
 import OnboardingWizard from "./components/OnboardingWizard.vue";
 import TroubleshooterModal from "./components/TroubleshooterModal.vue";
+import QuickHooksModal from "./components/QuickHooksModal.vue";
 import QuickPlayView from "./views/QuickPlayView.vue";
 import HookConsoleView from "./views/HookConsoleView.vue";
 import GamesView from "./views/GamesView.vue";
@@ -33,6 +34,7 @@ const { uiMode, isSimple, toggleUiMode, setUiMode, syncFromConfig: syncMode } = 
 
 const {
   status,
+  hooks,
   logs,
   config,
   saveConfig,
@@ -42,7 +44,23 @@ const {
   pipelineTarget,
   restartAsAdmin,
   downloadUnityFonts,
+  quickHooksOpen,
+  quickHooksStandalone,
+  setQuickHooksOpen,
+  hotkeyToast,
+  hideToTray,
+  quitApp,
 } = useSession();
+
+const embeddableHooksCount = computed(() => hooks.value.filter((h) => h.embeddable).length);
+
+function onCloseWindow() {
+  if (config.value?.hotkeys?.minimizeToTray) {
+    hideToTray();
+  } else {
+    quitApp();
+  }
+}
 
 const activeTab = shallowRef(isSimple.value ? "quickplay" : "games");
 const aboutOpen = shallowRef(false);
@@ -147,24 +165,45 @@ const footerText = computed(() => {
     : status.value.provider
       ? ` · ${t("statusTranslator", { provider: status.value.provider })}`
       : ` · ${t("statusTranslatorOff")}`;
+  const pausedPart = status.value.paused ? ` · ⏸ ${t("statusPaused")}` : "";
   const logPart = last ? ` · [${last.time}] ${last.msg}` : "";
-  return base + prov + logPart;
+  return base + prov + pausedPart + logPart;
 });
+
+function onWindowFocus() {
+  if (!quickHooksStandalone.value) {
+    window.go?.main?.App?.EnsureMainWindowGeometry?.();
+  }
+}
+
+onMounted(() => window.addEventListener("focus", onWindowFocus));
+onBeforeUnmount(() => window.removeEventListener("focus", onWindowFocus));
 </script>
 
 <template>
-  <div class="app" :data-sidebar="sidebar">
+  <QuickHooksModal
+    v-if="quickHooksOpen && quickHooksStandalone"
+    :open="true"
+    :standalone="true"
+    @close="setQuickHooksOpen(false)"
+  />
+  <div v-else class="app" :data-sidebar="sidebar">
     <AppHeader
       :theme="theme"
       :sidebar="sidebar"
       :host-ready="status.hostReady"
+      :attached="status.attached"
+      :hooks-count="embeddableHooksCount"
+      :hooks-hotkey="config?.hotkeys?.toggleHooksMenu || 'Ctrl+Alt+H'"
       :version="appVersion"
       @toggle-theme="toggleTheme"
       @toggle-sidebar="toggleSidebar"
       @open-about="aboutOpen = true"
       @open-troubleshooter="troubleshooterOpen = true"
+      @open-quick-hooks="setQuickHooksOpen(true)"
       @toggle-mode="onToggleMode"
       @toggle-lang="onToggleLang"
+      @close-window="onCloseWindow"
     />
 
     <AppSidebar
@@ -242,7 +281,14 @@ const footerText = computed(() => {
       @close="troubleshooterOpen = false"
       @open-translators="activeTab = 'translators'"
     />
+    <QuickHooksModal v-if="!quickHooksStandalone" :open="quickHooksOpen" @close="setQuickHooksOpen(false)" />
   </div>
+
+  <Transition name="fade">
+    <div v-if="hotkeyToast" class="hotkey-toast" :class="{ warn: hotkeyToast.action === 'warning' }">
+      {{ hotkeyToast.label }}
+    </div>
+  </Transition>
 </template>
 
 <style scoped>
@@ -325,5 +371,23 @@ const footerText = computed(() => {
   color: inherit;
   font-size: 16px;
   cursor: pointer;
+}
+.hotkey-toast {
+  position: fixed;
+  bottom: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9500;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 92%, #000);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.hotkey-toast.warn {
+  background: #b91c1c;
 }
 </style>

@@ -9,6 +9,9 @@ defineProps({
   theme: { type: String, default: "dark" },
   sidebar: { type: String, default: "left" },
   hostReady: { type: Boolean, default: false },
+  attached: { type: Boolean, default: false },
+  hooksCount: { type: Number, default: 0 },
+  hooksHotkey: { type: String, default: "Ctrl+Alt+H" },
 });
 
 const emit = defineEmits([
@@ -16,8 +19,10 @@ const emit = defineEmits([
   "toggle-sidebar",
   "open-about",
   "open-troubleshooter",
+  "open-quick-hooks",
   "toggle-mode",
   "toggle-lang",
+  "close-window",
 ]);
 
 const { t } = useI18n();
@@ -26,7 +31,7 @@ const { isSimple } = useUiMode();
 const wails = () => window.runtime || (window.go && window.runtime);
 const minimize = () => wails()?.WindowMinimise();
 const toggleMax = () => wails()?.WindowToggleMaximise();
-const close = () => wails()?.Quit();
+const close = () => emit("close-window");
 </script>
 
 <template>
@@ -43,6 +48,13 @@ const close = () => wails()?.Quit();
     </div>
 
     <div class="header-actions no-drag">
+      <Tooltip v-if="attached" :text="t('qhHeaderBtnTip', { key: hooksHotkey || 'Ctrl+Alt+H' })">
+        <button class="pill-btn hooks-pill" type="button" @click="emit('open-quick-hooks')">
+          <Icon name="Layers" :size="12" />
+          <span>{{ t("qhHeaderBtn", { count: hooksCount }) }}</span>
+        </button>
+      </Tooltip>
+
       <Tooltip :text="t('modeToggleTip')">
         <button class="pill-btn" :class="{ adv: !isSimple }" type="button" @click="emit('toggle-mode')">
           <span>{{ isSimple ? t("modeSimple") : t("modeAdvanced") }}</span>
@@ -174,6 +186,11 @@ const close = () => wails()?.Quit();
   border-color: var(--border);
   background: var(--paper);
   color: var(--fg);
+}
+.pill-btn.hooks-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 .btn {
   display: inline-flex;

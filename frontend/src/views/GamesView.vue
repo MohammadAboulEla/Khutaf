@@ -21,6 +21,7 @@ const {
   clearSavedGameHooks,
   removeSavedGameHook,
   saveGamePipeline,
+  setGameAutoAttach,
   clearTranslationCache,
 } = useSession();
 
@@ -210,6 +211,19 @@ function ruleCount(g) {
           <button class="link-btn accent" type="button" @click="overrideGame = g">
             {{ t("gvEditOverrides") }}
           </button>
+        </div>
+
+        <div class="rules-bar">
+          <Tooltip :text="t('gvAutoAttachTip')">
+            <label class="auto-chk">
+              <input
+                type="checkbox"
+                :checked="g.autoAttach"
+                @change="setGameAutoAttach(g.exePath, $event.target.checked)"
+              />
+              <span>{{ t("gvAutoAttach") }}</span>
+            </label>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -487,5 +501,16 @@ function ruleCount(g) {
   background: color-mix(in oklab, var(--accent) 18%, transparent);
   color: var(--accent);
   font-size: 10.5px;
+}
+.auto-chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.auto-chk input {
+  accent-color: var(--accent);
 }
 </style>

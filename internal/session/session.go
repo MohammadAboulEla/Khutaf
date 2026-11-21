@@ -40,6 +40,8 @@ const (
 	EventTelemetryBatch = "telemetry:batch"
 	EventBenchmarkItem  = "translator:bench:item"
 	EventBenchmarkDone  = "translator:bench:done"
+	EventConfigUpdated  = "config:updated"
+	EventHotkeyToast    = "hotkey:toast"
 )
 
 // HookView is a hook as shown in the UI.
@@ -60,6 +62,7 @@ type Status struct {
 	PIDs             []uint32 `json:"pids"`
 	Provider         string   `json:"provider"`
 	FallbackProvider string   `json:"fallbackProvider"`
+	Paused           bool     `json:"paused"`
 	DebugMode        bool     `json:"debugMode"`
 	DebugRealTrans   bool     `json:"debugRealTrans"`
 }
@@ -118,11 +121,20 @@ type Session struct {
 
 	rules          atomic.Pointer[rules]
 	embedCfg       atomic.Pointer[config.EmbedSettings]
+	paused         atomic.Bool
 	debugMode      atomic.Bool
 	debugRealTrans atomic.Bool
 	debugSeq       atomic.Uint64
 	telemetry      *telemetryStore
 	droppedEvents  atomic.Uint64
+
+	lastEmbedMu sync.Mutex
+	lastEmbed   *embedJob
+
+	autoAttachMu   sync.Mutex
+	detachCooldown map[string]time.Time
+	runningPathsFn func(map[string]bool) map[string]uint32
+	autoAttachFn   func(uint32) error
 
 	mu         sync.Mutex
 	gamePath   string
@@ -166,10 +178,12 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 		embedCh:    make(chan embedJob, 256),
 		eventStop:  make(chan struct{}),
 		telemetry:  newTelemetryStore(),
-		pids:       map[uint32]bool{},
-		hooks:      map[string]hook.HookInfo{},
-		embedding:  map[string]bool{},
-		lastOutput: map[string]string{},
+		pids:           map[uint32]bool{},
+		hooks:          map[string]hook.HookInfo{},
+		embedding:      map[string]bool{},
+		lastOutput:     map[string]string{},
+		detachCooldown: map[string]time.Time{},
+		runningPathsFn: hook.RunningPathsFor,
 	}
 	s.rules.Store(&rules{
 		pre:      &pipeline.RuleSet{},
@@ -249,6 +263,7 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 		s.host = host
 		s.log("info", "hook host started ("+runtimeDir+")")
 	}
+	go s.startAutoAttachWatcher()
 	return s
 }
 
@@ -323,6 +338,7 @@ func (s *Session) SaveConfig(c config.Config) error {
 	for _, pid := range pids {
 		s.pushEmbedSettings(pid)
 	}
+	s.post(EventConfigUpdated, c)
 	s.post(EventStatus, s.Status())
 	return nil
 }
@@ -424,6 +440,7 @@ func (s *Session) Status() Status {
 		PIDs:             s.pidList(),
 		Provider:         s.translator.Active(),
 		FallbackProvider: s.translator.Fallback(),
+		Paused:           s.paused.Load(),
 		DebugMode:        s.debugMode.Load(),
 		DebugRealTrans:   s.debugRealTrans.Load(),
 	}
@@ -498,6 +515,7 @@ type SavedGame struct {
 	Pipeline           config.PipelineSettings    `json:"pipeline"`
 	EmbedOverride      *config.EmbedSettings      `json:"embedOverride,omitempty"`
 	TranslatorOverride *config.TranslatorSettings `json:"translatorOverride,omitempty"`
+	AutoAttach         bool                       `json:"autoAttach"`
 	RunningPID         uint32                     `json:"runningPid"`
 	Attached           bool                       `json:"attached"`
 }
@@ -535,6 +553,7 @@ func (s *Session) SavedGames() []SavedGame {
 			Pipeline:           prof.Pipeline,
 			EmbedOverride:      prof.EmbedOverride,
 			TranslatorOverride: prof.TranslatorOverride,
+			AutoAttach:         prof.AutoAttach,
 			RunningPID:         runningPID,
 			Attached:           isAttached && curPath != "" && curPath == normExe,
 		})
@@ -741,12 +760,14 @@ func (s *Session) Attach(pid uint32) error {
 		return err
 	}
 	s.post(EventStatus, s.Status())
+	s.clearDetachCooldown(path)
 	return nil
 }
 
 // Detach unhooks all connected processes and clears hook state.
 func (s *Session) Detach() {
 	s.mu.Lock()
+	prevPath := s.gamePath
 	pids := s.pidList()
 	s.pids = map[uint32]bool{}
 	s.hooks = map[string]hook.HookInfo{}
@@ -755,6 +776,10 @@ func (s *Session) Detach() {
 	s.gamePath = ""
 	s.engine = ""
 	s.mu.Unlock()
+	s.setLastEmbed("", hook.ThreadParam{})
+	if prevPath != "" {
+		s.recordDetachCooldown(prevPath)
+	}
 	_ = s.applyConfig(s.store.Config())
 	s.translator.SetGame("")
 	if s.host != nil {
@@ -1047,6 +1072,15 @@ func (s *Session) ShapeForEmbed(trans string) string {
 }
 
 func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
+	if strings.TrimSpace(text) != "" {
+		s.setLastEmbed(text, tp)
+	}
+	if s.paused.Load() {
+		if s.host != nil {
+			s.host.EmbedCallback(tp, text, "")
+		}
+		return
+	}
 	start := time.Now()
 	line := EmbedLine{Key: tp.Key(), Original: text}
 	debugging := s.debugMode.Load()

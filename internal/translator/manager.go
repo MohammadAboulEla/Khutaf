@@ -192,6 +192,16 @@ func (m *Manager) Translate(ctx context.Context, text string) (string, bool, err
 // TranslateValidated behaves like Translate, but runs valid (if non-nil) on
 // fresh provider outputs before persisting them to the cache.
 func (m *Manager) TranslateValidated(ctx context.Context, text string, valid func(string) error) (string, bool, error) {
+	return m.translateValidated(ctx, text, valid, false)
+}
+
+// TranslateFreshValidated bypasses cache lookup and forces a fresh provider translation (with fallback).
+func (m *Manager) TranslateFreshValidated(ctx context.Context, text string, valid func(string) error) (string, error) {
+	out, _, err := m.translateValidated(ctx, text, valid, true)
+	return out, err
+}
+
+func (m *Manager) translateValidated(ctx context.Context, text string, valid func(string) error, skipCache bool) (string, bool, error) {
 	m.mu.RLock()
 	p := m.provider
 	fb := m.fallback
@@ -202,8 +212,10 @@ func (m *Manager) TranslateValidated(ctx context.Context, text string, valid fun
 	if p != nil {
 		provName = p.Name()
 	}
-	if cached, hit := m.cache.Get(gameUID, provName, text); hit {
-		return cached, true, nil
+	if !skipCache {
+		if cached, hit := m.cache.Get(gameUID, provName, text); hit {
+			return cached, true, nil
+		}
 	}
 	if p == nil {
 		return "", false, ErrNoProvider
@@ -212,9 +224,11 @@ func (m *Manager) TranslateValidated(ctx context.Context, text string, valid fun
 	infKey := gameUID + "\x00" + provName + "\x00" + text
 
 	m.mu.Lock()
-	if cached, hit := m.cache.GetSilent(gameUID, provName, text); hit {
-		m.mu.Unlock()
-		return cached, true, nil
+	if !skipCache {
+		if cached, hit := m.cache.GetSilent(gameUID, provName, text); hit {
+			m.mu.Unlock()
+			return cached, true, nil
+		}
 	}
 	if call, exists := m.inflight[infKey]; exists {
 		waiters := call.waiters.Add(1)

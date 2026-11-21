@@ -22,7 +22,6 @@ const {
   quickAttach,
   detach,
   setEmbed,
-  smartAutoEmbed,
   downloadUnityFonts,
   saveConfig,
 } = useSession();
@@ -30,8 +29,6 @@ const {
 const { t, lang } = useI18n();
 
 const showAllProcs = shallowRef(false);
-const smartBusy = shallowRef(false);
-const smartMsg = shallowRef("");
 
 const savedByPath = computed(() => {
   const m = new Map();
@@ -59,27 +56,11 @@ async function onRefresh() {
 }
 
 async function onConnect(proc) {
-  smartMsg.value = "";
   const saved = savedByPath.value.get((proc.path || "").toLowerCase());
   if (saved) {
     await quickAttach(saved.exePath);
   } else {
     await attach(proc.pid);
-  }
-}
-
-async function onSmartEmbed() {
-  smartBusy.value = true;
-  smartMsg.value = "";
-  try {
-    const res = await smartAutoEmbed();
-    if (res && res.totalActive > 0) {
-      smartMsg.value = t("qpAutoEnabledOk", { enabled: res.enabledNow, total: res.totalActive });
-    } else {
-      smartMsg.value = t("qpAutoEnabledWait");
-    }
-  } finally {
-    smartBusy.value = false;
   }
 }
 
@@ -241,15 +222,9 @@ function isProcessSaved(p) {
           <h3 class="h3">{{ t("qpStep2Title") }}</h3>
           <p class="sub">{{ t("qpStep2Hint") }}</p>
         </div>
-        <button class="btn primary" type="button" :disabled="smartBusy" @click="onSmartEmbed">
-          <Icon name="Wand" :size="14" />
-          <span>{{ t("qpAutoEnable") }}</span>
-        </button>
       </div>
 
-      <div v-if="smartMsg" class="info-pill">{{ smartMsg }}</div>
-
-      <details class="hooks-details">
+      <details open class="hooks-details">
         <summary>{{ t("qpShowHooks", { count: embeddableHooks.length }) }}</summary>
         <div v-if="!embeddableHooks.length" class="sub pad-top">{{ t("qpNoHooksYet") }}</div>
         <div v-else class="hooks-list">
@@ -265,8 +240,10 @@ function isProcessSaved(p) {
               @change="setEmbed(h.key, $event.target.checked)"
             />
             <div class="hook-info">
+              <div class="hook-sample" :class="{ empty: !hookOutputs[h.key] }" dir="auto">
+                {{ hookOutputs[h.key] || "—" }}
+              </div>
               <div class="hook-name">{{ formatHookLabel(h, idx, lang) }}</div>
-              <div class="hook-sample">{{ hookOutputs[h.key] || "—" }}</div>
             </div>
           </label>
         </div>
@@ -547,13 +524,6 @@ function isProcessSaved(p) {
   font-size: 11px;
   color: var(--fg-muted);
 }
-.info-pill {
-  padding: 7px 10px;
-  border-radius: 5px;
-  background: color-mix(in oklab, var(--accent) 14%, var(--paper));
-  border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
-  font-size: 12px;
-}
 .hooks-details summary {
   cursor: pointer;
   font-size: 12px;
@@ -587,17 +557,31 @@ function isProcessSaved(p) {
 .hook-info {
   min-width: 0;
   flex: 1;
-}
-.hook-name {
-  font-size: 12px;
-  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 .hook-sample {
-  font-size: 11px;
-  color: var(--fg-muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.hook-sample.empty {
+  color: var(--fg-muted);
+  font-weight: 400;
+  font-style: italic;
+}
+.hook-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-muted);
 }
 .seg {
   display: inline-flex;

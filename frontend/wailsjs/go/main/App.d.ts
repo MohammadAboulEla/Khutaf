@@ -39,11 +39,15 @@ export function DownloadUnityFonts():Promise<void>;
 
 export function DownloadUnityFontsTo(arg1:string):Promise<void>;
 
+export function EnsureMainWindowGeometry():Promise<void>;
+
 export function ExportDiagnosticBundle():Promise<string>;
 
 export function GetConfig():Promise<config.Config>;
 
 export function GetTelemetrySnapshot():Promise<session.TelemetrySnapshot>;
+
+export function HideToTray():Promise<void>;
 
 export function Hooks():Promise<Array<session.HookView>>;
 
@@ -60,6 +64,8 @@ export function LlamaServerStatus():Promise<translator.LlamaCppStatus>;
 export function PreviewArabic(arg1:string):Promise<main.ShapePreview>;
 
 export function QuickAttach(arg1:string):Promise<void>;
+
+export function QuitApp():Promise<void>;
 
 export function RemoveSavedGameHook(arg1:string,arg2:string,arg3:number,arg4:number):Promise<void>;
 
@@ -79,6 +85,12 @@ export function SetDebugMode(arg1:boolean,arg2:boolean):Promise<void>;
 
 export function SetEmbed(arg1:string,arg2:boolean):Promise<void>;
 
+export function SetGameAutoAttach(arg1:string,arg2:boolean):Promise<void>;
+
+export function SetHooksPopupOpen(arg1:boolean):Promise<void>;
+
+export function ShowFromTray():Promise<void>;
+
 export function SmartAutoEmbed():Promise<session.SmartAutoEmbedResult>;
 
 export function StartLlamaServer(arg1:config.LlamaCppSettings):Promise<translator.LlamaCppStatus>;
@@ -90,5 +102,9 @@ export function StopLlamaServer():Promise<translator.LlamaCppStatus>;
 export function TestTranslate(arg1:string):Promise<main.TranslateResult>;
 
 export function TestTranslateWithConfig(arg1:string,arg2:config.TranslatorSettings):Promise<main.TranslateResult>;
+
+export function TogglePause():Promise<boolean>;
+
+export function ToggleWindowVisibility():Promise<void>;
 
 export function UnityFontStatus():Promise<session.UnityFontStatus>;

@@ -66,6 +66,10 @@ export function DownloadUnityFontsTo(arg1) {
   return window['go']['main']['App']['DownloadUnityFontsTo'](arg1);
 }
 
+export function EnsureMainWindowGeometry() {
+  return window['go']['main']['App']['EnsureMainWindowGeometry']();
+}
+
 export function ExportDiagnosticBundle() {
   return window['go']['main']['App']['ExportDiagnosticBundle']();
 }
@@ -76,6 +80,10 @@ export function GetConfig() {
 
 export function GetTelemetrySnapshot() {
   return window['go']['main']['App']['GetTelemetrySnapshot']();
+}
+
+export function HideToTray() {
+  return window['go']['main']['App']['HideToTray']();
 }
 
 export function Hooks() {
@@ -108,6 +116,10 @@ export function PreviewArabic(arg1) {
 
 export function QuickAttach(arg1) {
   return window['go']['main']['App']['QuickAttach'](arg1);
+}
+
+export function QuitApp() {
+  return window['go']['main']['App']['QuitApp']();
 }
 
 export function RemoveSavedGameHook(arg1, arg2, arg3, arg4) {
@@ -146,6 +158,18 @@ export function SetEmbed(arg1, arg2) {
   return window['go']['main']['App']['SetEmbed'](arg1, arg2);
 }
 
+export function SetGameAutoAttach(arg1, arg2) {
+  return window['go']['main']['App']['SetGameAutoAttach'](arg1, arg2);
+}
+
+export function SetHooksPopupOpen(arg1) {
+  return window['go']['main']['App']['SetHooksPopupOpen'](arg1);
+}
+
+export function ShowFromTray() {
+  return window['go']['main']['App']['ShowFromTray']();
+}
+
 export function SmartAutoEmbed() {
   return window['go']['main']['App']['SmartAutoEmbed']();
 }
@@ -168,6 +192,14 @@ export function TestTranslate(arg1) {
 
 export function TestTranslateWithConfig(arg1, arg2) {
   return window['go']['main']['App']['TestTranslateWithConfig'](arg1, arg2);
+}
+
+export function TogglePause() {
+  return window['go']['main']['App']['TogglePause']();
+}
+
+export function ToggleWindowVisibility() {
+  return window['go']['main']['App']['ToggleWindowVisibility']();
 }
 
 export function UnityFontStatus() {

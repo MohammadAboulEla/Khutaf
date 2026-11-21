@@ -121,12 +121,25 @@ type UISettings struct {
 	Onboarded bool   `json:"onboarded"` // true after first-run wizard completes or is skipped
 }
 
+// HotkeySettings configures global Windows shortcuts and system tray behavior.
+type HotkeySettings struct {
+	Enabled         bool   `json:"enabled"`
+	MinimizeToTray  bool   `json:"minimizeToTray"`
+	CycleMode       string `json:"cycleMode"`
+	TogglePause     string `json:"togglePause"`
+	Retranslate     string `json:"retranslate"`
+	FontScaleUp     string `json:"fontScaleUp"`
+	FontScaleDown   string `json:"fontScaleDown"`
+	ToggleHooksMenu string `json:"toggleHooksMenu"`
+}
+
 // Config is the root of config.json.
 type Config struct {
 	Embed      EmbedSettings      `json:"embed"`
 	Translator TranslatorSettings `json:"translator"`
 	Pipeline   PipelineSettings   `json:"pipeline"`
 	UI         UISettings         `json:"ui"`
+	Hotkeys    HotkeySettings     `json:"hotkeys"`
 }
 
 // EmbedHook identifies a hook whose embedding is re-enabled on reattach.
@@ -144,6 +157,7 @@ type GameProfile struct {
 	Pipeline           PipelineSettings    `json:"pipeline,omitempty"`
 	EmbedOverride      *EmbedSettings      `json:"embedOverride,omitempty"`
 	TranslatorOverride *TranslatorSettings `json:"translatorOverride,omitempty"`
+	AutoAttach         bool                `json:"autoAttach,omitempty"`
 }
 
 // Default returns the factory configuration.
@@ -198,6 +212,16 @@ func Default() Config {
 			Language:  "ar",
 			Mode:      "simple",
 			Onboarded: false,
+		},
+		Hotkeys: HotkeySettings{
+			Enabled:         true,
+			MinimizeToTray:  false,
+			CycleMode:       "Ctrl+Alt+M",
+			TogglePause:     "Ctrl+Alt+P",
+			Retranslate:     "Ctrl+Alt+R",
+			FontScaleUp:     "Ctrl+Alt+Up",
+			FontScaleDown:   "Ctrl+Alt+Down",
+			ToggleHooksMenu: "Ctrl+Alt+H",
 		},
 	}
 }

@@ -276,3 +276,46 @@ func TestGameOverridesAndFallbackPersistence(t *testing.T) {
 		t.Fatalf("expected nil overrides after clear, got embed=%v trans=%v", prof.EmbedOverride, prof.TranslatorOverride)
 	}
 }
+
+func TestHotkeysAndAutoAttachPersistence(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	def := st.Config().Hotkeys
+	if !def.Enabled || def.MinimizeToTray || def.CycleMode != "Ctrl+Alt+M" || def.ToggleHooksMenu != "Ctrl+Alt+H" {
+		t.Fatalf("unexpected default hotkeys: %+v", def)
+	}
+
+	cfg := st.Config()
+	cfg.Hotkeys.Enabled = false
+	cfg.Hotkeys.MinimizeToTray = true
+	cfg.Hotkeys.CycleMode = "Ctrl+Shift+M"
+	cfg.Hotkeys.TogglePause = ""
+	cfg.Hotkeys.ToggleHooksMenu = "Ctrl+Alt+K"
+	if err := st.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	exe := `C:\Games\Watcher\Game.exe`
+	if err := st.UpdateGame(exe, func(g *GameProfile) {
+		g.Title = "Watcher"
+		g.AutoAttach = true
+	}); err != nil {
+		t.Fatalf("UpdateGame: %v", err)
+	}
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	hk := reopened.Config().Hotkeys
+	if hk.Enabled || !hk.MinimizeToTray || hk.CycleMode != "Ctrl+Shift+M" || hk.TogglePause != "" || hk.ToggleHooksMenu != "Ctrl+Alt+K" {
+		t.Fatalf("reopened hotkeys = %+v", hk)
+	}
+	if !reopened.Game(exe).AutoAttach {
+		t.Fatal("expected AutoAttach=true to persist")
+	}
+}

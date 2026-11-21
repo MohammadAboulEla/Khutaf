@@ -22,6 +22,7 @@ const status = ref({
   pids: [],
   provider: "",
   fallbackProvider: "",
+  paused: false,
   debugMode: false,
   debugRealTrans: true,
 });
@@ -59,6 +60,10 @@ const benchmarkRunning = shallowRef(false);
 const benchmarkRunId = shallowRef("");
 const benchmarkTotal = shallowRef(0);
 const isAdmin = shallowRef(false);
+const quickHooksOpen = shallowRef(false);
+const quickHooksStandalone = shallowRef(false);
+const hotkeyToast = shallowRef(null);
+let toastTimer = null;
 
 let initialized = false;
 
@@ -68,6 +73,29 @@ function init() {
 
   on("session:status", (st) => {
     if (st) status.value = st;
+  });
+
+  on("config:updated", (cfg) => {
+    if (cfg) config.value = cfg;
+  });
+
+  on("hooks:popup", (payload) => {
+    const isOpen =
+      typeof payload === "object" && payload !== null ? Boolean(payload.open) : Boolean(payload);
+    const isStandalone =
+      typeof payload === "object" && payload !== null ? Boolean(payload.standalone) : false;
+    quickHooksOpen.value = isOpen;
+    quickHooksStandalone.value = isOpen && isStandalone;
+  });
+
+  on("hotkey:toast", (ev) => {
+    if (!ev?.label) return;
+    hotkeyToast.value = ev;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      hotkeyToast.value = null;
+      toastTimer = null;
+    }, 2400);
   });
 
   on("unityfonts:progress", (st) => {
@@ -516,6 +544,43 @@ async function restartAsAdmin() {
   }
 }
 
+async function togglePause() {
+  errorBanner.value = "";
+  try {
+    await call("TogglePause");
+  } catch (e) {
+    errorBanner.value = String(e);
+  }
+}
+
+async function setGameAutoAttach(exePath, enabled) {
+  errorBanner.value = "";
+  const prev = savedGames.value;
+  savedGames.value = prev.map((g) => (g.exePath === exePath ? { ...g, autoAttach: Boolean(enabled) } : g));
+  try {
+    await call("SetGameAutoAttach", exePath, Boolean(enabled));
+  } catch (e) {
+    savedGames.value = prev;
+    errorBanner.value = String(e);
+  }
+}
+
+function hideToTray() {
+  call("HideToTray");
+}
+
+function quitApp() {
+  call("QuitApp");
+}
+
+function setQuickHooksOpen(open) {
+  quickHooksOpen.value = Boolean(open);
+  if (!open) {
+    quickHooksStandalone.value = false;
+  }
+  call("SetHooksPopupOpen", Boolean(open));
+}
+
 export function useSession() {
   init();
   return {
@@ -541,6 +606,9 @@ export function useSession() {
     benchmarkRunning: readonly(benchmarkRunning),
     benchmarkTotal: readonly(benchmarkTotal),
     isAdmin: readonly(isAdmin),
+    quickHooksOpen: readonly(quickHooksOpen),
+    quickHooksStandalone: readonly(quickHooksStandalone),
+    hotkeyToast: readonly(hotkeyToast),
     refreshProcesses,
     refreshSavedGames,
     attach,
@@ -550,6 +618,7 @@ export function useSession() {
     saveConfig,
     saveGamePipeline,
     saveGameOverrides,
+    setGameAutoAttach,
     deleteSavedGame,
     clearSavedGameHooks,
     removeSavedGameHook,
@@ -573,6 +642,10 @@ export function useSession() {
     cancelBenchmark,
     smartAutoEmbed,
     restartAsAdmin,
+    togglePause,
+    hideToTray,
+    quitApp,
+    setQuickHooksOpen,
     setDebugMode,
     clearDebugTraces,
     refreshTelemetry,

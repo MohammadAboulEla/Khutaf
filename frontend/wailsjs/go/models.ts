@@ -14,6 +14,32 @@ export namespace config {
 	        this.targetLang = source["targetLang"];
 	    }
 	}
+	export class HotkeySettings {
+	    enabled: boolean;
+	    minimizeToTray: boolean;
+	    cycleMode: string;
+	    togglePause: string;
+	    retranslate: string;
+	    fontScaleUp: string;
+	    fontScaleDown: string;
+	    toggleHooksMenu: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HotkeySettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.minimizeToTray = source["minimizeToTray"];
+	        this.cycleMode = source["cycleMode"];
+	        this.togglePause = source["togglePause"];
+	        this.retranslate = source["retranslate"];
+	        this.fontScaleUp = source["fontScaleUp"];
+	        this.fontScaleDown = source["fontScaleDown"];
+	        this.toggleHooksMenu = source["toggleHooksMenu"];
+	    }
+	}
 	export class UISettings {
 	    language: string;
 	    mode: string;
@@ -267,6 +293,7 @@ export namespace config {
 	    translator: TranslatorSettings;
 	    pipeline: PipelineSettings;
 	    ui: UISettings;
+	    hotkeys: HotkeySettings;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -278,6 +305,7 @@ export namespace config {
 	        this.translator = this.convertValues(source["translator"], TranslatorSettings);
 	        this.pipeline = this.convertValues(source["pipeline"], PipelineSettings);
 	        this.ui = this.convertValues(source["ui"], UISettings);
+	        this.hotkeys = this.convertValues(source["hotkeys"], HotkeySettings);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -316,6 +344,7 @@ export namespace config {
 	        this.ctx2 = source["ctx2"];
 	    }
 	}
+	
 	
 	
 	
@@ -669,6 +698,7 @@ export namespace session {
 	    pipeline: config.PipelineSettings;
 	    embedOverride?: config.EmbedSettings;
 	    translatorOverride?: config.TranslatorSettings;
+	    autoAttach: boolean;
 	    runningPid: number;
 	    attached: boolean;
 	
@@ -684,6 +714,7 @@ export namespace session {
 	        this.pipeline = this.convertValues(source["pipeline"], config.PipelineSettings);
 	        this.embedOverride = this.convertValues(source["embedOverride"], config.EmbedSettings);
 	        this.translatorOverride = this.convertValues(source["translatorOverride"], config.TranslatorSettings);
+	        this.autoAttach = source["autoAttach"];
 	        this.runningPid = source["runningPid"];
 	        this.attached = source["attached"];
 	    }
@@ -733,6 +764,7 @@ export namespace session {
 	    pids: number[];
 	    provider: string;
 	    fallbackProvider: string;
+	    paused: boolean;
 	    debugMode: boolean;
 	    debugRealTrans: boolean;
 	
@@ -752,6 +784,7 @@ export namespace session {
 	        this.pids = source["pids"];
 	        this.provider = source["provider"];
 	        this.fallbackProvider = source["fallbackProvider"];
+	        this.paused = source["paused"];
 	        this.debugMode = source["debugMode"];
 	        this.debugRealTrans = source["debugRealTrans"];
 	    }

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -20,6 +21,7 @@ import (
 	"khutaf/internal/arabic"
 	"khutaf/internal/config"
 	"khutaf/internal/hook"
+	"khutaf/internal/hotkeys"
 	"khutaf/internal/pipeline"
 	"khutaf/internal/session"
 	"khutaf/internal/translator"
@@ -31,8 +33,21 @@ var AppVersion = "0.1.4-beta"
 
 // App is the Wails-bound facade over the session.
 type App struct {
-	ctx     context.Context
-	session *session.Session
+	ctx             context.Context
+	session         *session.Session
+	hotkeys         *hotkeys.Manager
+	tray            *trayManager
+	quitting        atomic.Bool
+	windowHidden    atomic.Bool
+	hooksPopupOpen  atomic.Bool
+	hooksStandalone atomic.Bool
+	openedByHotkey  atomic.Bool
+
+	winMu                        sync.Mutex
+	savedW, savedH               int
+	savedX, savedY               int
+	savedMax, hasSavedGeom       bool
+	pendingRestoreGeom           bool
 }
 
 // NewApp creates a new App.
@@ -57,9 +72,36 @@ func (a *App) startup(ctx context.Context) {
 	a.session = session.New(store, session.ResolveRuntimeDir(), func(name string, data any) {
 		runtime.EventsEmit(ctx, name, data)
 	})
+	a.hotkeys = hotkeys.NewManager(a.handleHotkey)
+	a.applyHotkeys(store.Config().Hotkeys)
+	a.tray = startTrayManager(TrayCallbacks{
+		State:       a.trayState,
+		ToggleShow:  a.ToggleWindowVisibility,
+		TogglePause: func() { a.TogglePause() },
+		OpenHooks:   func() { a.openStandaloneHooksPopup() },
+		Detach:      func() { a.Detach() },
+		Quit:        func() { a.QuitApp() },
+	})
+}
+
+func (a *App) beforeClose(context.Context) bool {
+	if a.quitting.Load() || a.session == nil {
+		return false
+	}
+	if a.session.Config().Hotkeys.MinimizeToTray {
+		a.HideToTray()
+		return true
+	}
+	return false
 }
 
 func (a *App) shutdown(context.Context) {
+	if a.hotkeys != nil {
+		a.hotkeys.Close()
+	}
+	if a.tray != nil {
+		a.tray.Close()
+	}
 	if a.session != nil {
 		_ = a.session.Close()
 	}
@@ -98,8 +140,288 @@ func (a *App) SetEmbed(key string, enabled bool) error { return a.session.SetEmb
 // GetConfig returns settings.
 func (a *App) GetConfig() config.Config { return a.session.Config() }
 
-// SaveConfig persists settings.
-func (a *App) SaveConfig(c config.Config) error { return a.session.SaveConfig(c) }
+// SaveConfig persists settings and applies global hotkey bindings.
+func (a *App) SaveConfig(c config.Config) error {
+	if err := a.session.SaveConfig(c); err != nil {
+		return err
+	}
+	a.applyHotkeys(c.Hotkeys)
+	return nil
+}
+
+// TogglePause pauses or resumes live translation without detaching hooks.
+func (a *App) TogglePause() bool { return a.session.TogglePause() }
+
+// SetGameAutoAttach toggles automatic re-attachment when exePath launches.
+func (a *App) SetGameAutoAttach(exePath string, enabled bool) error {
+	return a.session.SetGameAutoAttach(exePath, enabled)
+}
+
+// HideToTray hides the main window while leaving hooks and tray icon active.
+func (a *App) HideToTray() {
+	if a.ctx == nil {
+		return
+	}
+	a.windowHidden.Store(true)
+	runtime.WindowHide(a.ctx)
+}
+
+// ShowFromTray restores and focuses the main window from the system tray.
+func (a *App) ShowFromTray() {
+	if a.ctx == nil {
+		return
+	}
+	if a.hooksStandalone.Load() {
+		a.closeStandaloneHooksPopup(false)
+	}
+	a.windowHidden.Store(false)
+	runtime.WindowUnminimise(a.ctx)
+	runtime.WindowShow(a.ctx)
+	a.EnsureMainWindowGeometry()
+}
+
+// EnsureMainWindowGeometry restores saved main window bounds after a deferred standalone close.
+func (a *App) EnsureMainWindowGeometry() {
+	if a.ctx == nil || a.hooksStandalone.Load() {
+		return
+	}
+	a.winMu.Lock()
+	needRestore := a.pendingRestoreGeom
+	a.pendingRestoreGeom = false
+	a.winMu.Unlock()
+	if needRestore {
+		a.restoreMainWindowGeometry()
+	}
+}
+
+// ToggleWindowVisibility alternates between showing and hiding the main window.
+func (a *App) ToggleWindowVisibility() {
+	if a.windowHidden.Load() {
+		a.ShowFromTray()
+		return
+	}
+	a.HideToTray()
+}
+
+// SetHooksPopupOpen synchronizes the Quick Hooks modal state from the frontend.
+func (a *App) SetHooksPopupOpen(open bool) {
+	if !open && a.hooksStandalone.Load() {
+		a.closeStandaloneHooksPopup(true)
+		return
+	}
+	a.hooksPopupOpen.Store(open)
+	if !open {
+		a.openedByHotkey.Store(false)
+	}
+}
+
+func (a *App) openStandaloneHooksPopup() {
+	if a.ctx == nil {
+		return
+	}
+	var wasMax bool
+	a.winMu.Lock()
+	if !a.hooksStandalone.Load() {
+		wasMax = runtime.WindowIsMaximised(a.ctx)
+		w, h := runtime.WindowGetSize(a.ctx)
+		x, y := runtime.WindowGetPosition(a.ctx)
+		if w >= 860 && h >= 560 {
+			a.savedW, a.savedH = w, h
+			a.savedX, a.savedY = x, y
+			a.savedMax = wasMax
+			a.hasSavedGeom = true
+		} else {
+			a.savedW, a.savedH = 1120, 760
+			a.savedMax = false
+			a.hasSavedGeom = false
+		}
+	} else {
+		wasMax = runtime.WindowIsMaximised(a.ctx)
+	}
+	a.winMu.Unlock()
+
+	a.hooksPopupOpen.Store(true)
+	a.hooksStandalone.Store(true)
+	a.openedByHotkey.Store(true)
+
+	// Switch the Vue view to the standalone picker before displaying the window.
+	runtime.EventsEmit(a.ctx, "hooks:popup", map[string]any{"open": true, "standalone": true})
+	if wasMax {
+		runtime.WindowUnmaximise(a.ctx)
+	}
+	runtime.WindowSetMinSize(a.ctx, 440, 320)
+	runtime.WindowSetSize(a.ctx, 600, 480)
+	runtime.WindowCenter(a.ctx)
+	runtime.WindowSetAlwaysOnTop(a.ctx, true)
+	time.Sleep(25 * time.Millisecond)
+	a.windowHidden.Store(false)
+	runtime.WindowUnminimise(a.ctx)
+	runtime.WindowShow(a.ctx)
+}
+
+func (a *App) restoreMainWindowGeometry() {
+	if a.ctx == nil {
+		return
+	}
+	a.winMu.Lock()
+	w, h := a.savedW, a.savedH
+	x, y := a.savedX, a.savedY
+	wasMax := a.savedMax
+	hasPos := a.hasSavedGeom
+	a.winMu.Unlock()
+
+	if w < 860 || h < 560 {
+		w, h = 1120, 760
+	}
+	runtime.WindowSetAlwaysOnTop(a.ctx, false)
+	runtime.WindowSetMinSize(a.ctx, 860, 560)
+	runtime.WindowSetSize(a.ctx, w, h)
+	if hasPos {
+		runtime.WindowSetPosition(a.ctx, x, y)
+	}
+	if wasMax {
+		runtime.WindowMaximise(a.ctx)
+	}
+}
+
+func (a *App) closeStandaloneHooksPopup(hideWindow bool) {
+	a.hooksPopupOpen.Store(false)
+	a.openedByHotkey.Store(false)
+	wasStandalone := a.hooksStandalone.Swap(false)
+	if a.ctx == nil {
+		return
+	}
+	if hideWindow {
+		// Hide/minimise first to avoid a resize flash; defer full geometry restore until the main window is shown again.
+		runtime.WindowSetAlwaysOnTop(a.ctx, false)
+		runtime.WindowSetMinSize(a.ctx, 860, 560)
+		if wasStandalone {
+			a.winMu.Lock()
+			a.pendingRestoreGeom = true
+			a.winMu.Unlock()
+		}
+		if a.session != nil && a.session.Config().Hotkeys.MinimizeToTray {
+			a.HideToTray()
+		} else {
+			runtime.WindowMinimise(a.ctx)
+		}
+	} else if wasStandalone {
+		a.winMu.Lock()
+		a.pendingRestoreGeom = false
+		a.winMu.Unlock()
+		a.restoreMainWindowGeometry()
+	}
+	runtime.EventsEmit(a.ctx, "hooks:popup", map[string]any{"open": false, "standalone": false})
+}
+
+// QuitApp exits Khutaf cleanly, bypassing MinimizeToTray close interception.
+func (a *App) QuitApp() {
+	a.quitting.Store(true)
+	if a.ctx != nil {
+		runtime.Quit(a.ctx)
+	}
+}
+
+func (a *App) trayState() TrayState {
+	if a.session == nil {
+		return TrayState{}
+	}
+	st := a.session.Status()
+	cfg := a.session.Config()
+	return TrayState{
+		Attached: st.Attached,
+		GameName: st.GameName,
+		Paused:   st.Paused,
+		Lang:     cfg.UI.Language,
+		Hidden:   a.windowHidden.Load(),
+	}
+}
+
+func (a *App) applyHotkeys(hk config.HotkeySettings) {
+	if a.hotkeys == nil {
+		return
+	}
+	if err := a.hotkeys.Configure(hotkeys.BindingsFromConfig(hk)); err != nil {
+		if a.session != nil {
+			a.session.EmitHotkeyToast("warning", err.Error())
+		}
+		if a.ctx != nil {
+			runtime.LogWarning(a.ctx, err.Error())
+		}
+	}
+}
+
+func (a *App) handleHotkey(act hotkeys.Action) {
+	if a.session == nil {
+		return
+	}
+	ar := a.session.Config().UI.Language != "en"
+	switch act {
+	case hotkeys.ActionCycleMode:
+		mode, err := a.session.CycleDisplayMode()
+		if err != nil {
+			a.session.EmitHotkeyToast(string(act), err.Error())
+			return
+		}
+		namesEN := []string{"Translation Only", "Original + Translation", "Translation + Original", "Original Only"}
+		namesAR := []string{"الترجمة فقط", "الأصلي + الترجمة", "الترجمة + الأصلي", "الأصلي فقط"}
+		idx := int(mode)
+		if idx < 0 || idx >= len(namesEN) {
+			idx = 0
+		}
+		if ar {
+			a.session.EmitHotkeyToast(string(act), "نمط العرض: "+namesAR[idx])
+		} else {
+			a.session.EmitHotkeyToast(string(act), "Display Mode: "+namesEN[idx])
+		}
+	case hotkeys.ActionTogglePause:
+		paused := a.session.TogglePause()
+		if ar {
+			if paused {
+				a.session.EmitHotkeyToast(string(act), "تم إيقاف الترجمة مؤقتاً")
+			} else {
+				a.session.EmitHotkeyToast(string(act), "تم استئناف الترجمة")
+			}
+		} else {
+			if paused {
+				a.session.EmitHotkeyToast(string(act), "Translation Paused")
+			} else {
+				a.session.EmitHotkeyToast(string(act), "Translation Resumed")
+			}
+		}
+	case hotkeys.ActionRetranslate:
+		if _, err := a.session.RetranslateLast(); err != nil {
+			a.session.EmitHotkeyToast(string(act), err.Error())
+			return
+		}
+		if ar {
+			a.session.EmitHotkeyToast(string(act), "تمت إعادة ترجمة آخر سطر")
+		} else {
+			a.session.EmitHotkeyToast(string(act), "Re-translated last line")
+		}
+	case hotkeys.ActionFontScaleUp, hotkeys.ActionFontScaleDown:
+		delta := 0.1
+		if act == hotkeys.ActionFontScaleDown {
+			delta = -0.1
+		}
+		scale, err := a.session.AdjustFontScale(delta)
+		if err != nil {
+			a.session.EmitHotkeyToast(string(act), err.Error())
+			return
+		}
+		if ar {
+			a.session.EmitHotkeyToast(string(act), fmt.Sprintf("حجم الخط: %.1fx", scale))
+		} else {
+			a.session.EmitHotkeyToast(string(act), fmt.Sprintf("Font Scale: %.1fx", scale))
+		}
+	case hotkeys.ActionToggleHooksMenu:
+		if a.hooksPopupOpen.Load() {
+			a.closeStandaloneHooksPopup(a.openedByHotkey.Load() || a.hooksStandalone.Load())
+			return
+		}
+		a.openStandaloneHooksPopup()
+	}
+}
 
 // SetDebugMode toggles performance profiling mode.
 func (a *App) SetDebugMode(enabled bool, realTrans bool) {
