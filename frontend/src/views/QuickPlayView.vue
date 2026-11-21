@@ -43,7 +43,11 @@ const visibleProcesses = computed(() => {
   return processes.value.filter((p) => p.supported);
 });
 
-const embeddableHooks = computed(() => hooks.value.filter((h) => h.embeddable));
+const embeddableHooks = computed(() =>
+  hooks.value
+    .filter((h) => h.embeddable)
+    .sort((a, b) => (Boolean(a.embedding) === Boolean(b.embedding) ? 0 : a.embedding ? -1 : 1)),
+);
 
 const activeDisplayMode = computed(() => config.value?.embed?.displayMode ?? 1);
 

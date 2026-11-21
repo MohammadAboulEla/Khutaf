@@ -38,10 +38,10 @@ const embeddableHooks = computed(() => {
       })
     : list;
 
-  // Show newly discovered / un-enabled hooks first so the player can tick them immediately.
+  // Keep enabled (checked) hooks at the top of the list.
   return [...filtered].sort((a, b) => {
     if (Boolean(a.embedding) !== Boolean(b.embedding)) {
-      return a.embedding ? 1 : -1;
+      return a.embedding ? -1 : 1;
     }
     return 0;
   });

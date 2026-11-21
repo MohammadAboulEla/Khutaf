@@ -18,7 +18,7 @@ const embedOnly = shallowRef(true);
 
 const filteredHooks = computed(() => {
   const q = query.value.trim().toLowerCase();
-  return props.hooks.filter((h) => {
+  const filtered = props.hooks.filter((h) => {
     if (embedOnly.value && !h.embeddable) return false;
     if (!q) return true;
     const sample = (props.outputs[h.key] || "").toLowerCase();
@@ -30,6 +30,9 @@ const filteredHooks = computed(() => {
       sample.includes(q)
     );
   });
+  return [...filtered].sort((a, b) =>
+    Boolean(a.embedding) === Boolean(b.embedding) ? 0 : a.embedding ? -1 : 1,
+  );
 });
 </script>
 
