@@ -139,7 +139,7 @@ function init() {
 
   function scheduleFlush() {
     if (flushTimer !== null) return;
-    flushTimer = requestAnimationFrame(() => {
+    flushTimer = setTimeout(() => {
       flushTimer = null;
       if (Object.keys(pendingOutputs).length) {
         hookOutputs.value = { ...hookOutputs.value, ...pendingOutputs };
@@ -157,7 +157,7 @@ function init() {
         debugTraces.value = [...pendingTraces.reverse(), ...debugTraces.value].slice(0, 300);
         pendingTraces = [];
       }
-    });
+    }, 32);
   }
 
   on("hook:output", ({ key, text }) => {
@@ -168,6 +168,9 @@ function init() {
   on("embed:line", (line) => {
     if (line && !line.cached && !line.error) {
       cacheCount.value++;
+    }
+    if (line?.key && line?.original) {
+      pendingOutputs[line.key] = line.original;
     }
     pendingFeed.push(line);
     scheduleFlush();
@@ -200,6 +203,25 @@ function init() {
   refreshAll();
 }
 
+function applyHooksSnapshot(hk) {
+  if (!Array.isArray(hk)) return;
+  hooks.value = hk;
+  const next = { ...hookOutputs.value };
+  let changed = false;
+  for (const h of hk) {
+    if (h?.key && h.lastText && next[h.key] !== h.lastText) {
+      next[h.key] = h.lastText;
+      changed = true;
+    }
+  }
+  if (changed) hookOutputs.value = next;
+}
+
+async function refreshHooks() {
+  const hk = await call("Hooks");
+  applyHooksSnapshot(hk);
+}
+
 async function refreshAll() {
   const [st, cfg, hk, ver, adm] = await Promise.all([
     call("Status"),
@@ -210,7 +232,7 @@ async function refreshAll() {
   ]);
   if (st) status.value = st;
   if (cfg) config.value = cfg;
-  if (hk) hooks.value = hk;
+  applyHooksSnapshot(hk);
   if (ver) appVersion.value = ver;
   if (typeof adm === "boolean") isAdmin.value = adm;
   await Promise.all([refreshProcesses(), refreshSavedGames(), refreshUnityFontStatus(), refreshTelemetry()]);
@@ -609,6 +631,7 @@ export function useSession() {
     quickHooksOpen: readonly(quickHooksOpen),
     quickHooksStandalone: readonly(quickHooksStandalone),
     hotkeyToast: readonly(hotkeyToast),
+    refreshHooks,
     refreshProcesses,
     refreshSavedGames,
     attach,

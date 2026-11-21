@@ -673,6 +673,7 @@ export namespace session {
 	    ctx2: number;
 	    embeddable: boolean;
 	    embedding: boolean;
+	    lastText?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new HookView(source);
@@ -689,6 +690,7 @@ export namespace session {
 	        this.ctx2 = source["ctx2"];
 	        this.embeddable = source["embeddable"];
 	        this.embedding = source["embedding"];
+	        this.lastText = source["lastText"];
 	    }
 	}
 	export class SavedGame {

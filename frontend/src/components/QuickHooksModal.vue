@@ -1,9 +1,8 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, shallowRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from "vue";
 import Icon from "./Icon.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
-import { formatHookLabel } from "../utils/hookLabels.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -11,8 +10,16 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["close"]);
-const { t, lang } = useI18n();
-const { hooks, hookOutputs, status, config, setEmbed } = useSession();
+const { t } = useI18n();
+const { hooks, hookOutputs, status, config, setEmbed, refreshHooks } = useSession();
+
+watch(
+  () => props.open,
+  (isOpen) => {
+    if (isOpen) refreshHooks();
+  },
+  { immediate: true },
+);
 
 const search = shallowRef("");
 
@@ -97,7 +104,7 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
             <div v-else-if="!embeddableHooks.length" class="empty-msg">{{ t("qhEmpty") }}</div>
             <div v-else class="hooks-list">
               <label
-                v-for="(h, idx) in embeddableHooks"
+                v-for="h in embeddableHooks"
                 :key="h.key"
                 class="hook-row"
                 :class="{ active: h.embedding }"
@@ -118,10 +125,6 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
                     </div>
                     <span v-if="!h.embedding" class="badge new">{{ t("qhNewBadge") }}</span>
                     <span v-else class="badge on">{{ t("qhActiveBadge") }}</span>
-                  </div>
-                  <div class="hook-meta">
-                    <span class="hook-name">{{ formatHookLabel(h, idx, lang) }}</span>
-                    <span class="hook-code">{{ h.hookCode }}</span>
                   </div>
                 </div>
               </label>
@@ -291,23 +294,6 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
   color: var(--fg-muted);
   font-weight: 400;
   font-style: italic;
-}
-.hook-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--fg-muted);
-}
-.hook-name {
-  font-weight: 500;
-}
-.hook-code {
-  margin-inline-start: auto;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  opacity: 0.8;
 }
 .badge {
   flex: none;

@@ -47,7 +47,8 @@ const (
 // HookView is a hook as shown in the UI.
 type HookView struct {
 	hook.HookInfo
-	Embedding bool `json:"embedding"`
+	Embedding bool   `json:"embedding"`
+	LastText  string `json:"lastText,omitempty"`
 }
 
 // Status describes the attached game.
@@ -467,7 +468,7 @@ func (s *Session) Hooks() []HookView {
 	defer s.mu.Unlock()
 	out := make([]HookView, 0, len(s.hooks))
 	for k, h := range s.hooks {
-		out = append(out, HookView{HookInfo: h, Embedding: s.embedding[k]})
+		out = append(out, HookView{HookInfo: h, Embedding: s.embedding[k], LastText: s.lastOutput[k]})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].HookCode != out[j].HookCode {
