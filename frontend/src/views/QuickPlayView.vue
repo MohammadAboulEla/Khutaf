@@ -94,6 +94,10 @@ function isProcessSaved(p) {
       <div>
         <h2 class="h2">{{ t("qpTitle") }}</h2>
         <p class="sub">{{ t("qpSubtitle") }}</p>
+        <div class="hotkey-tip hero-tip">
+          <Icon name="Sparkles" :size="13" />
+          <span>{{ t("qpReassureTip") }}</span>
+        </div>
       </div>
       <div class="hero-actions">
         <button class="btn" type="button" @click="emit('open-wizard')">
@@ -534,8 +538,11 @@ function isProcessSaved(p) {
   color: var(--fg-muted);
 }
 .hotkey-tip {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  align-self: flex-start;
   gap: 8px;
   padding: 7px 10px;
   border-radius: 6px;
@@ -543,6 +550,9 @@ function isProcessSaved(p) {
   border: 1px solid color-mix(in oklab, var(--accent) 32%, var(--border));
   font-size: 12px;
   color: var(--fg);
+}
+.hero-tip {
+  margin-top: 8px;
 }
 .hooks-details summary {
   cursor: pointer;

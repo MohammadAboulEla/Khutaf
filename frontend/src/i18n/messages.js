@@ -55,6 +55,7 @@ export const MESSAGES = {
     // Quick Play (Simple Mode)
     qpTitle: "التشغيل السريع للترجمة",
     qpSubtitle: "ثلاث خطوات بسيطة لترجمة ألعاب Unity (64-bit) مباشرة داخل اللعبة.",
+    qpReassureTip: "خُطّاف برنامج متقدم ومليء بالمزايا، لكن لا تقلق — التبويبات هنا هي كل ما تحتاجه للعب.",
     qpFontsReady: "خطوط العربية جاهزة ({count})",
     qpFontsMissing: "حزمة الخطوط العربية غير مثبتة",
     qpDownloadFonts: "تنزيل الخطوط (~139 MB)",
@@ -390,6 +391,7 @@ export const MESSAGES = {
     // Quick Play (Simple Mode)
     qpTitle: "Quick Play Translation",
     qpSubtitle: "Three simple steps to inject live Arabic translation into 64-bit Unity games.",
+    qpReassureTip: "Khutaf is packed with advanced features, but don't worry — the tabs here are all you need to play.",
     qpFontsReady: "Arabic Fonts Ready ({count})",
     qpFontsMissing: "Arabic Font Pack Not Installed",
     qpDownloadFonts: "Download Fonts (~139 MB)",
