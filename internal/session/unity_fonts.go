@@ -23,26 +23,84 @@ var UnityFontBundleURL = "https://github.com/MohammadAboulEla/Khutaf/releases/do
 // UnityFontBundleSHA256 is the expected lowercase SHA-256 hex digest of TMP_Font_AssetBundles.zip.
 var UnityFontBundleSHA256 = "88eff0018fbc6602343690e975cb833b96463b2655dd14b6a1036fe3d76642c3"
 
+// unityFontAppDataOverride overrides %APPDATA% in unit tests when non-empty.
+var unityFontAppDataOverride = ""
+
 // UnityFontStatus describes the installation and download state of Unity TMP font bundles.
 type UnityFontStatus struct {
 	Installed   bool   `json:"installed"`
 	Count       int    `json:"count"`
 	Dir         string `json:"dir"`
+	Location    string `json:"location"`   // "appdata" | "app" | ""
+	AppDataDir  string `json:"appDataDir"` // %APPDATA%\Khutaf\TMP_Font_AssetBundles
+	AppDir      string `json:"appDir"`     // <runtimeDir>\TMP_Font_AssetBundles
 	Downloading bool   `json:"downloading"`
 	Progress    int    `json:"progress"`
 	Message     string `json:"message"`
 	Error       string `json:"error"`
 }
 
-func (s *Session) unityFontMatches() (string, int) {
-	dir := filepath.Join(s.runtimeDir, "TMP_Font_AssetBundles")
+func appDataUnityFontDir() string {
+	base := strings.TrimSpace(unityFontAppDataOverride)
+	if base == "" {
+		if dir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(dir) != "" {
+			base = dir
+		} else {
+			base = strings.TrimSpace(os.Getenv("APPDATA"))
+		}
+	}
+	if base == "" {
+		return ""
+	}
+	return filepath.Join(base, "Khutaf", "TMP_Font_AssetBundles")
+}
+
+func (s *Session) appUnityFontDir() string {
+	return filepath.Join(s.runtimeDir, "TMP_Font_AssetBundles")
+}
+
+func (s *Session) resolveUnityFontDestDir(location string) string {
+	loc := strings.ToLower(strings.TrimSpace(location))
+	if loc == "app" {
+		return s.appUnityFontDir()
+	}
+	if dir := appDataUnityFontDir(); dir != "" {
+		return dir
+	}
+	return s.appUnityFontDir()
+}
+
+func countUnityFontBundles(dir string) int {
+	if strings.TrimSpace(dir) == "" {
+		return 0
+	}
 	matches, _ := filepath.Glob(filepath.Join(dir, "arialuni_sdf*"))
-	return dir, len(matches)
+	return len(matches)
+}
+
+func (s *Session) unityFontMatchesWithLocation() (string, int, string) {
+	appDataDir := appDataUnityFontDir()
+	appDir := s.appUnityFontDir()
+	if n := countUnityFontBundles(appDataDir); n > 0 {
+		return appDataDir, n, "appdata"
+	}
+	if n := countUnityFontBundles(appDir); n > 0 {
+		return appDir, n, "app"
+	}
+	if appDataDir != "" {
+		return appDataDir, 0, ""
+	}
+	return appDir, 0, ""
+}
+
+func (s *Session) unityFontMatches() (string, int) {
+	dir, count, _ := s.unityFontMatchesWithLocation()
+	return dir, count
 }
 
 // UnityFontStatus returns whether TMP_Font_AssetBundles are installed and any active download progress.
 func (s *Session) UnityFontStatus() UnityFontStatus {
-	dir, count := s.unityFontMatches()
+	dir, count, loc := s.unityFontMatchesWithLocation()
 	s.unityFontMu.Lock()
 	st := s.unityFontState
 	s.unityFontMu.Unlock()
@@ -50,11 +108,14 @@ func (s *Session) UnityFontStatus() UnityFontStatus {
 	st.Dir = dir
 	st.Count = count
 	st.Installed = count > 0
+	st.Location = loc
+	st.AppDataDir = appDataUnityFontDir()
+	st.AppDir = s.appUnityFontDir()
 	return st
 }
 
 func (s *Session) updateUnityFontState(fn func(*UnityFontStatus)) {
-	dir, count := s.unityFontMatches()
+	dir, count, loc := s.unityFontMatchesWithLocation()
 	s.unityFontMu.Lock()
 	fn(&s.unityFontState)
 	st := s.unityFontState
@@ -63,12 +124,21 @@ func (s *Session) updateUnityFontState(fn func(*UnityFontStatus)) {
 	st.Dir = dir
 	st.Count = count
 	st.Installed = count > 0
+	st.Location = loc
+	st.AppDataDir = appDataUnityFontDir()
+	st.AppDir = s.appUnityFontDir()
 	s.post("unityfonts:progress", st)
 }
 
-// DownloadUnityFonts downloads TMP_Font_AssetBundles.zip from GitHub Releases and extracts it
-// into runtime/TMP_Font_AssetBundles.
+// DownloadUnityFonts downloads TMP_Font_AssetBundles.zip and extracts it into runtime/TMP_Font_AssetBundles.
 func (s *Session) DownloadUnityFonts(ctx context.Context) error {
+	return s.DownloadUnityFontsTo(ctx, "app")
+}
+
+// DownloadUnityFontsTo downloads TMP_Font_AssetBundles.zip and extracts it into either
+// %APPDATA%\Khutaf\TMP_Font_AssetBundles ("appdata", default) or runtime/TMP_Font_AssetBundles ("app").
+func (s *Session) DownloadUnityFontsTo(ctx context.Context, location string) error {
+	destDir := s.resolveUnityFontDestDir(location)
 	s.unityFontMu.Lock()
 	if s.unityFontState.Downloading {
 		s.unityFontMu.Unlock()
@@ -82,7 +152,7 @@ func (s *Session) DownloadUnityFonts(ctx context.Context) error {
 	s.unityFontMu.Unlock()
 	s.updateUnityFontState(func(st *UnityFontStatus) {})
 
-	err := s.runUnityFontDownload(ctx)
+	err := s.runUnityFontDownload(ctx, destDir)
 	s.updateUnityFontState(func(st *UnityFontStatus) {
 		st.Downloading = false
 		if err != nil {
@@ -97,7 +167,7 @@ func (s *Session) DownloadUnityFonts(ctx context.Context) error {
 	return err
 }
 
-func (s *Session) runUnityFontDownload(ctx context.Context) error {
+func (s *Session) runUnityFontDownload(ctx context.Context, destDir string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, UnityFontBundleURL, nil)
 	if err != nil {
 		return err
@@ -172,7 +242,6 @@ func (s *Session) runUnityFontDownload(ctx context.Context) error {
 		st.Message = "Extracting bundles..."
 	})
 
-	destDir := filepath.Join(s.runtimeDir, "TMP_Font_AssetBundles")
 	return extractUnityFontZip(tmpZipPath, destDir)
 }
 

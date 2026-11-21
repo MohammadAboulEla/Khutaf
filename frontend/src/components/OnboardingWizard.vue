@@ -17,6 +17,7 @@ const { lang, isRtl, setLang, t } = useI18n();
 const { uiMode, setUiMode } = useUiMode();
 
 const step = shallowRef(1);
+const fontLocation = shallowRef("appdata");
 const TOTAL_STEPS = 4;
 
 async function onPickProvider(providerId) {
@@ -110,15 +111,48 @@ function onSkip() {
 
               <div v-if="unityFontStatus.installed" class="ok-box">
                 <Icon name="CheckCircle" :size="18" />
-                <span>{{ t("wizS2Installed", { count: unityFontStatus.count }) }}</span>
+                <div class="ok-text">
+                  <div>{{ t("wizS2Installed", { count: unityFontStatus.count }) }}</div>
+                  <div v-if="unityFontStatus.dir" class="path-hint" dir="ltr">{{ unityFontStatus.dir }}</div>
+                </div>
               </div>
 
               <div v-else class="dl-box">
+                <div class="loc-label">{{ t("wizS2LocLabel") }}</div>
+                <div class="pick-grid full-w">
+                  <button
+                    type="button"
+                    class="pick-card"
+                    :class="{ active: fontLocation === 'appdata' }"
+                    :disabled="unityFontStatus.downloading"
+                    @click="fontLocation = 'appdata'"
+                  >
+                    <div class="pick-title">{{ t("wizS2LocAppDataTitle") }}</div>
+                    <div class="pick-desc">{{ t("wizS2LocAppDataDesc") }}</div>
+                    <div v-if="unityFontStatus.appDataDir" class="path-hint" dir="ltr">
+                      {{ unityFontStatus.appDataDir }}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    class="pick-card"
+                    :class="{ active: fontLocation === 'app' }"
+                    :disabled="unityFontStatus.downloading"
+                    @click="fontLocation = 'app'"
+                  >
+                    <div class="pick-title">{{ t("wizS2LocAppTitle") }}</div>
+                    <div class="pick-desc">{{ t("wizS2LocAppDesc") }}</div>
+                    <div v-if="unityFontStatus.appDir" class="path-hint" dir="ltr">
+                      {{ unityFontStatus.appDir }}
+                    </div>
+                  </button>
+                </div>
+
                 <button
                   class="btn primary"
                   type="button"
                   :disabled="unityFontStatus.downloading"
-                  @click="downloadUnityFonts"
+                  @click="downloadUnityFonts(fontLocation)"
                 >
                   <Icon name="Download" :size="14" />
                   <span>
@@ -270,6 +304,27 @@ function onSkip() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+.full-w {
+  width: 100%;
+}
+.loc-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.ok-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.path-hint {
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  word-break: break-all;
 }
 .pick-card {
   text-align: start;

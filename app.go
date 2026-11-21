@@ -213,9 +213,14 @@ func (a *App) UnityFontStatus() session.UnityFontStatus {
 	return a.session.UnityFontStatus()
 }
 
-// DownloadUnityFonts downloads and extracts TMP_Font_AssetBundles into runtime/TMP_Font_AssetBundles.
+// DownloadUnityFonts downloads and extracts TMP_Font_AssetBundles into %APPDATA%\Khutaf\TMP_Font_AssetBundles.
 func (a *App) DownloadUnityFonts() error {
-	return a.session.DownloadUnityFonts(a.ctx)
+	return a.session.DownloadUnityFontsTo(a.ctx, "appdata")
+}
+
+// DownloadUnityFontsTo downloads and extracts TMP_Font_AssetBundles into "appdata" or "app".
+func (a *App) DownloadUnityFontsTo(location string) error {
+	return a.session.DownloadUnityFontsTo(a.ctx, location)
 }
 
 var (

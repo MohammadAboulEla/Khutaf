@@ -814,6 +814,9 @@ export namespace session {
 	    installed: boolean;
 	    count: number;
 	    dir: string;
+	    location: string;
+	    appDataDir: string;
+	    appDir: string;
 	    downloading: boolean;
 	    progress: number;
 	    message: string;
@@ -828,6 +831,9 @@ export namespace session {
 	        this.installed = source["installed"];
 	        this.count = source["count"];
 	        this.dir = source["dir"];
+	        this.location = source["location"];
+	        this.appDataDir = source["appDataDir"];
+	        this.appDir = source["appDir"];
 	        this.downloading = source["downloading"];
 	        this.progress = source["progress"];
 	        this.message = source["message"];

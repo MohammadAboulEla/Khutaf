@@ -43,6 +43,9 @@ const unityFontStatus = ref({
   installed: false,
   count: 0,
   dir: "",
+  location: "",
+  appDataDir: "",
+  appDir: "",
   downloading: false,
   progress: 0,
   message: "",
@@ -421,10 +424,15 @@ async function refreshUnityFontStatus() {
   return st;
 }
 
-async function downloadUnityFonts() {
+async function downloadUnityFonts(location = "appdata") {
   errorBanner.value = "";
+  const loc = typeof location === "string" && location ? location : "appdata";
   try {
-    await call("DownloadUnityFonts");
+    if (window.go?.main?.App?.DownloadUnityFontsTo) {
+      await call("DownloadUnityFontsTo", loc);
+    } else {
+      await call("DownloadUnityFonts");
+    }
   } catch (e) {
     errorBanner.value = String(e);
   } finally {

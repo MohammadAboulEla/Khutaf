@@ -37,6 +37,8 @@ export function Detach():Promise<void>;
 
 export function DownloadUnityFonts():Promise<void>;
 
+export function DownloadUnityFontsTo(arg1:string):Promise<void>;
+
 export function ExportDiagnosticBundle():Promise<string>;
 
 export function GetConfig():Promise<config.Config>;

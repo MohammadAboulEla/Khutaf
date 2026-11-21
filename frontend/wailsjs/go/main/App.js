@@ -62,6 +62,10 @@ export function DownloadUnityFonts() {
   return window['go']['main']['App']['DownloadUnityFonts']();
 }
 
+export function DownloadUnityFontsTo(arg1) {
+  return window['go']['main']['App']['DownloadUnityFontsTo'](arg1);
+}
+
 export function ExportDiagnosticBundle() {
   return window['go']['main']['App']['ExportDiagnosticBundle']();
 }
