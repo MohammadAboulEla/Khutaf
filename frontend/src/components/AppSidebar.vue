@@ -20,6 +20,7 @@ const navItems = computed(() => {
       { id: "quickplay", name: t("navQuickplay"), icon: "Gamepad" },
       { id: "translators", name: t("navTranslators"), icon: "Quote" },
       { id: "embed", name: t("navEmbed"), icon: "BookOpen" },
+      { id: "hotkeys", name: t("navHotkeys"), icon: "Keyboard" },
     ];
   }
   return [
@@ -28,6 +29,7 @@ const navItems = computed(() => {
     { id: "hooks", name: t("navHooks"), icon: "Code" },
     { id: "embed", name: t("navEmbed"), icon: "BookOpen" },
     { id: "translators", name: t("navTranslators"), icon: "Quote" },
+    { id: "hotkeys", name: t("navHotkeys"), icon: "Keyboard" },
     { id: "pipeline", name: t("navPipeline"), icon: "Workflow" },
     { id: "debug", name: t("navDebug"), icon: "Activity" },
   ];

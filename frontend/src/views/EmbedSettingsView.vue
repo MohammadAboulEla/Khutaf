@@ -66,116 +66,14 @@ const form = reactive({
   pendingText: "",
 });
 
-const defaultHotkeys = {
-  enabled: true,
-  minimizeToTray: false,
-  cycleMode: "Ctrl+Alt+M",
-  togglePause: "Ctrl+Alt+P",
-  retranslate: "Ctrl+Alt+R",
-  fontScaleUp: "Ctrl+Alt+Up",
-  fontScaleDown: "Ctrl+Alt+Down",
-  toggleHooksMenu: "Ctrl+Alt+H",
-};
-
-const hotkeyForm = reactive({ ...defaultHotkeys });
-const recordingField = shallowRef("");
-
-const hotkeyFields = [
-  { key: "toggleHooksMenu", labelKey: "hkToggleHooks" },
-  { key: "togglePause", labelKey: "hkTogglePause" },
-  { key: "cycleMode", labelKey: "hkCycleMode" },
-  { key: "retranslate", labelKey: "hkRetranslate" },
-  { key: "fontScaleUp", labelKey: "hkFontUp" },
-  { key: "fontScaleDown", labelKey: "hkFontDown" },
-];
-
 watch(
   config,
   (cfg) => {
     if (!cfg) return;
     Object.assign(form, cfg.embed);
-    if (cfg.hotkeys) {
-      Object.assign(hotkeyForm, { ...defaultHotkeys, ...cfg.hotkeys });
-    }
   },
   { immediate: true },
 );
-
-const CODE_KEY_MAP = {
-  ArrowUp: "Up",
-  ArrowDown: "Down",
-  ArrowLeft: "Left",
-  ArrowRight: "Right",
-  Equal: "=",
-  Minus: "-",
-  Space: "Space",
-  Enter: "Enter",
-  Backspace: "Backspace",
-  Tab: "Tab",
-  Insert: "Insert",
-  Delete: "Delete",
-  Home: "Home",
-  End: "End",
-  PageUp: "PageUp",
-  PageDown: "PageDown",
-  BracketLeft: "[",
-  BracketRight: "]",
-  Backslash: "\\",
-  Semicolon: ";",
-  Quote: "'",
-  Comma: ",",
-  Period: ".",
-  Slash: "/",
-  Backquote: "`",
-};
-
-function codeToKeyToken(code) {
-  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
-  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
-  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
-  return CODE_KEY_MAP[code] || "";
-}
-
-function onHotkeyKeydown(field, e) {
-  e.preventDefault();
-  e.stopPropagation();
-  if (e.key === "Escape") {
-    recordingField.value = "";
-    e.target?.blur?.();
-    return;
-  }
-  const modCodes = new Set([
-    "ControlLeft",
-    "ControlRight",
-    "AltLeft",
-    "AltRight",
-    "ShiftLeft",
-    "ShiftRight",
-    "MetaLeft",
-    "MetaRight",
-  ]);
-  if (modCodes.has(e.code)) return;
-
-  const token = codeToKeyToken(e.code);
-  if (!token) return;
-
-  const mods = [];
-  if (e.ctrlKey) mods.push("Ctrl");
-  if (e.altKey) mods.push("Alt");
-  if (e.shiftKey) mods.push("Shift");
-  if (e.metaKey) mods.push("Win");
-
-  const isFn = /^F([1-9]|1[0-9]|2[0-4])$/.test(token);
-  if (!mods.length && !isFn) return;
-
-  hotkeyForm[field] = [...mods, token].join("+");
-  recordingField.value = "";
-  e.target?.blur?.();
-}
-
-function resetHotkeys() {
-  Object.assign(hotkeyForm, defaultHotkeys);
-}
 
 function onSave() {
   if (!config.value) return;
@@ -195,16 +93,6 @@ function onSave() {
       stripTypewriterTags: form.stripTypewriterTags,
       nonBlocking: form.nonBlocking,
       pendingText: form.pendingText.trim(),
-    },
-    hotkeys: {
-      enabled: Boolean(hotkeyForm.enabled),
-      minimizeToTray: Boolean(hotkeyForm.minimizeToTray),
-      cycleMode: hotkeyForm.cycleMode.trim(),
-      togglePause: hotkeyForm.togglePause.trim(),
-      retranslate: hotkeyForm.retranslate.trim(),
-      fontScaleUp: hotkeyForm.fontScaleUp.trim(),
-      fontScaleDown: hotkeyForm.fontScaleDown.trim(),
-      toggleHooksMenu: hotkeyForm.toggleHooksMenu.trim(),
     },
   });
 }
@@ -368,70 +256,6 @@ function onSave() {
       </details>
 
       <div class="actions">
-        <button class="btn primary" type="button" @click="onSave">
-          {{ saveState === "saving" ? t("embSaving") : saveState === "saved" ? t("trSavedBtn") : t("embApplySave") }}
-        </button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="bundle-header">
-        <div class="bundle-title-row">
-          <h3 class="h2">{{ t("hkCardTitle") }}</h3>
-        </div>
-        <p class="bundle-desc">{{ t("hkCardDesc") }}</p>
-      </div>
-
-      <div class="checks">
-        <label class="chk">
-          <input v-model="hotkeyForm.enabled" type="checkbox" />
-          <span>{{ t("hkEnableMaster") }}</span>
-        </label>
-        <label class="chk">
-          <input v-model="hotkeyForm.minimizeToTray" type="checkbox" />
-          <span>{{ t("hkMinToTray") }}</span>
-        </label>
-      </div>
-
-      <p class="bundle-desc">{{ t("hkRecorderHint") }}</p>
-
-      <div class="hk-grid" :class="{ disabled: !hotkeyForm.enabled }">
-        <div v-for="item in hotkeyFields" :key="item.key" class="field">
-          <span class="lbl">{{ t(item.labelKey) }}</span>
-          <div class="hk-input-wrap">
-            <input
-              type="text"
-              readonly
-              dir="ltr"
-              class="input hk-input"
-              :disabled="!hotkeyForm.enabled"
-              :value="
-                recordingField === item.key
-                  ? t('hkPressKeys')
-                  : hotkeyForm[item.key] || t('hkDisabledPlaceholder')
-              "
-              @focus="recordingField = item.key"
-              @blur="recordingField = ''"
-              @keydown="onHotkeyKeydown(item.key, $event)"
-            />
-            <Tooltip :text="t('hkClearTip')">
-              <button
-                type="button"
-                class="hk-clear"
-                :disabled="!hotkeyForm.enabled || !hotkeyForm[item.key]"
-                @click="hotkeyForm[item.key] = ''"
-              >
-                ×
-              </button>
-            </Tooltip>
-          </div>
-        </div>
-      </div>
-
-      <div class="actions hk-actions">
-        <button class="btn secondary" type="button" @click="resetHotkeys">
-          {{ t("hkResetDefaults") }}
-        </button>
         <button class="btn primary" type="button" @click="onSave">
           {{ saveState === "saving" ? t("embSaving") : saveState === "saved" ? t("trSavedBtn") : t("embApplySave") }}
         </button>
@@ -758,53 +582,5 @@ function onSave() {
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border);
-}
-.hk-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 10px 14px;
-}
-.hk-grid.disabled {
-  opacity: 0.55;
-}
-.hk-input-wrap {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.hk-input {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--mono);
-  font-size: 12px;
-  cursor: pointer;
-}
-.hk-input:focus {
-  border-color: var(--accent);
-  outline: none;
-}
-.hk-clear {
-  height: 28px;
-  width: 26px;
-  border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--paper);
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-}
-.hk-clear:hover:not(:disabled) {
-  color: #f87171;
-  border-color: #f87171;
-}
-.hk-clear:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-.hk-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 </style>

@@ -50,6 +50,7 @@ const PATHS = {
   Clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 6 12 12 16 14"/>',
   Wand: '<path d="m15 4-1 4 4 1-4 1-1 4-1-4-4-1 4-1z"/><path d="M4 20 14 10"/>',
   Layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+  Keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>',
 };
 </script>
 

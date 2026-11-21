@@ -534,7 +534,6 @@ async function onStopLlama() {
   gap: 12px;
 }
 .card {
-  max-width: 980px;
   width: 100%;
   padding: 16px 18px;
   background: var(--bg-elev);

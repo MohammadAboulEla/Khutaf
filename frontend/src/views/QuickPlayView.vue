@@ -39,8 +39,8 @@ const savedByPath = computed(() => {
 });
 
 const visibleProcesses = computed(() => {
-  if (showAllProcs.value) return processes.value;
-  return processes.value.filter((p) => p.supported);
+  const list = showAllProcs.value ? processes.value : processes.value.filter((p) => p.supported);
+  return list.filter((p) => !isProcessAttached(p));
 });
 
 const embeddableHooks = computed(() =>
@@ -172,13 +172,13 @@ function isProcessSaved(p) {
         </button>
       </div>
 
-      <div v-if="!visibleProcesses.length" class="empty-box">
+      <div v-if="!status.attached && !visibleProcesses.length" class="empty-box">
         <Icon name="Gamepad" :size="24" />
         <div class="empty-title">{{ t("qpNoGames") }}</div>
         <div class="sub">{{ t("qpNoGamesHint") }}</div>
       </div>
 
-      <div v-else class="proc-grid">
+      <div v-else-if="visibleProcesses.length" class="proc-grid">
         <div
           v-for="p in visibleProcesses"
           :key="p.pid"
@@ -215,6 +215,11 @@ function isProcessSaved(p) {
             <span>{{ isProcessSaved(p) ? t("qpQuickConnect") : t("qpConnect") }}</span>
           </button>
         </div>
+      </div>
+
+      <div class="hotkey-tip">
+        <Icon name="Keyboard" :size="14" />
+        <span>{{ t("qpHooksHotkeyTip", { key: config?.hotkeys?.toggleHooksMenu || "Ctrl+Alt+H" }) }}</span>
       </div>
 
       <p class="notice">{{ t("qpOfflineNotice") }}</p>
@@ -527,6 +532,17 @@ function isProcessSaved(p) {
   margin: 0;
   font-size: 11px;
   color: var(--fg-muted);
+}
+.hotkey-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--accent) 12%, var(--paper));
+  border: 1px solid color-mix(in oklab, var(--accent) 32%, var(--border));
+  font-size: 12px;
+  color: var(--fg);
 }
 .hooks-details summary {
   cursor: pointer;

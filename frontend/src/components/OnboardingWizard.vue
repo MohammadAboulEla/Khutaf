@@ -2,6 +2,7 @@
 import { computed, shallowRef } from "vue";
 import Icon from "./Icon.vue";
 import TranslatorBenchmark from "./TranslatorBenchmark.vue";
+import HotkeysPanel from "./HotkeysPanel.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
 import { useUiMode } from "../composables/useUiMode.js";
@@ -20,7 +21,7 @@ const { uiMode, setUiMode } = useUiMode();
 const step = shallowRef(1);
 const fontLocation = shallowRef("appdata");
 const autoPickNotice = shallowRef("");
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 5;
 
 const activePrimary = computed(() => config.value?.translator?.active || "bing");
 const activeFallback = computed(() => config.value?.translator?.fallbackProvider || "");
@@ -256,12 +257,19 @@ function onSkip() {
               />
             </template>
 
+            <template v-else-if="step === 4">
+              <h3 class="h3">{{ t("wizS4HotkeysTitle") }}</h3>
+              <p class="desc">{{ t("wizS4HotkeysDesc") }}</p>
+              <HotkeysPanel :compact="true" :auto-save="true" />
+            </template>
+
             <template v-else>
               <h3 class="h3">{{ t("wizS4Title") }}</h3>
               <div class="guide-cards">
                 <div class="guide-item">{{ t("wizS4G1") }}</div>
                 <div class="guide-item">{{ t("wizS4G2") }}</div>
                 <div class="guide-item">{{ t("wizS4G3") }}</div>
+                <div class="guide-item">{{ t("wizS4G4") }}</div>
               </div>
             </template>
           </div>

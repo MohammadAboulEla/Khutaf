@@ -21,6 +21,7 @@ export const MESSAGES = {
     navGames: "الألعاب المحفوظة",
     navHooks: "وحدة الربط",
     navEmbed: "الخطوط والعرض",
+    navHotkeys: "الاختصارات",
     navTranslators: "المترجمات",
     navPipeline: "القواعد والكاش",
     navDebug: "التشخيص",
@@ -76,6 +77,7 @@ export const MESSAGES = {
     qp32BitBadge: "32-bit غير مدعوم",
     qpNoGames: "لم يتم العثور على لعبة Unity مفتوحة حالياً.",
     qpNoGamesHint: "تأكد من تشغيل اللعبة ثم اضغط «تحديث القائمة». إذا كانت اللعبة مفتوحة ولا تظهر، اضغط «عندي مشكلة!».",
+    qpHooksHotkeyTip: "نصيحة: بعد الاتصال، اضغط {key} في أي وقت لفتح قائمة القنوات وتفعيل أو تعطيل قنوات النصوص.",
     qpOfflineNotice: "مخصص للألعاب الفردية (Offline) فقط — لا تستخدمه مع الألعاب الجماعية أو المحمية بمكافحة الغش.",
 
     qpStep2Title: "2. تفعيل الترجمة داخل اللعبة",
@@ -285,10 +287,13 @@ export const MESSAGES = {
     wizS3FallbackLbl: "المترجم الاحتياطي التلقائي",
     wizS3AutoPicked: "تم اعتماد {primary} كمترجم أساسي و{fallback} كمترجم احتياطي تلقائياً (يمكنك التغيير أدناه).",
     wizS3AutoPickedSingle: "تم اعتماد {primary} كمترجم أساسي تلقائياً (يمكنك التغيير أدناه).",
+    wizS4HotkeysTitle: "اختصارات الكيبورد داخل اللعبة وصينية النظام",
+    wizS4HotkeysDesc: "يمكنك تفعيل أو تخصيص الاختصارات للتحكم بالترجمة أثناء اللعب دون الخروج من اللعبة (أو تعطيلها بالكامل).",
     wizS4Title: "أنت جاهز الآن! كيف تبدأ في 3 خطوات؟",
     wizS4G1: "1. شغّل لعبتك (Unity 64-bit) أولاً واتركها مفتوحة.",
     wizS4G2: "2. اختر اللعبة من «اللعب السريع» واضغط «ربط اللعبة».",
-    wizS4G3: "3. افتح أول حوار في اللعبة واضغط «تفعيل الترجمة تلقائياً» واستمتع!",
+    wizS4G3: "3. افتح أول حوار في اللعبة وفعّل القنوات النصية المطلوبة واستمتع!",
+    wizS4G4: "4. اضغط Ctrl+Alt+H أثناء اللعب لفتح نافذة قنوات النصوص بسرعة، أو Ctrl+Alt+P للإيقاف المؤقت.",
 
     // Troubleshooter Modal
     tsTitle: "مساعد حل المشاكل السريع",
@@ -351,6 +356,7 @@ export const MESSAGES = {
     navGames: "Saved Games",
     navHooks: "Hook Console",
     navEmbed: "Fonts & Display",
+    navHotkeys: "Hotkeys",
     navTranslators: "Translators",
     navPipeline: "Pipeline & Cache",
     navDebug: "Debug",
@@ -406,6 +412,7 @@ export const MESSAGES = {
     qp32BitBadge: "32-bit unsupported",
     qpNoGames: "No supported 64-bit Unity game is running right now.",
     qpNoGamesHint: "Start your Unity game first and click Refresh. If it's open and missing, click 'Need Help?'.",
+    qpHooksHotkeyTip: "Tip: Once connected, press {key} anytime to open the Hooks Picker and toggle text channels.",
     qpOfflineNotice: "Single-player offline Unity games only — do not attach to online or anti-cheat protected games.",
 
     qpStep2Title: "2. Enable In-Game Translation",
@@ -615,10 +622,13 @@ export const MESSAGES = {
     wizS3FallbackLbl: "Auto-Fallback Translator",
     wizS3AutoPicked: "Auto-activated {primary} as Primary and {fallback} as Fallback (you can change them below).",
     wizS3AutoPickedSingle: "Auto-activated {primary} as Primary translator (you can change it below).",
-    wizS4Title: "You're All Set! 3 Steps to Play in Arabic",
+    wizS4HotkeysTitle: "In-Game Hotkeys & System Tray",
+    wizS4HotkeysDesc: "Enable, customize, or disable global shortcuts to control translation mid-game without Alt+Tab.",
+    wizS4Title: "You're All Set! How to Play in Arabic",
     wizS4G1: "1. Launch your 64-bit Unity game first and leave it open.",
     wizS4G2: "2. Pick your game in Quick Play and click Connect Game.",
-    wizS4G3: "3. Advance one dialogue line, click Auto-Enable Translation, and play!",
+    wizS4G3: "3. Advance one dialogue line, check the text channels you want translated, and play!",
+    wizS4G4: "4. Press Ctrl+Alt+H mid-game to open the floating Hooks Picker, or Ctrl+Alt+P to pause.",
 
     // Troubleshooter Modal
     tsTitle: "Quick Troubleshooter",

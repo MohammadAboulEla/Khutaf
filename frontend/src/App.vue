@@ -11,6 +11,7 @@ import QuickPlayView from "./views/QuickPlayView.vue";
 import HookConsoleView from "./views/HookConsoleView.vue";
 import GamesView from "./views/GamesView.vue";
 import EmbedSettingsView from "./views/EmbedSettingsView.vue";
+import HotkeysView from "./views/HotkeysView.vue";
 import TranslatorsView from "./views/TranslatorsView.vue";
 import TextPipelineView from "./views/TextPipelineView.vue";
 import DebugView from "./views/DebugView.vue";
@@ -90,7 +91,7 @@ watch(
 );
 
 watch(isSimple, (simple) => {
-  if (simple && !["quickplay", "translators", "embed"].includes(activeTab.value)) {
+  if (simple && !["quickplay", "translators", "embed", "hotkeys"].includes(activeTab.value)) {
     activeTab.value = "quickplay";
   }
 });
@@ -267,6 +268,7 @@ onBeforeUnmount(() => window.removeEventListener("focus", onWindowFocus));
         v-if="activeTab === 'embed'"
         :onboarding-open="wizardOpen"
       />
+      <HotkeysView v-if="activeTab === 'hotkeys'" />
       <TranslatorsView v-if="activeTab === 'translators'" />
       <TextPipelineView v-if="activeTab === 'pipeline'" />
       <DebugView v-if="activeTab === 'debug'" />
