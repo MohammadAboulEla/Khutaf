@@ -186,6 +186,7 @@ export namespace config {
 	}
 	export class TranslatorSettings {
 	    active: string;
+	    fallbackProvider?: string;
 	    bing: BingSettings;
 	    traditional: TraditionalSettings;
 	    llm: LLMSettings;
@@ -199,6 +200,7 @@ export namespace config {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.active = source["active"];
+	        this.fallbackProvider = source["fallbackProvider"];
 	        this.bing = this.convertValues(source["bing"], BingSettings);
 	        this.traditional = this.convertValues(source["traditional"], TraditionalSettings);
 	        this.llm = this.convertValues(source["llm"], LLMSettings);
@@ -665,6 +667,8 @@ export namespace session {
 	    title: string;
 	    embedHooks: config.EmbedHook[];
 	    pipeline: config.PipelineSettings;
+	    embedOverride?: config.EmbedSettings;
+	    translatorOverride?: config.TranslatorSettings;
 	    runningPid: number;
 	    attached: boolean;
 	
@@ -678,6 +682,8 @@ export namespace session {
 	        this.title = source["title"];
 	        this.embedHooks = this.convertValues(source["embedHooks"], config.EmbedHook);
 	        this.pipeline = this.convertValues(source["pipeline"], config.PipelineSettings);
+	        this.embedOverride = this.convertValues(source["embedOverride"], config.EmbedSettings);
+	        this.translatorOverride = this.convertValues(source["translatorOverride"], config.TranslatorSettings);
 	        this.runningPid = source["runningPid"];
 	        this.attached = source["attached"];
 	    }
@@ -726,6 +732,7 @@ export namespace session {
 	    is64: boolean;
 	    pids: number[];
 	    provider: string;
+	    fallbackProvider: string;
 	    debugMode: boolean;
 	    debugRealTrans: boolean;
 	
@@ -744,6 +751,7 @@ export namespace session {
 	        this.is64 = source["is64"];
 	        this.pids = source["pids"];
 	        this.provider = source["provider"];
+	        this.fallbackProvider = source["fallbackProvider"];
 	        this.debugMode = source["debugMode"];
 	        this.debugRealTrans = source["debugRealTrans"];
 	    }

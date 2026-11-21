@@ -9,9 +9,10 @@ const props = defineProps({
   translatorConfig: { type: Object, default: null },
   compact: { type: Boolean, default: false },
   activeProvider: { type: String, default: "" },
+  fallbackProvider: { type: String, default: "" },
 });
 
-const emit = defineEmits(["select-provider"]);
+const emit = defineEmits(["select-provider", "select-fallback", "benchmark-done"]);
 
 const {
   config,
@@ -25,7 +26,7 @@ const {
 const { t } = useI18n();
 
 const mode = shallowRef("single");
-const customText = shallowRef("The ancient gate is sealed. Find the Silver Key to proceed!");
+const customText = shallowRef("[Test] Welcome, Hero! If you can read this in Arabic, your translator is working.");
 const includeTraditional = shallowRef(true);
 const includeLlm = shallowRef(false);
 const includeOfflineLlm = shallowRef(false);
@@ -77,10 +78,32 @@ const sortedItems = computed(() => {
   return list;
 });
 
+function pickBestProviders(items) {
+  const working = (items || []).filter((x) => x.status === "ok" || x.status === "partial");
+  working.sort((a, b) => {
+    const sa = a.status === "ok" ? 0 : 1;
+    const sb = b.status === "ok" ? 0 : 1;
+    if (sa !== sb) return sa - sb;
+    const safeA = a.hasArabic && a.tagsPreserved && a.placeholdersPreserved ? 0 : 1;
+    const safeB = b.hasArabic && b.tagsPreserved && b.placeholdersPreserved ? 0 : 1;
+    if (safeA !== safeB) return safeA - safeB;
+    if (a.avgMs !== b.avgMs) return a.avgMs - b.avgMs;
+    return (b.qualityScore || 0) - (a.qualityScore || 0);
+  });
+  const first = working[0] || null;
+  const second = working.find((x) => x.providerId !== first?.providerId) || null;
+  return {
+    bestPrimary: first?.providerId || "",
+    bestPrimaryLabel: first?.label || "",
+    bestFallback: second?.providerId || "",
+    bestFallbackLabel: second?.label || "",
+  };
+}
+
 async function onRun() {
   expanded.value = {};
   const cfg = props.translatorConfig || config.value?.translator;
-  await benchmarkTranslators({
+  const sum = await benchmarkTranslators({
     mode: props.compact ? "single" : mode.value,
     text: customText.value,
     includeTraditional: props.compact ? true : includeTraditional.value,
@@ -89,6 +112,9 @@ async function onRun() {
     timeoutMs: 10000,
     config: cfg,
   });
+  if (sum && !sum.cancelled) {
+    emit("benchmark-done", pickBestProviders(sum.items || benchmarkItems.value));
+  }
 }
 
 function toggleExpand(id) {
@@ -307,15 +333,26 @@ function speedLabel(tier) {
               </td>
 
               <td class="col-act">
-                <button
-                  type="button"
-                  class="btn small"
-                  :class="activeProvider === item.providerId ? 'active-btn' : 'primary'"
-                  :disabled="activeProvider === item.providerId || item.status === 'skipped'"
-                  @click="emit('select-provider', item.providerId)"
-                >
-                  {{ activeProvider === item.providerId ? t("benchActiveNow") : t("benchUseThis") }}
-                </button>
+                <div class="act-stack">
+                  <button
+                    type="button"
+                    class="btn small"
+                    :class="activeProvider === item.providerId ? 'active-btn' : 'primary'"
+                    :disabled="activeProvider === item.providerId || item.status === 'skipped'"
+                    @click="emit('select-provider', item.providerId)"
+                  >
+                    {{ activeProvider === item.providerId ? t("benchActiveNow") : t("benchUseThis") }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn small"
+                    :class="fallbackProvider === item.providerId ? 'fb-btn' : ''"
+                    :disabled="activeProvider === item.providerId || fallbackProvider === item.providerId || item.status === 'skipped'"
+                    @click="emit('select-fallback', item.providerId)"
+                  >
+                    {{ fallbackProvider === item.providerId ? t("benchFallbackNow") : t("benchSetFallback") }}
+                  </button>
+                </div>
               </td>
             </tr>
 
@@ -468,6 +505,16 @@ function speedLabel(tier) {
   background: color-mix(in oklab, #16a34a 20%, transparent);
   border-color: rgba(74, 222, 128, 0.4);
   color: #4ade80;
+}
+.btn.fb-btn {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  border-color: color-mix(in oklab, var(--accent) 50%, transparent);
+  color: var(--accent);
+}
+.act-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .btn:disabled {
   opacity: 0.55;

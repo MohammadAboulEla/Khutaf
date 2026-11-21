@@ -126,6 +126,10 @@ export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
 }
 
+export function SaveGameOverrides(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveGameOverrides'](arg1, arg2, arg3);
+}
+
 export function SaveGamePipeline(arg1, arg2) {
   return window['go']['main']['App']['SaveGamePipeline'](arg1, arg2);
 }

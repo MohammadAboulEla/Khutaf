@@ -156,3 +156,85 @@ func TestLLMStripsThinkBlocks(t *testing.T) {
 		t.Fatalf("expected empty post-think output not to be cached, cache size=%d", m.CacheSize())
 	}
 }
+
+func TestManagerFailoverOnPrimaryErrorAndTelemetry(t *testing.T) {
+	m := NewManager()
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	m.SetTelemetry(func(subsys, fnName string, durUs int64, level, msg string, fields map[string]any) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, fnName+":"+level+":"+msg)
+	})
+
+	var primaryCalls atomic.Int32
+	var fbCalls atomic.Int32
+	m.mu.Lock()
+	m.provider = &stubProvider{
+		name: "primary-stub",
+		fn: func(context.Context, string) (string, error) {
+			primaryCalls.Add(1)
+			return "", context.DeadlineExceeded
+		},
+	}
+	m.fallback = &stubProvider{
+		name: "fallback-stub",
+		fn: func(context.Context, string) (string, error) {
+			fbCalls.Add(1)
+			return "ترجمة احتياطية", nil
+		},
+	}
+	m.mu.Unlock()
+
+	got, cached, err := m.Translate(context.Background(), "Hello hero")
+	if err != nil || cached || got != "ترجمة احتياطية" {
+		t.Fatalf("Translate failover = (%q, %v, %v), want (\"ترجمة احتياطية\", false, nil)", got, cached, err)
+	}
+	if primaryCalls.Load() != 1 || fbCalls.Load() != 1 {
+		t.Fatalf("unexpected call counts primary=%d fallback=%d", primaryCalls.Load(), fbCalls.Load())
+	}
+
+	mu.Lock()
+	joined := strings.Join(events, " | ")
+	mu.Unlock()
+	if !strings.Contains(joined, "Manager.Translate.Fallback:warn:primary failed; used fallback") {
+		t.Fatalf("expected fallback telemetry event, got: %s", joined)
+	}
+
+	// Ensure translation was cached under fallback-stub, not primary-stub.
+	if _, ok := m.Cache().Get("", "primary-stub", "Hello hero"); ok {
+		t.Fatal("failed primary output should not be cached under primary provider")
+	}
+	if val, ok := m.Cache().Get("", "fallback-stub", "Hello hero"); !ok || val != "ترجمة احتياطية" {
+		t.Fatalf("expected cache entry under fallback-stub, got (%q, %v)", val, ok)
+	}
+}
+
+func TestManagerConfigureSkipsIdenticalFallback(t *testing.T) {
+	m := NewManager()
+	m.Configure(config.TranslatorSettings{
+		Active:           "bing",
+		FallbackProvider: "bing",
+	})
+	if m.Fallback() != "" {
+		t.Fatalf("expected identical fallback to be ignored, got %q", m.Fallback())
+	}
+
+	m.Configure(config.TranslatorSettings{
+		Active:           "bing",
+		FallbackProvider: "google",
+	})
+	if m.Fallback() != "google" {
+		t.Fatalf("expected fallback google, got %q", m.Fallback())
+	}
+
+	m.Configure(config.TranslatorSettings{
+		Active:           "bing",
+		FallbackProvider: "none",
+	})
+	if m.Fallback() != "" {
+		t.Fatalf("expected none fallback to clear, got %q", m.Fallback())
+	}
+}

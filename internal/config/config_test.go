@@ -206,3 +206,73 @@ func TestUISettingsDefaultsAndPersistence(t *testing.T) {
 		t.Fatalf("UI settings did not round-trip: %+v", got)
 	}
 }
+
+func TestGameOverridesAndFallbackPersistence(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	cfg := st.Config()
+	cfg.Translator.FallbackProvider = "google"
+	if err := st.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	exe := `C:\Games\SampleGame\Game.exe`
+	eo := Default().Embed
+	eo.MaxLineLength = 28
+	eo.FontSizeRelative = 0.85
+	to := Default().Translator
+	to.Active = "llm"
+	to.FallbackProvider = "bing"
+	to.LLM.APIKey = "sk-game-secret-999"
+
+	if err := st.UpdateGame(exe, func(g *GameProfile) {
+		g.Title = "SampleGame"
+		g.EmbedOverride = &eo
+		g.TranslatorOverride = &to
+	}); err != nil {
+		t.Fatalf("UpdateGame: %v", err)
+	}
+
+	if runtime.GOOS == "windows" {
+		raw, err := os.ReadFile(filepath.Join(dir, "games.json"))
+		if err != nil {
+			t.Fatalf("read games.json: %v", err)
+		}
+		if !strings.Contains(string(raw), `"dpapi:`) || strings.Contains(string(raw), "sk-game-secret-999") {
+			t.Fatalf("expected encrypted per-game API key in games.json, got:\n%s", raw)
+		}
+	}
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if reopened.Config().Translator.FallbackProvider != "google" {
+		t.Fatalf("FallbackProvider = %q, want google", reopened.Config().Translator.FallbackProvider)
+	}
+	prof := reopened.Game(exe)
+	if prof.EmbedOverride == nil || prof.EmbedOverride.MaxLineLength != 28 || prof.EmbedOverride.FontSizeRelative != 0.85 {
+		t.Fatalf("unexpected EmbedOverride: %+v", prof.EmbedOverride)
+	}
+	if prof.TranslatorOverride == nil || prof.TranslatorOverride.Active != "llm" ||
+		prof.TranslatorOverride.FallbackProvider != "bing" ||
+		prof.TranslatorOverride.LLM.APIKey != "sk-game-secret-999" {
+		t.Fatalf("unexpected TranslatorOverride: %+v", prof.TranslatorOverride)
+	}
+
+	// Clearing overrides back to nil must persist cleanly.
+	if err := reopened.UpdateGame(exe, func(g *GameProfile) {
+		g.EmbedOverride = nil
+		g.TranslatorOverride = nil
+	}); err != nil {
+		t.Fatalf("clear overrides: %v", err)
+	}
+	prof = reopened.Game(exe)
+	if prof.EmbedOverride != nil || prof.TranslatorOverride != nil {
+		t.Fatalf("expected nil overrides after clear, got embed=%v trans=%v", prof.EmbedOverride, prof.TranslatorOverride)
+	}
+}

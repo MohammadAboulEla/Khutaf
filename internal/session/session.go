@@ -57,10 +57,11 @@ type Status struct {
 	GameName  string   `json:"gameName"`
 	Engine    string   `json:"engine"`
 	Is64      bool     `json:"is64"`
-	PIDs           []uint32 `json:"pids"`
-	Provider       string   `json:"provider"`
-	DebugMode      bool     `json:"debugMode"`
-	DebugRealTrans bool     `json:"debugRealTrans"`
+	PIDs             []uint32 `json:"pids"`
+	Provider         string   `json:"provider"`
+	FallbackProvider string   `json:"fallbackProvider"`
+	DebugMode        bool     `json:"debugMode"`
+	DebugRealTrans   bool     `json:"debugRealTrans"`
 }
 
 // DebugTrace records per-stage execution timings (in microseconds) for one embed call.
@@ -326,18 +327,23 @@ func (s *Session) SaveConfig(c config.Config) error {
 	return nil
 }
 
+func normalizeEmbed(e config.EmbedSettings) config.EmbedSettings {
+	if e.TimeoutMs < 100 {
+		e.TimeoutMs = 100
+	} else if e.TimeoutMs > 30000 {
+		e.TimeoutMs = 30000
+	}
+	if e.MaxLineLength <= 0 {
+		e.MaxLineLength = arabic.DefaultLineLength
+	}
+	if e.FontSizeRelative <= 0 {
+		e.FontSizeRelative = 1.0
+	}
+	return e
+}
+
 func normalizeConfig(c config.Config) config.Config {
-	if c.Embed.TimeoutMs < 100 {
-		c.Embed.TimeoutMs = 100
-	} else if c.Embed.TimeoutMs > 30000 {
-		c.Embed.TimeoutMs = 30000
-	}
-	if c.Embed.MaxLineLength <= 0 {
-		c.Embed.MaxLineLength = arabic.DefaultLineLength
-	}
-	if c.Embed.FontSizeRelative <= 0 {
-		c.Embed.FontSizeRelative = 1.0
-	}
+	c.Embed = normalizeEmbed(c.Embed)
 	if c.UI.Language != "ar" && c.UI.Language != "en" {
 		c.UI.Language = "ar"
 	}
@@ -347,6 +353,24 @@ func normalizeConfig(c config.Config) config.Config {
 	return c
 }
 
+func (s *Session) effectiveEmbed(global config.EmbedSettings, gamePath string) config.EmbedSettings {
+	if gamePath != "" {
+		if eo := s.store.Game(gamePath).EmbedOverride; eo != nil {
+			return normalizeEmbed(*eo)
+		}
+	}
+	return normalizeEmbed(global)
+}
+
+func (s *Session) effectiveTranslator(global config.TranslatorSettings, gamePath string) config.TranslatorSettings {
+	if gamePath != "" {
+		if to := s.store.Game(gamePath).TranslatorOverride; to != nil {
+			return *to
+		}
+	}
+	return global
+}
+
 func (s *Session) applyConfig(c config.Config) error {
 	s.mu.Lock()
 	gamePath := s.gamePath
@@ -354,9 +378,9 @@ func (s *Session) applyConfig(c config.Config) error {
 	if err := s.rebuildRules(c.Pipeline, gamePath); err != nil {
 		return err
 	}
-	embed := c.Embed
+	embed := s.effectiveEmbed(c.Embed, gamePath)
 	s.embedCfg.Store(&embed)
-	s.translator.Configure(c.Translator)
+	s.translator.Configure(s.effectiveTranslator(c.Translator, gamePath))
 	return nil
 }
 
@@ -397,10 +421,11 @@ func (s *Session) Status() Status {
 		GameName:  filepath.Base(s.gamePath),
 		Engine:    s.engine,
 		Is64:      s.is64,
-		PIDs:           s.pidList(),
-		Provider:       s.translator.Active(),
-		DebugMode:      s.debugMode.Load(),
-		DebugRealTrans: s.debugRealTrans.Load(),
+		PIDs:             s.pidList(),
+		Provider:         s.translator.Active(),
+		FallbackProvider: s.translator.Fallback(),
+		DebugMode:        s.debugMode.Load(),
+		DebugRealTrans:   s.debugRealTrans.Load(),
 	}
 	if s.hostErr != nil {
 		st.HostError = s.hostErr.Error()
@@ -467,12 +492,14 @@ func (s *Session) ListProcesses() ([]hook.ProcessInfo, error) { return hook.List
 
 // SavedGame describes a persisted game profile and whether it is currently running.
 type SavedGame struct {
-	ExePath    string                  `json:"exePath"`
-	Title      string                  `json:"title"`
-	EmbedHooks []config.EmbedHook      `json:"embedHooks"`
-	Pipeline   config.PipelineSettings `json:"pipeline"`
-	RunningPID uint32                  `json:"runningPid"`
-	Attached   bool                    `json:"attached"`
+	ExePath            string                     `json:"exePath"`
+	Title              string                     `json:"title"`
+	EmbedHooks         []config.EmbedHook         `json:"embedHooks"`
+	Pipeline           config.PipelineSettings    `json:"pipeline"`
+	EmbedOverride      *config.EmbedSettings      `json:"embedOverride,omitempty"`
+	TranslatorOverride *config.TranslatorSettings `json:"translatorOverride,omitempty"`
+	RunningPID         uint32                     `json:"runningPid"`
+	Attached           bool                       `json:"attached"`
 }
 
 // SavedGames returns all saved game profiles with live running/attached status.
@@ -502,12 +529,14 @@ func (s *Session) SavedGames() []SavedGame {
 			title = filepath.Base(exePath)
 		}
 		out = append(out, SavedGame{
-			ExePath:    exePath,
-			Title:      title,
-			EmbedHooks: prof.EmbedHooks,
-			Pipeline:   prof.Pipeline,
-			RunningPID: runningPID,
-			Attached:   isAttached && curPath != "" && curPath == normExe,
+			ExePath:            exePath,
+			Title:              title,
+			EmbedHooks:         prof.EmbedHooks,
+			Pipeline:           prof.Pipeline,
+			EmbedOverride:      prof.EmbedOverride,
+			TranslatorOverride: prof.TranslatorOverride,
+			RunningPID:         runningPID,
+			Attached:           isAttached && curPath != "" && curPath == normExe,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -582,6 +611,39 @@ func (s *Session) SaveGamePipeline(exePath string, p config.PipelineSettings) er
 	return nil
 }
 
+// SaveGameOverrides saves optional per-game embed/translator overrides (pass nil to inherit global)
+// and applies them immediately when exePath is currently attached.
+func (s *Session) SaveGameOverrides(exePath string, embedOverride *config.EmbedSettings, translatorOverride *config.TranslatorSettings) error {
+	var normEmbed *config.EmbedSettings
+	if embedOverride != nil {
+		e := normalizeEmbed(*embedOverride)
+		normEmbed = &e
+	}
+	if err := s.store.UpdateGame(exePath, func(g *config.GameProfile) {
+		if g.Title == "" {
+			g.Title = strings.TrimSuffix(filepath.Base(exePath), filepath.Ext(exePath))
+		}
+		g.EmbedOverride = normEmbed
+		g.TranslatorOverride = translatorOverride
+	}); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	curPath := s.gamePath
+	pids := s.pidList()
+	s.mu.Unlock()
+	if curPath != "" && strings.EqualFold(filepath.Clean(curPath), filepath.Clean(exePath)) {
+		if err := s.applyConfig(s.store.Config()); err != nil {
+			return err
+		}
+		for _, pid := range pids {
+			s.pushEmbedSettings(pid)
+		}
+		s.post(EventStatus, s.Status())
+	}
+	return nil
+}
+
 // ClearTranslationCache clears non-manual cached translations and returns the count cleared.
 func (s *Session) ClearTranslationCache() int {
 	n := s.translator.ClearCache()
@@ -650,7 +712,7 @@ func (s *Session) Attach(pid uint32) error {
 	s.is64 = is64
 	s.engine = engine
 	s.mu.Unlock()
-	_ = s.rebuildRules(s.store.Config().Pipeline, path)
+	_ = s.applyConfig(s.store.Config())
 	s.translator.SetGame(path)
 
 	var needInject []uint32
@@ -693,7 +755,7 @@ func (s *Session) Detach() {
 	s.gamePath = ""
 	s.engine = ""
 	s.mu.Unlock()
-	_ = s.rebuildRules(s.store.Config().Pipeline, "")
+	_ = s.applyConfig(s.store.Config())
 	s.translator.SetGame("")
 	if s.host != nil {
 		for _, pid := range pids {
@@ -857,7 +919,7 @@ func (s *Session) pushEmbedSettings(pid uint32) {
 	if s.host == nil {
 		return
 	}
-	cfg := s.store.Config().Embed
+	cfg := *s.embedCfg.Load()
 	s.mu.Lock()
 	engine := s.engine
 	s.mu.Unlock()

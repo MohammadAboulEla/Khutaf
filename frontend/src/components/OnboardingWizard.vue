@@ -1,10 +1,11 @@
 <script setup>
-import { ref, shallowRef } from "vue";
+import { computed, shallowRef } from "vue";
 import Icon from "./Icon.vue";
 import TranslatorBenchmark from "./TranslatorBenchmark.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
 import { useUiMode } from "../composables/useUiMode.js";
+import { ALL_PROVIDERS } from "../utils/providers.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -18,17 +19,42 @@ const { uiMode, setUiMode } = useUiMode();
 
 const step = shallowRef(1);
 const fontLocation = shallowRef("appdata");
+const autoPickNotice = shallowRef("");
 const TOTAL_STEPS = 4;
 
-async function onPickProvider(providerId) {
+const activePrimary = computed(() => config.value?.translator?.active || "bing");
+const activeFallback = computed(() => config.value?.translator?.fallbackProvider || "");
+
+async function saveTranslatorPair(nextActive, nextFallback) {
   if (!config.value) return;
+  const cleanFallback = nextFallback && nextFallback !== nextActive ? nextFallback : "";
   await saveConfig({
     ...config.value,
     translator: {
       ...config.value.translator,
-      active: providerId,
+      active: nextActive,
+      fallbackProvider: cleanFallback,
     },
   });
+}
+
+async function onPickProvider(providerId) {
+  autoPickNotice.value = "";
+  await saveTranslatorPair(providerId, activeFallback.value);
+}
+
+async function onPickFallback(providerId) {
+  autoPickNotice.value = "";
+  await saveTranslatorPair(activePrimary.value, providerId);
+}
+
+async function onBenchmarkDone({ bestPrimary, bestFallback, bestPrimaryLabel, bestFallbackLabel }) {
+  if (!bestPrimary || !config.value) return;
+  const fb = bestFallback && bestFallback !== bestPrimary ? bestFallback : "";
+  await saveTranslatorPair(bestPrimary, fb);
+  autoPickNotice.value = fb
+    ? t("wizS3AutoPicked", { primary: bestPrimaryLabel || bestPrimary, fallback: bestFallbackLabel || fb })
+    : t("wizS3AutoPickedSingle", { primary: bestPrimaryLabel || bestPrimary });
 }
 
 function onFinish() {
@@ -180,11 +206,53 @@ function onSkip() {
             <template v-else-if="step === 3">
               <h3 class="h3">{{ t("wizS3Title") }}</h3>
               <p class="desc">{{ t("wizS3Desc") }}</p>
+
+              <div v-if="autoPickNotice" class="ok-box">
+                <Icon name="CheckCircle" :size="16" />
+                <span>{{ autoPickNotice }}</span>
+              </div>
+
+              <div class="pair-grid">
+                <label class="pair-field">
+                  <span class="pair-lbl">{{ t("wizS3PrimaryLbl") }}</span>
+                  <select
+                    class="pair-select"
+                    :value="activePrimary"
+                    @change="onPickProvider($event.target.value)"
+                  >
+                    <option v-for="p in ALL_PROVIDERS" :key="p.id" :value="p.id">
+                      {{ p.label }}
+                    </option>
+                  </select>
+                </label>
+
+                <label class="pair-field">
+                  <span class="pair-lbl">{{ t("wizS3FallbackLbl") }}</span>
+                  <select
+                    class="pair-select"
+                    :value="activeFallback"
+                    @change="onPickFallback($event.target.value)"
+                  >
+                    <option value="">{{ t("trFallbackNone") }}</option>
+                    <option
+                      v-for="p in ALL_PROVIDERS.filter((x) => x.id !== activePrimary)"
+                      :key="p.id"
+                      :value="p.id"
+                    >
+                      {{ p.label }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+
               <TranslatorBenchmark
                 :compact="true"
                 :translator-config="config?.translator"
-                :active-provider="config?.translator?.active || 'bing'"
+                :active-provider="activePrimary"
+                :fallback-provider="activeFallback"
                 @select-provider="onPickProvider"
+                @select-fallback="onPickFallback"
+                @benchmark-done="onBenchmarkDone"
               />
             </template>
 
@@ -325,6 +393,30 @@ function onSkip() {
   font-size: 10.5px;
   color: var(--fg-muted);
   word-break: break-all;
+}
+.pair-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.pair-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pair-lbl {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.pair-select {
+  height: 30px;
+  padding: 0 10px;
+  background: var(--paper);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
 }
 .pick-card {
   text-align: start;

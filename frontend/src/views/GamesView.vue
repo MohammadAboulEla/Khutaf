@@ -2,12 +2,14 @@
 import { onMounted, ref, shallowRef } from "vue";
 import Icon from "../components/Icon.vue";
 import Tooltip from "../components/Tooltip.vue";
+import GameOverridesModal from "../components/GameOverridesModal.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
 import { formatHookLabel } from "../utils/hookLabels.js";
 
 const emit = defineEmits(["open-hooks", "edit-rules"]);
 const { t, lang } = useI18n();
+const overrideGame = shallowRef(null);
 
 const {
   savedGames,
@@ -197,8 +199,26 @@ function ruleCount(g) {
             </button>
           </div>
         </div>
+
+        <div class="rules-bar">
+          <span class="hlbl ov-badges">
+            <span>{{ t("gvOverridesLbl") }}</span>
+            <span v-if="!g.embedOverride && !g.translatorOverride">{{ t("gvOverridesGlobal") }}</span>
+            <span v-if="g.embedOverride" class="ov-pill">{{ t("gvOverridesEmbed") }}</span>
+            <span v-if="g.translatorOverride" class="ov-pill">{{ t("gvOverridesTranslator") }}</span>
+          </span>
+          <button class="link-btn accent" type="button" @click="overrideGame = g">
+            {{ t("gvEditOverrides") }}
+          </button>
+        </div>
       </div>
     </div>
+
+    <GameOverridesModal
+      :open="Boolean(overrideGame)"
+      :game="overrideGame"
+      @close="overrideGame = null"
+    />
   </div>
 </template>
 
@@ -454,5 +474,18 @@ function ruleCount(g) {
 .link-btn.accent {
   color: var(--accent);
   font-weight: 500;
+}
+.ov-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ov-pill {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 10.5px;
 }
 </style>

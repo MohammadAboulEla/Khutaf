@@ -21,6 +21,7 @@ const status = ref({
   is64: true,
   pids: [],
   provider: "",
+  fallbackProvider: "",
   debugMode: false,
   debugRealTrans: true,
 });
@@ -414,6 +415,25 @@ async function saveGamePipeline(exePath, pipeline) {
     errorBanner.value = String(e);
   }
 }
+
+async function saveGameOverrides(exePath, embedOverride, translatorOverride) {
+  errorBanner.value = "";
+  saveState.value = "saving";
+  try {
+    await call("SaveGameOverrides", exePath, embedOverride, translatorOverride);
+    const st = await call("Status");
+    if (st) status.value = st;
+    await refreshSavedGames();
+    saveState.value = "saved";
+    setTimeout(() => {
+      if (saveState.value === "saved") saveState.value = "";
+    }, 1500);
+  } catch (e) {
+    saveState.value = "";
+    errorBanner.value = String(e);
+    throw e;
+  }
+}
 const clearError = () => {
   errorBanner.value = "";
 };
@@ -529,6 +549,7 @@ export function useSession() {
     setEmbed,
     saveConfig,
     saveGamePipeline,
+    saveGameOverrides,
     deleteSavedGame,
     clearSavedGameHooks,
     removeSavedGameHook,

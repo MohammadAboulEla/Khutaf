@@ -76,12 +76,13 @@ type OfflineLLMSettings struct {
 
 // TranslatorSettings selects and configures the active provider.
 type TranslatorSettings struct {
-	Active      string              `json:"active"` // "bing" | "google" | ... | "llm" | "offline_llm" | "none"
-	Bing        BingSettings        `json:"bing"`
-	Traditional TraditionalSettings `json:"traditional"`
-	LLM         LLMSettings         `json:"llm"`
-	OfflineLLM  OfflineLLMSettings  `json:"offlineLlm"`
-	LlamaCpp    LlamaCppSettings    `json:"llamaCpp"`
+	Active           string              `json:"active"` // "bing" | "google" | ... | "llm" | "offline_llm" | "none"
+	FallbackProvider string              `json:"fallbackProvider,omitempty"`
+	Bing             BingSettings        `json:"bing"`
+	Traditional      TraditionalSettings `json:"traditional"`
+	LLM              LLMSettings         `json:"llm"`
+	OfflineLLM       OfflineLLMSettings  `json:"offlineLlm"`
+	LlamaCpp         LlamaCppSettings    `json:"llamaCpp"`
 }
 
 // Rule is a text replacement applied before or after translation.
@@ -138,9 +139,11 @@ type EmbedHook struct {
 
 // GameProfile stores per-game state keyed by executable path.
 type GameProfile struct {
-	Title      string           `json:"title"`
-	EmbedHooks []EmbedHook      `json:"embedHooks"`
-	Pipeline   PipelineSettings `json:"pipeline,omitempty"`
+	Title              string              `json:"title"`
+	EmbedHooks         []EmbedHook         `json:"embedHooks"`
+	Pipeline           PipelineSettings    `json:"pipeline,omitempty"`
+	EmbedOverride      *EmbedSettings      `json:"embedOverride,omitempty"`
+	TranslatorOverride *TranslatorSettings `json:"translatorOverride,omitempty"`
 }
 
 // Default returns the factory configuration.
@@ -273,6 +276,18 @@ func Open(dir string) (*Store, error) {
 	if err := readJSON(filepath.Join(dir, "games.json"), &s.games); err != nil {
 		return nil, err
 	}
+	for k, g := range s.games {
+		if g.TranslatorOverride != nil && g.TranslatorOverride.LLM.APIKey != "" {
+			plain, err := unprotectSecret(g.TranslatorOverride.LLM.APIKey)
+			if err != nil {
+				g.TranslatorOverride.LLM.APIKey = ""
+				s.SetInitWarning(fmt.Sprintf("stored per-game LLM API key for %s could not be decrypted on this Windows account", filepath.Base(k)))
+			} else {
+				g.TranslatorOverride.LLM.APIKey = plain
+			}
+			s.games[k] = g
+		}
+	}
 	var gf GlossaryFile
 	if err := readJSON(filepath.Join(dir, "glossary.json"), &gf); err != nil {
 		return nil, err
@@ -358,7 +373,11 @@ func (s *Store) DeleteGame(exePath string) error {
 	if s.dir == "" {
 		return nil
 	}
-	if err := writeJSON(filepath.Join(s.dir, "games.json"), snapshot); err != nil {
+	diskGames, err := protectGamesForDisk(snapshot)
+	if err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(s.dir, "games.json"), diskGames); err != nil {
 		return err
 	}
 	return s.saveGlossaryFile(globalGlossary, snapshot)
@@ -389,7 +408,11 @@ func (s *Store) UpdateGame(exePath string, fn func(*GameProfile)) error {
 	if s.dir == "" {
 		return nil
 	}
-	if err := writeJSON(filepath.Join(s.dir, "games.json"), snapshot); err != nil {
+	diskGames, err := protectGamesForDisk(snapshot)
+	if err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(s.dir, "games.json"), diskGames); err != nil {
 		return err
 	}
 	return s.saveGlossaryFile(globalGlossary, snapshot)
@@ -431,7 +454,31 @@ func cloneGameProfile(g GameProfile) GameProfile {
 		g.EmbedHooks = hooks
 	}
 	g.Pipeline = clonePipeline(g.Pipeline)
+	if g.EmbedOverride != nil {
+		eo := *g.EmbedOverride
+		g.EmbedOverride = &eo
+	}
+	if g.TranslatorOverride != nil {
+		to := *g.TranslatorOverride
+		g.TranslatorOverride = &to
+	}
 	return g
+}
+
+func protectGamesForDisk(games map[string]GameProfile) (map[string]GameProfile, error) {
+	out := make(map[string]GameProfile, len(games))
+	for k, g := range games {
+		cp := cloneGameProfile(g)
+		if cp.TranslatorOverride != nil && cp.TranslatorOverride.LLM.APIKey != "" {
+			enc, err := protectSecret(cp.TranslatorOverride.LLM.APIKey)
+			if err != nil {
+				return nil, fmt.Errorf("protect per-game LLM API key: %w", err)
+			}
+			cp.TranslatorOverride.LLM.APIKey = enc
+		}
+		out[k] = cp
+	}
+	return out, nil
 }
 
 func (s *Store) saveGlossaryFile(global []GlossaryEntry, games map[string]GameProfile) error {

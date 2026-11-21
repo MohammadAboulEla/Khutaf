@@ -69,6 +69,8 @@ export function SaveCacheEntry(arg1:string,arg2:string,arg3:string,arg4:string):
 
 export function SaveConfig(arg1:config.Config):Promise<void>;
 
+export function SaveGameOverrides(arg1:string,arg2:config.EmbedSettings,arg3:config.TranslatorSettings):Promise<void>;
+
 export function SaveGamePipeline(arg1:string,arg2:config.PipelineSettings):Promise<void>;
 
 export function SavedGames():Promise<Array<session.SavedGame>>;

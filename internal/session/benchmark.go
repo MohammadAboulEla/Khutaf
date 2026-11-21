@@ -19,12 +19,12 @@ import (
 )
 
 // DefaultSingleBenchmarkText is the default line used when benchmarking a single sample.
-const DefaultSingleBenchmarkText = "The ancient gate is sealed. Find the Silver Key to proceed!"
+const DefaultSingleBenchmarkText = "[Test] Welcome, Hero! If you can read this in Arabic, your translator is working."
 
 // GameBenchmarkPack returns 4 realistic Unity strings covering dialogue, rich tags, placeholders, and UI text.
 func GameBenchmarkPack() []string {
 	return []string{
-		"The ancient gate is sealed. Find the Silver Key to proceed!",
+		"[Test] Welcome, Hero! If you can read this in Arabic, your translator is working.",
 		"Found <color=#FFD700>Silver Key</color> in the chest.",
 		"Welcome back, {player}! Press [E] to talk.",
 		"Save Game & Continue",

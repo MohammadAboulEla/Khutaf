@@ -34,6 +34,7 @@ type Manager struct {
 	hasCfg   bool
 	cfg      config.TranslatorSettings
 	provider Provider
+	fallback Provider
 	gameUID  string
 	cache    *pipeline.Cache
 	inflight map[string]*inflightCall
@@ -50,8 +51,12 @@ func (m *Manager) SetTelemetry(fn TelemetryFunc) {
 	}
 	m.mu.RLock()
 	p := m.provider
+	fb := m.fallback
 	m.mu.RUnlock()
 	if b, ok := p.(*Bing); ok {
+		b.SetTelemetry(fn)
+	}
+	if b, ok := fb.(*Bing); ok {
 		b.SetTelemetry(fn)
 	}
 }
@@ -125,8 +130,18 @@ func (m *Manager) Configure(cfg config.TranslatorSettings) {
 	}
 
 	p := BuildProvider(cfg)
-	if b, ok := p.(*Bing); ok {
-		if tp := m.telem.Load(); tp != nil && *tp != nil {
+	var fb Provider
+	fbID := strings.TrimSpace(cfg.FallbackProvider)
+	if fbID != "" && fbID != "none" && fbID != cfg.Active {
+		fbCfg := cfg
+		fbCfg.Active = fbID
+		fb = BuildProvider(fbCfg)
+	}
+	if tp := m.telem.Load(); tp != nil && *tp != nil {
+		if b, ok := p.(*Bing); ok {
+			b.SetTelemetry(*tp)
+		}
+		if b, ok := fb.(*Bing); ok {
 			b.SetTelemetry(*tp)
 		}
 	}
@@ -134,6 +149,7 @@ func (m *Manager) Configure(cfg config.TranslatorSettings) {
 	m.cfg = cfg
 	m.hasCfg = true
 	m.provider = p
+	m.fallback = fb
 	m.mu.Unlock()
 }
 
@@ -145,6 +161,16 @@ func (m *Manager) Active() string {
 		return ""
 	}
 	return m.provider.Name()
+}
+
+// Fallback returns the configured fallback provider name, or "" when disabled.
+func (m *Manager) Fallback() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.fallback == nil {
+		return ""
+	}
+	return m.fallback.Name()
 }
 
 // CacheSize returns the total number of cached translations.
@@ -168,6 +194,7 @@ func (m *Manager) Translate(ctx context.Context, text string) (string, bool, err
 func (m *Manager) TranslateValidated(ctx context.Context, text string, valid func(string) error) (string, bool, error) {
 	m.mu.RLock()
 	p := m.provider
+	fb := m.fallback
 	gameUID := m.gameUID
 	m.mu.RUnlock()
 
@@ -269,6 +296,63 @@ func (m *Manager) TranslateValidated(ctx context.Context, text string, valid fun
 			}
 			if err == nil {
 				m.cache.PutAuto(gameUID, provName, text, out)
+			}
+		}
+
+		if err != nil && fb != nil && ctx.Err() == nil {
+			primaryErr := err
+			fbName := fb.Name()
+			if fbCached, hit := m.cache.GetSilent(gameUID, fbName, text); hit {
+				m.emitTelem("Manager.Translate.Fallback", 0, "warn", "primary failed; used fallback cache", map[string]any{
+					"primary":    provName,
+					"fallback":   fbName,
+					"primaryErr": primaryErr.Error(),
+				})
+				out, err = fbCached, nil
+				return
+			}
+
+			fbStart := time.Now()
+			fbCtx, fbCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			defer fbCancel()
+
+			var fbOut string
+			var fbErr error
+			select {
+			case m.sem <- struct{}{}:
+				func() {
+					defer func() { <-m.sem }()
+					fbOut, fbErr = fb.Translate(fbCtx, text)
+				}()
+			case <-fbCtx.Done():
+				fbErr = fbCtx.Err()
+			}
+			if fbErr == nil && strings.TrimSpace(fbOut) == "" {
+				fbErr = errors.New("fallback provider returned empty translation")
+			}
+			if fbErr == nil && valid != nil {
+				if verr := valid(fbOut); verr != nil {
+					fbErr = verr
+				}
+			}
+
+			fbDurUs := time.Since(fbStart).Microseconds()
+			if fbErr == nil {
+				m.cache.PutAuto(gameUID, fbName, text, fbOut)
+				m.emitTelem("Manager.Translate.Fallback", fbDurUs, "warn", "primary failed; used fallback", map[string]any{
+					"primary":    provName,
+					"fallback":   fbName,
+					"primaryErr": primaryErr.Error(),
+				})
+				out, err = fbOut, nil
+			} else {
+				m.emitTelem("Manager.Translate.Fallback", fbDurUs, "error", fbErr.Error(), map[string]any{
+					"primary":    provName,
+					"fallback":   fbName,
+					"primaryErr": primaryErr.Error(),
+				})
+				err = fmt.Errorf("%w (fallback %s failed: %v)", primaryErr, fbName, fbErr)
+				out = ""
 			}
 		}
 	}()

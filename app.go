@@ -145,6 +145,11 @@ func (a *App) SaveGamePipeline(exePath string, p config.PipelineSettings) error 
 	return a.session.SaveGamePipeline(exePath, p)
 }
 
+// SaveGameOverrides saves optional per-game embed and translator overrides (nil inherits global).
+func (a *App) SaveGameOverrides(exePath string, embedOverride *config.EmbedSettings, translatorOverride *config.TranslatorSettings) error {
+	return a.session.SaveGameOverrides(exePath, embedOverride, translatorOverride)
+}
+
 // ClearTranslationCache clears non-manual cached translations.
 func (a *App) ClearTranslationCache() int { return a.session.ClearTranslationCache() }
 

@@ -4,6 +4,7 @@ import TranslatorBenchmark from "../components/TranslatorBenchmark.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
 import { useUiMode } from "../composables/useUiMode.js";
+import { ALL_PROVIDERS, TRADITIONAL_PROVIDERS } from "../utils/providers.js";
 
 const {
   config,
@@ -19,22 +20,6 @@ const {
 
 const { t } = useI18n();
 const { isSimple } = useUiMode();
-
-const TRADITIONAL_PROVIDERS = [
-  { id: "bing", label: "Bing" },
-  { id: "google", label: "Google" },
-  { id: "microsoft", label: "Microsoft" },
-  { id: "yandex", label: "Yandex" },
-  { id: "modernmt", label: "ModernMT" },
-  { id: "alibaba", label: "Alibaba" },
-  { id: "youdao", label: "Youdao" },
-  { id: "papago", label: "Papago" },
-  { id: "qqtransmart", label: "qqTranSmart" },
-  { id: "qqimt", label: "qqimt" },
-  { id: "translatecom", label: "Translate.com" },
-  { id: "volcengine", label: "Volcengine" },
-  { id: "lingocloud", label: "LingoCloud" },
-];
 
 const PRESETS = [
   { name: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
@@ -56,6 +41,7 @@ const OFFLINE_TEMPLATES = [
 
 const form = reactive({
   active: "bing",
+  fallbackProvider: "",
   bingSourceLang: "auto-detect",
   bingTargetLang: "ar",
   tradSourceLang: "auto",
@@ -86,7 +72,7 @@ const isTraditional = computed(() =>
   TRADITIONAL_PROVIDERS.some((p) => p.id === form.active),
 );
 
-const testInput = shallowRef("The ancient gate is sealed. Find the Silver Key to proceed!");
+const testInput = shallowRef("[Test] Welcome, Hero! If you can read this in Arabic, your translator is working.");
 const testResult = shallowRef(null);
 const testErr = shallowRef("");
 const testing = shallowRef(false);
@@ -116,6 +102,7 @@ watch(
   (cfg) => {
     if (!cfg) return;
     form.active = cfg.translator.active || "bing";
+    form.fallbackProvider = cfg.translator.fallbackProvider || "";
     form.bingSourceLang = cfg.translator.bing?.sourceLang || "auto-detect";
     form.bingTargetLang = cfg.translator.bing?.targetLang || "ar";
     form.tradSourceLang = cfg.translator.traditional?.sourceLang || "auto";
@@ -153,6 +140,7 @@ function applyPreset(p) {
 function buildTranslatorConfig() {
   return {
     active: form.active,
+    fallbackProvider: form.fallbackProvider === form.active ? "" : form.fallbackProvider,
     bing: {
       sourceLang: form.bingSourceLang.trim() || "auto-detect",
       targetLang: form.bingTargetLang.trim() || "ar",
@@ -198,8 +186,21 @@ async function onSave() {
   });
 }
 
+watch(
+  () => form.active,
+  (next) => {
+    if (form.fallbackProvider === next) form.fallbackProvider = "";
+  },
+);
+
 async function onSelectBenchmarkProvider(id) {
   form.active = id;
+  if (form.fallbackProvider === id) form.fallbackProvider = "";
+  await onSave();
+}
+
+async function onSelectFallbackProvider(id) {
+  form.fallbackProvider = id === form.active ? "" : id;
   await onSave();
 }
 
@@ -275,6 +276,23 @@ async function onStopLlama() {
             <option value="llm">OpenAI-Compatible LLM (Cloud / Ollama / llama.cpp)</option>
           </optgroup>
           <option value="none">{{ t("trDisabled") }}</option>
+        </select>
+      </div>
+
+      <div class="fallback-row">
+        <div class="fallback-meta">
+          <span class="lbl">{{ t("trFallbackTitle") }}</span>
+          <span class="fallback-desc">{{ t("trFallbackDesc") }}</span>
+        </div>
+        <select v-model="form.fallbackProvider" class="select">
+          <option value="">{{ t("trFallbackNone") }}</option>
+          <option
+            v-for="p in ALL_PROVIDERS.filter((x) => x.id !== form.active)"
+            :key="p.id"
+            :value="p.id"
+          >
+            {{ p.label }}
+          </option>
         </select>
       </div>
 
@@ -427,7 +445,9 @@ async function onStopLlama() {
       <TranslatorBenchmark
         :translator-config="buildTranslatorConfig()"
         :active-provider="form.active"
+        :fallback-provider="form.fallbackProvider"
         @select-provider="onSelectBenchmarkProvider"
+        @select-fallback="onSelectFallbackProvider"
       />
     </div>
 
@@ -542,6 +562,28 @@ async function onStopLlama() {
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+.fallback-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.fallback-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 220px;
+}
+.fallback-desc {
+  font-size: 11px;
+  color: var(--fg-muted);
 }
 .head-left {
   display: flex;
