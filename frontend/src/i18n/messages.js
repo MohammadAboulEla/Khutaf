@@ -173,7 +173,7 @@ export const MESSAGES = {
     trAdvancedSection: "إعدادات متقدمة للذكاء الاصطناعي والخادم المحلي (llama.cpp)",
 
     // Embed Settings View
-    embBundlesTitle: "حزمة خطوط Unity العربية (TMP Font AssetBundles)",
+    embBundlesTitle: "حزمة خطوط Unity العربية",
     embInstalled: "مثبتة ({count})",
     embNotInstalled: "غير مثبتة",
     embBundlesDesc: "حزمة خطوط اختيارية (~139 MB) تمنع ظهور الحروف العربية كمربعات □□□ في ألعاب Unity.",
