@@ -24,6 +24,7 @@ defineProps({
   font-family: var(--mono);
   font-size: var(--fs-small);
   color: var(--fg-muted);
+  font-weight: 500;
 }
 .spacer { flex: 1; }
 </style>

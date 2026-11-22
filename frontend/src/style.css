@@ -19,9 +19,10 @@
   --text-link: #1a56b8;
 
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --arabic: "Segoe UI", "Tahoma", sans-serif;
+  --arabic: "Tahoma", "Segoe UI", sans-serif;
   --sans: "Inter", system-ui, -apple-system, "Segoe UI", "Tahoma", sans-serif;
   --serif: "Newsreader", Georgia, serif;
+  --app-title: "Cairo", "Tahoma", "Segoe UI", sans-serif;
 
   --fs-small: 12px;
   color-scheme: light;
@@ -47,8 +48,15 @@
   color-scheme: dark;
 }
 
-* { box-sizing: border-box; }
-html, body, #app { height: 100%; margin: 0; }
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
 body {
   font-family: var(--sans);
   font-size: 14px;
@@ -58,8 +66,14 @@ body {
   overflow: hidden;
 }
 
-.drag { -webkit-app-region: drag; --wails-draggable: drag; }
-.no-drag { -webkit-app-region: no-drag; --wails-draggable: no-drag; }
+.drag {
+  -webkit-app-region: drag;
+  --wails-draggable: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+  --wails-draggable: no-drag;
+}
 
 * {
   scrollbar-width: thin;
@@ -69,15 +83,23 @@ body {
   width: var(--scrollbar-size);
   height: var(--scrollbar-size);
 }
-*::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
 *::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   border-radius: 8px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
-*::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: padding-box; border: 2px solid transparent; }
-*::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
 
 select {
   appearance: none;

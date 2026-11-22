@@ -138,7 +138,7 @@ const close = () => emit("close-window");
   font-weight: 700;
 }
 .ar {
-  font-family: var(--arabic);
+  font-family: var(--app-title);
   font-size: 15px;
 }
 .en {
