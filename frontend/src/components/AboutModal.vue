@@ -6,7 +6,7 @@ import { useI18n } from "../composables/useI18n.js";
 const props = defineProps({
   open: { type: Boolean, default: false },
   title: { type: String, default: "Khutaf" },
-  version: { type: String, default: "0.1.4-beta" },
+  version: { type: String, default: "0.1.5-beta" },
 });
 
 const emit = defineEmits(["close"]);

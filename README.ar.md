@@ -16,7 +16,7 @@
 
 ---
 
-## التحميل (`v0.1.4-beta`)
+## التحميل (`v0.1.5-beta`)
 
 يمكنك تحميل أحدث نسخة محمولة لويندوز (`Khutaf.exe` + `runtime/khutaf-hook64.dll`) من صفحة [GitHub Releases](https://github.com/MohammadAboulEla/Khutaf/releases):
 
