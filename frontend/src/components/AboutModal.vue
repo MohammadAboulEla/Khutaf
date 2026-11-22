@@ -48,20 +48,20 @@ const content = computed(() => ({
   en: {
     modalTitle: `About ${props.title}`,
     heroName: `${props.title} · خُطّاف`,
-    subtitle: `version ${props.version} · Live Arabic Unity Game Hook`,
+    subtitle: `version ${props.version} · Live Arabic Game Hook`,
     closeLabel: "Close",
     footerNote: "© 2026 Mohammad AboulEla · GPL-3.0",
     sections: [
       {
         heading: "About Khutaf",
-        body: "Khutaf (خُطّاف) is a real-time in-game Arabic text hook and embedded translator for 64-bit Unity (Mono & IL2CPP) PC games on Windows. It attaches to running games, intercepts text directly from memory, translates it, and injects shaped RTL Arabic back into the UI without modifying game files.",
+        body: "Khutaf (خُطّاف) is a real-time in-game Arabic text hook and embedded translator for PC games on Windows. It attaches to running games, intercepts text directly from memory, translates it, and injects shaped RTL Arabic back into the UI without modifying game files. This version currently supports 64-bit Unity (Mono & IL2CPP) games, with more engines planned on the roadmap.",
       },
       {
-        heading: "Non-Blocking Hooking & Unity Support",
-        body: "Powered by custom Rust khutaf-hook64.dll (PROTO_VERSION = 2), async mode translates off the Unity main thread and writes back on frame ticks (Canvas::SendWillRenderCanvases / Camera::FireOnPreCull) with zero gameplay freeze. Configure the pending placeholder (Original default, \"...\", or custom text) with auto-restore on timeout/error, zero-alloc UTF-16 pre-filtering, circuit breaker recovery, and per-call-site #ctx Embed toggles in userconfig/games.json.",
+        heading: "Non-Blocking Hooking & Engine Support",
+        body: "Powered by custom Rust khutaf-hook64.dll (PROTO_VERSION = 2), async mode translates off the game's main thread and writes back on frame ticks (currently via Unity's Canvas::SendWillRenderCanvases / Camera::FireOnPreCull) with zero gameplay freeze. Configure the pending placeholder (Original default, \"...\", or custom text) with auto-restore on timeout/error, zero-alloc UTF-16 pre-filtering, circuit breaker recovery, and per-call-site #ctx Embed toggles in userconfig/games.json.",
       },
       {
-        heading: "Arabic Shaping, BiDi & Unity Fonts",
+        heading: "Arabic Shaping, BiDi & Font Injection",
         body: "Built-in contextual shaping (Presentation Forms + Lam-Alef ligatures + Tashkeel), logical word-boundary wrapping before reversal, bracket mirroring, and preservation of Latin words, numbers, [vars], {vars}, CamelCase tokens, and <color=...> rich-text tags. Supports dynamic OS fonts (Tahoma default) and one-click SHA-256-verified TMP_Font_AssetBundles downloads in Embed Settings.",
       },
       {
@@ -81,20 +81,20 @@ const content = computed(() => ({
   ar: {
     modalTitle: "حول خُطّاف",
     heroName: `خُطّاف · ${props.title}`,
-    subtitle: `الإصدار ${props.version} · حقن وترجمة فورية لألعاب Unity`,
+    subtitle: `الإصدار ${props.version} · حقن وترجمة فورية للألعاب`,
     closeLabel: "إغلاق",
     footerNote: "© 2026 Mohammad AboulEla · GPL-3.0",
     sections: [
       {
         heading: "حول خُطّاف",
-        body: "برنامج «خُطّاف» (Khutaf) هو أداة للترجمة الفورية والحقن النصي باللغة العربية لألعاب الكمبيوتر المبنية بمحرك Unity (64-bit Mono وIL2CPP) على نظام ويندوز. يتصل باللعبة أثناء تشغيلها لالتقاط النصوص من الذاكرة، وترجمتها، وحقن العربية المشكّلة مباشرة داخل واجهة اللعبة بدون تعديل ملفاتها.",
+        body: "برنامج «خُطّاف» (Khutaf) هو أداة للترجمة الفورية والحقن النصي باللغة العربية لألعاب الكمبيوتر على نظام ويندوز. يتصل باللعبة أثناء تشغيلها لالتقاط النصوص من الذاكرة، وترجمتها، وحقن العربية المشكّلة مباشرة داخل واجهة اللعبة بدون تعديل ملفاتها. يدعم هذا الإصدار حالياً ألعاب Unity (64-bit Mono وIL2CPP)، مع خطة لدعم محركات أخرى في الإصدارات القادمة.",
       },
       {
-        heading: "الحقن غير الحاجز ودعم Unity",
+        heading: "الحقن غير الحاجز ودعم المحركات",
         body: "يعتمد على مكتبة Rust المخصصة khutaf-hook64.dll (بروتوكول PROTO_VERSION = 2)، حيث تُنفّذ الترجمة غير الحاجزة (Async) خارج المسار الرئيسي للعبة وتُكتب عند تحديث الإطارات (Canvas::SendWillRenderCanvases / Camera::FireOnPreCull) دون تجميد اللعب. يمكنك تخصيص نص الانتظار (الأصلي افتراضياً، أو \"...\"، أو نص مخصص) مع الاستعادة التلقائية عند الفشل، والترشيح الأولي السريع لنصوص UTF-16، وقاطع الدائرة، وحفظ تفعيل الـ Embed لكل #ctx في userconfig/games.json.",
       },
       {
-        heading: "تشكيل العربية والـ BiDi وخطوط Unity",
+        heading: "تشكيل العربية والـ BiDi وحقن الخطوط",
         body: "محرك مدمج للتشكيل السياقي (الأشكال التقديمية ودمج اللام ألف والحفاظ على التشكيل)، والتفاف الأسطر المنطقي على حدود الكلمات قبل العكس، وعكس الأقواس، مع الحفاظ على الكلمات الإنجليزية والأرقام والمتغيرات [vars] و{vars} ومعرّفات CamelCase ووسوم <color=...> سليمة. يدعم خطوط النظام الديناميكية (Tahoma افتراضياً) وتحميل حزم TMP_Font_AssetBundles المتحقق منها بـ SHA-256 بضغطة زر من Embed Settings.",
       },
       {

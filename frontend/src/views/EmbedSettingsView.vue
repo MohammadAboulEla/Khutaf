@@ -274,7 +274,7 @@ function onSave() {
             </header>
             <div class="modal-body">
               <p>
-                <strong>Use Unity Arial SDF Bundle</strong> is enabled by default for Unity games. Downloading the
+                <strong>Use Unity Arial SDF Bundle</strong> is enabled by default. Downloading the
                 optional <strong>~139 MB</strong> font bundle pack is recommended so Arabic text renders cleanly when
                 dynamic OS font creation fails.
               </p>
