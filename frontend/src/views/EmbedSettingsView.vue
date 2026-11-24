@@ -10,14 +10,25 @@ const props = defineProps({
   onboardingOpen: { type: Boolean, default: false },
 });
 
-const { config, saveConfig, saveState, listFonts, unityFontStatus, refreshUnityFontStatus, downloadUnityFonts } =
+const { config, saveConfig, saveState, listFonts, listAllFonts, unityFontStatus, refreshUnityFontStatus, downloadUnityFonts } =
   useSession();
 const { t } = useI18n();
 const { isSimple } = useUiMode();
 
 const fonts = shallowRef(["Tahoma", "Arial", "Segoe UI"]);
+const showAllFonts = ref(false);
 const confirmRedownload = ref(false);
 const showBundleModal = ref(false);
+const scalePresets = [0.85, 1.0, 1.15, 1.3];
+
+async function refreshFonts() {
+  const list = showAllFonts.value ? await listAllFonts() : await listFonts();
+  if (list?.length) fonts.value = list;
+}
+
+watch(showAllFonts, () => {
+  refreshFonts();
+});
 
 function onKeyDown(e) {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -40,8 +51,7 @@ onMounted(async () => {
     localStorage.setItem("khutaf.unityBundlePrompted", "1");
     showBundleModal.value = true;
   }
-  const list = await listFonts();
-  if (list?.length) fonts.value = list;
+  await refreshFonts();
 });
 
 onUnmounted(() => {
@@ -223,14 +233,12 @@ function onSave() {
               </option>
               <option v-for="f in fonts" :key="f" :value="f">{{ f }}</option>
             </select>
-            <div
-              class="font-preview"
-              dir="rtl"
-              :style="{ fontFamily: form.fontFamily ? `'${form.fontFamily}', sans-serif` : 'inherit' }"
-            >
-              {{ t("embFontPreview") }}
-            </div>
             <span class="field-hint">{{ t("embFontFamilyHint") }}</span>
+          </label>
+
+          <label class="chk" :class="{ disabled: !form.changeFont }">
+            <input v-model="showAllFonts" type="checkbox" :disabled="!form.changeFont" />
+            <span>{{ t("embShowAllFonts") }}</span>
           </label>
 
           <Tooltip :text="unityFontStatus.installed ? '' : 'Download bundles first to enable this fallback'">
@@ -263,6 +271,34 @@ function onSave() {
               :disabled="!form.changeFontSize"
             />
           </label>
+
+          <div class="scale-presets">
+            <button
+              v-for="p in scalePresets"
+              :key="p"
+              type="button"
+              class="preset-btn"
+              :class="{ active: form.changeFontSize && Math.abs(Number(form.fontSizeRelative) - p) < 0.01 }"
+              :disabled="!form.changeFontSize"
+              @click="form.fontSizeRelative = p"
+            >
+              {{ p }}×
+            </button>
+          </div>
+
+          <div class="preview-wrap">
+            <span class="lbl">{{ t("embFontPreviewLbl") }}</span>
+            <div
+              class="font-preview"
+              dir="rtl"
+              :style="{
+                fontFamily: form.fontFamily ? `'${form.fontFamily}', sans-serif` : 'inherit',
+                fontSize: `${Math.round(14 * (form.changeFontSize ? Number(form.fontSizeRelative) || 1 : 1))}px`,
+              }"
+            >
+              {{ t("embFontPreview") }}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -415,16 +451,53 @@ function onSave() {
 .sub-panel .input {
   background: var(--bg-elev);
 }
+.sub-panel .field {
+  flex: 0 0 auto;
+}
 .strong-chk {
   font-weight: 600;
 }
+.scale-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.preset-btn {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.preset-btn.active {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elev));
+}
+.preset-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.preview-wrap {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
 .font-preview {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
   padding: 8px 10px;
   border-radius: 5px;
   background: var(--bg-elev);
   border: 1px dashed var(--border);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--fg);
   white-space: nowrap;
   overflow: hidden;

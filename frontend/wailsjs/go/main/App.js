@@ -94,6 +94,10 @@ export function IsAdmin() {
   return window['go']['main']['App']['IsAdmin']();
 }
 
+export function ListAllFonts() {
+  return window['go']['main']['App']['ListAllFonts']();
+}
+
 export function ListCacheEntries(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ListCacheEntries'](arg1, arg2, arg3, arg4);
 }

@@ -297,6 +297,7 @@ const previewArabic = (text) => call("PreviewArabic", text);
 const testTranslate = (text) => call("TestTranslate", text);
 const testTranslateWithConfig = (text, cfg) => call("TestTranslateWithConfig", text, cfg);
 const listFonts = () => call("ListFonts");
+const listAllFonts = () => call("ListAllFonts");
 const startLlamaServer = (cfg) => call("StartLlamaServer", cfg);
 const stopLlamaServer = () => call("StopLlamaServer");
 const llamaServerStatus = () => call("LlamaServerStatus");
@@ -654,6 +655,7 @@ export function useSession() {
     testTranslate,
     testTranslateWithConfig,
     listFonts,
+    listAllFonts,
     startLlamaServer,
     stopLlamaServer,
     llamaServerStatus,

@@ -22,3 +22,13 @@ func TestListFontsVerifiesArabicGlyphs(t *testing.T) {
 		}
 	}
 }
+
+func TestListAllFontsIncludesMoreThanFiltered(t *testing.T) {
+	app := &App{}
+	filtered := app.ListFonts()
+	all := app.ListAllFonts()
+	t.Logf("filtered=%d all=%d", len(filtered), len(all))
+	if len(all) < len(filtered) {
+		t.Fatalf("expected all fonts (%d) >= filtered fonts (%d)", len(all), len(filtered))
+	}
+}

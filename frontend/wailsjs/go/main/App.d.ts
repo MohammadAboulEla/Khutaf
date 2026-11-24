@@ -53,6 +53,8 @@ export function Hooks():Promise<Array<session.HookView>>;
 
 export function IsAdmin():Promise<boolean>;
 
+export function ListAllFonts():Promise<Array<string>>;
+
 export function ListCacheEntries(arg1:string,arg2:string,arg3:boolean,arg4:number):Promise<Array<pipeline.CacheEntry>>;
 
 export function ListFonts():Promise<Array<string>>;

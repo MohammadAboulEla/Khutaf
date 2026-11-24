@@ -640,10 +640,11 @@ var arabicShapedProbe = func() []uint16 {
 }()
 
 var (
-	fontEnumMu    sync.Mutex
-	fontEnumSeen  map[string]bool
-	fontListCache []string
-	enumFontProc  = syscall.NewCallback(func(lf *logFontW, _ uintptr, _ uintptr, _ uintptr) uintptr {
+	fontEnumMu       sync.Mutex
+	fontEnumSeen     map[string]bool
+	fontListCache    []string
+	allFontListCache []string
+	enumFontProc     = syscall.NewCallback(func(lf *logFontW, _ uintptr, _ uintptr, _ uintptr) uintptr {
 		name := windows.UTF16ToString(lf.FaceName[:])
 		if name != "" && !strings.HasPrefix(name, "@") {
 			fontEnumSeen[name] = true
@@ -697,17 +698,7 @@ func fontSupportsArabicShaped(hdc uintptr, family string) bool {
 	return true
 }
 
-// ListFonts returns installed Windows font family names with complete Arabic glyph support.
-func (a *App) ListFonts() []string {
-	fontEnumMu.Lock()
-	defer fontEnumMu.Unlock()
-
-	if len(fontListCache) > 0 {
-		cp := make([]string, len(fontListCache))
-		copy(cp, fontListCache)
-		return cp
-	}
-
+func listSystemFonts(filterArabic bool) []string {
 	hdc, _, _ := procGetDC.Call(0)
 	if hdc == 0 {
 		return []string{"Arial", "Segoe UI", "Tahoma"}
@@ -719,7 +710,7 @@ func (a *App) ListFonts() []string {
 	procEnumFontFamiliesW.Call(hdc, uintptr(unsafe.Pointer(&lf)), enumFontProc, 0, 0)
 	out := make([]string, 0, len(fontEnumSeen))
 	for n := range fontEnumSeen {
-		if fontSupportsArabicShaped(hdc, n) {
+		if !filterArabic || fontSupportsArabicShaped(hdc, n) {
 			out = append(out, n)
 		}
 	}
@@ -729,8 +720,40 @@ func (a *App) ListFonts() []string {
 		return []string{"Arial", "Segoe UI", "Tahoma"}
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
+	return out
+}
+
+// ListFonts returns installed Windows font family names with complete Arabic glyph support.
+func (a *App) ListFonts() []string {
+	fontEnumMu.Lock()
+	defer fontEnumMu.Unlock()
+
+	if len(fontListCache) > 0 {
+		cp := make([]string, len(fontListCache))
+		copy(cp, fontListCache)
+		return cp
+	}
+
+	out := listSystemFonts(true)
 	fontListCache = make([]string, len(out))
 	copy(fontListCache, out)
+	return out
+}
+
+// ListAllFonts returns all installed Windows font family names without Arabic glyph filtering.
+func (a *App) ListAllFonts() []string {
+	fontEnumMu.Lock()
+	defer fontEnumMu.Unlock()
+
+	if len(allFontListCache) > 0 {
+		cp := make([]string, len(allFontListCache))
+		copy(cp, allFontListCache)
+		return cp
+	}
+
+	out := listSystemFonts(false)
+	allFontListCache = make([]string, len(out))
+	copy(allFontListCache, out)
 	return out
 }
 
