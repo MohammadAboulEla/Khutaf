@@ -211,11 +211,6 @@ function onSave() {
           <span class="lbl">{{ t("embTimeout") }}</span>
           <input v-model.number="form.timeoutMs" type="number" min="200" max="15000" step="100" class="input" />
         </label>
-
-        <label class="field">
-          <span class="lbl">{{ t("embLineLen") }}</span>
-          <input v-model.number="form.maxLineLength" type="number" min="15" max="120" class="input" />
-        </label>
       </div>
 
       <div class="font-grid">
@@ -305,10 +300,16 @@ function onSave() {
       <details class="adv-details" :open="!isSimple">
         <summary class="adv-summary">{{ t("embAdvancedGroup") }}</summary>
         <div class="adv-body">
-          <label v-if="isSimple" class="field">
-            <span class="lbl">{{ t("embTimeout") }}</span>
-            <input v-model.number="form.timeoutMs" type="number" min="200" max="15000" step="100" class="input" />
-          </label>
+          <div class="adv-grid">
+            <label class="field">
+              <span class="lbl">{{ t("embLineLen") }}</span>
+              <input v-model.number="form.maxLineLength" type="number" min="15" max="120" class="input" />
+            </label>
+            <label v-if="isSimple" class="field">
+              <span class="lbl">{{ t("embTimeout") }}</span>
+              <input v-model.number="form.timeoutMs" type="number" min="200" max="15000" step="100" class="input" />
+            </label>
+          </div>
           <div class="checks">
             <label class="chk">
               <input v-model="form.clearText" type="checkbox" />
@@ -429,7 +430,13 @@ function onSave() {
 }
 .grid-3 {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.adv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
   align-items: end;
 }
