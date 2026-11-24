@@ -48,68 +48,90 @@ const content = computed(() => ({
   en: {
     modalTitle: `About ${props.title}`,
     heroName: `${props.title} · خُطّاف`,
-    subtitle: `version ${props.version} · Live Arabic Game Hook`,
-    closeLabel: "Close",
-    footerNote: "© 2026 Mohammad AboulEla · GPL-3.0",
-    sections: [
+    versionLabel: `v${props.version}`,
+    subtitle: "Live Arabic translation inside your games",
+    intro:
+      "Khutaf lets you play PC games in Arabic by translating dialogue and menus live right inside your game, without modifying any original game files.",
+    features: [
       {
-        heading: "About Khutaf",
-        body: "Khutaf (خُطّاف) is a real-time in-game Arabic text hook and embedded translator for PC games on Windows. It attaches to running games, intercepts text directly from memory, translates it, and injects shaped RTL Arabic back into the UI without modifying game files. This version currently supports 64-bit Unity (Mono & IL2CPP) games, with more engines planned on the roadmap.",
+        icon: "Zap",
+        title: "Fast & Smooth",
+        desc: "Translates dialogue and menus in real time without freezing your game.",
       },
       {
-        heading: "Non-Blocking Hooking & Engine Support",
-        body: "Powered by custom Rust khutaf-hook64.dll (PROTO_VERSION = 2), async mode translates off the game's main thread and writes back on frame ticks (currently via Unity's Canvas::SendWillRenderCanvases / Camera::FireOnPreCull) with zero gameplay freeze. Configure the pending placeholder (Original default, \"...\", or custom text) with auto-restore on timeout/error, zero-alloc UTF-16 pre-filtering, circuit breaker recovery, and per-call-site #ctx Embed toggles in userconfig/games.json.",
+        icon: "ALargeSmall",
+        title: "Clear Arabic Display",
+        desc: "Properly shaped right-to-left Arabic text with customizable fonts, size, and display styles.",
       },
       {
-        heading: "Arabic Shaping, BiDi & Font Injection",
-        body: "Built-in contextual shaping (Presentation Forms + Lam-Alef ligatures + Tashkeel), logical word-boundary wrapping before reversal, bracket mirroring, and preservation of Latin words, numbers, [vars], {vars}, CamelCase tokens, and <color=...> rich-text tags. Supports dynamic OS fonts (Tahoma default) and one-click SHA-256-verified TMP_Font_AssetBundles downloads in Embed Settings.",
+        icon: "Globe",
+        title: "Flexible Translators",
+        desc: "Works out of the box with free translators, plus optional AI and offline translation.",
       },
       {
-        heading: "Translators, Pipeline & 3-Tier Cache",
-        body: "Includes free Bing web translation by default plus 11 traditional web translators, OpenAI-compatible LLMs (OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Ollama, LM Studio), and a built-in llama.cpp runner with offline templates (HY-MT2, TranslateGemma, NLLB-Instruct). Features pre/post literal & regex rules, global/per-game glossaries, and a 3-tier SQLite cache with a manual cache editor.",
-      },
-      {
-        heading: "Security, Anti-Cheat & Diagnostics",
-        body: "Intended for offline single-player games only, with built-in anti-cheat process detection warnings. LLM API keys are encrypted at rest via Windows DPAPI, IPC named pipes enforce owner-only ACLs with per-session random handshakes, and the Debug tab provides live telemetry with redacted JSONL diagnostic bundle export.",
-      },
-      {
-        heading: "Shortcuts, Persistence & License",
-        body: "Press Esc to close modals. Settings persist in userconfig/config.json, per-game hooks in userconfig/games.json, and translations in SQLite. Licensed under GNU GPL-3.0 (Copyright © 2026 Mohammad AboulEla).",
+        icon: "Keyboard",
+        title: "In-Game Controls",
+        desc: "Keyboard shortcuts to pause or resize text on the fly, with per-game settings saved automatically.",
       },
     ],
+    notes: [
+      {
+        icon: "Gamepad",
+        caution: false,
+        text: "Supported games: 64-bit Unity games on Windows, with more game engines planned in future updates.",
+      },
+      {
+        icon: "Shield",
+        caution: true,
+        text: "For offline single-player games only — do not use with online multiplayer or anti-cheat protected games.",
+      },
+    ],
+    closeLabel: "Close",
+    footerNote: "© 2026 Mohammad AboulEla · GPL-3.0",
   },
   ar: {
     modalTitle: "حول خُطّاف",
     heroName: `خُطّاف · ${props.title}`,
-    subtitle: `الإصدار ${props.version} · حقن وترجمة فورية للألعاب`,
-    closeLabel: "إغلاق",
-    footerNote: "© 2026 Mohammad AboulEla · GPL-3.0",
-    sections: [
+    versionLabel: `الإصدار ${props.version}`,
+    subtitle: "ترجمة عربية فورية داخل ألعابك",
+    intro:
+      "يساعدك «خُطّاف» على لعب ألعاب الكمبيوتر باللغة العربية من خلال ترجمة الحوارات والقوائم مباشرةً داخل اللعبة أثناء اللعب، دون تعديل ملفات اللعبة الأصلية.",
+    features: [
       {
-        heading: "حول خُطّاف",
-        body: "برنامج «خُطّاف» (Khutaf) هو أداة للترجمة الفورية والحقن النصي باللغة العربية لألعاب الكمبيوتر على نظام ويندوز. يتصل باللعبة أثناء تشغيلها لالتقاط النصوص من الذاكرة، وترجمتها، وحقن العربية المشكّلة مباشرة داخل واجهة اللعبة بدون تعديل ملفاتها. يدعم هذا الإصدار حالياً ألعاب Unity (64-bit Mono وIL2CPP)، مع خطة لدعم محركات أخرى في الإصدارات القادمة.",
+        icon: "Zap",
+        title: "ترجمة فورية وسلسة",
+        desc: "تظهر الترجمة تلقائياً أثناء اللعب بدون تجميد اللعبة أو التأثير على سلاستها.",
       },
       {
-        heading: "الحقن غير الحاجز ودعم المحركات",
-        body: "يعتمد على مكتبة Rust المخصصة khutaf-hook64.dll (بروتوكول PROTO_VERSION = 2)، حيث تُنفّذ الترجمة غير الحاجزة (Async) خارج المسار الرئيسي للعبة وتُكتب عند تحديث الإطارات (Canvas::SendWillRenderCanvases / Camera::FireOnPreCull) دون تجميد اللعب. يمكنك تخصيص نص الانتظار (الأصلي افتراضياً، أو \"...\"، أو نص مخصص) مع الاستعادة التلقائية عند الفشل، والترشيح الأولي السريع لنصوص UTF-16، وقاطع الدائرة، وحفظ تفعيل الـ Embed لكل #ctx في userconfig/games.json.",
+        icon: "ALargeSmall",
+        title: "عرض عربي واضح وسليم",
+        desc: "حروف عربية متصلة ومقروءة مع إمكانية تغيير الخط وحجم النص ونمط العرض.",
       },
       {
-        heading: "تشكيل العربية والـ BiDi وحقن الخطوط",
-        body: "محرك مدمج للتشكيل السياقي (الأشكال التقديمية ودمج اللام ألف والحفاظ على التشكيل)، والتفاف الأسطر المنطقي على حدود الكلمات قبل العكس، وعكس الأقواس، مع الحفاظ على الكلمات الإنجليزية والأرقام والمتغيرات [vars] و{vars} ومعرّفات CamelCase ووسوم <color=...> سليمة. يدعم خطوط النظام الديناميكية (Tahoma افتراضياً) وتحميل حزم TMP_Font_AssetBundles المتحقق منها بـ SHA-256 بضغطة زر من Embed Settings.",
+        icon: "Globe",
+        title: "خيارات ترجمة متعددة",
+        desc: "يعمل مباشرةً بمترجمات مجانية بدون إعداد، مع دعم اختياري للذكاء الاصطناعي والترجمة بدون إنترنت.",
       },
       {
-        heading: "المترجمات ومعالجة النصوص والكاش",
-        body: "يوفّر ترجمة Bing المجانية افتراضياً بالإضافة إلى 11 مترجماً تقليدياً، ودعم نماذج LLM المتوافقة مع OpenAI (OpenAI وGemini وDeepSeek وGroq وOpenRouter وOllama وLM Studio)، ومُشغّل llama.cpp مدمج بقوالب محلية (HY-MT2 وTranslateGemma وNLLB-Instruct). يشمل قواعد نصية وRegex قبل الترجمة وبعدها، وقاموس مصطلحات عام ولكل لعبة، وكاش SQLite ثلاثي المستويات مع محرر يدوي.",
-      },
-      {
-        heading: "الأمان ومكافحة الغش والتشخيص",
-        body: "مخصّص للألعاب الفردية (Offline) فقط مع تنبيهات مدمجة عند اكتشاف عمليات مكافحة الغش. تُشفَّر مفاتيح API محلياً عبر Windows DPAPI، وتُقيَّد الأنابيب المسماة بصلاحيات المالك فقط مع مصافحة عشوائية لكل جلسة، كما يعرض تبويب Debug قياسات الأداء الحية مع تصدير تقارير تشخيص JSONL مجهّلة البيانات الحساسة.",
-      },
-      {
-        heading: "الاختصارات والحفظ والرخصة",
-        body: "اضغط Esc لإغلاق النوافذ المنبثقة. تُحفظ الإعدادات في userconfig/config.json، وملفات الألعاب والـ Hooks في userconfig/games.json، والترجمات في SQLite. البرنامج مرخّص تحت رخصة GNU GPL-3.0 (Copyright © 2026 Mohammad AboulEla).",
+        icon: "Keyboard",
+        title: "تحكّم سريع أثناء اللعب",
+        desc: "اختصارات لوحة مفاتيح للإيقاف المؤقت وتعديل الخط، وحفظ تلقائي لإعدادات كل لعبة.",
       },
     ],
+    notes: [
+      {
+        icon: "Gamepad",
+        caution: false,
+        text: "الألعاب المدعومة حالياً: ألعاب Unity (64-bit) على ويندوز، مع خطة لدعم محركات أخرى لاحقاً.",
+      },
+      {
+        icon: "Shield",
+        caution: true,
+        text: "مخصص للألعاب الفردية (Offline) فقط — تجنّب استخدامه مع الألعاب الجماعية أو المحمية بأنظمة مكافحة الغش.",
+      },
+    ],
+    closeLabel: "إغلاق",
+    footerNote: "© 2026 Mohammad AboulEla · GPL-3.0",
   },
 }));
 
@@ -164,16 +186,42 @@ const active = computed(() => content.value[lang.value]);
           <div class="body" :dir="isRtl ? 'rtl' : 'ltr'">
             <div class="hero">
               <div class="mark" dir="ltr">Kh</div>
-              <div>
-                <div class="name">{{ active.heroName }}</div>
-                <div class="ver" :dir="isRtl ? 'rtl' : 'ltr'">{{ active.subtitle }}</div>
+              <div class="hero-meta">
+                <div class="hero-top">
+                  <span class="name">{{ active.heroName }}</span>
+                  <span class="ver-badge">{{ active.versionLabel }}</span>
+                </div>
+                <div class="ver">{{ active.subtitle }}</div>
               </div>
             </div>
 
-            <section v-for="s in active.sections" :key="s.heading">
-              <h3>{{ s.heading }}</h3>
-              <p>{{ s.body }}</p>
-            </section>
+            <p class="intro">{{ active.intro }}</p>
+
+            <div class="features-grid">
+              <div v-for="item in active.features" :key="item.title" class="feature-card">
+                <div class="feature-head">
+                  <span class="feature-ico">
+                    <Icon :name="item.icon" :size="15" />
+                  </span>
+                  <span class="feature-title">{{ item.title }}</span>
+                </div>
+                <p class="feature-desc">{{ item.desc }}</p>
+              </div>
+            </div>
+
+            <div class="notes">
+              <div
+                v-for="note in active.notes"
+                :key="note.text"
+                class="note-row"
+                :class="{ caution: note.caution }"
+              >
+                <span class="note-ico">
+                  <Icon :name="note.icon" :size="15" />
+                </span>
+                <span class="note-text">{{ note.text }}</span>
+              </div>
+            </div>
           </div>
 
           <footer class="foot" :dir="isRtl ? 'rtl' : 'ltr'">
@@ -199,8 +247,8 @@ const active = computed(() => content.value[lang.value]);
 .modal {
   display: grid;
   grid-template-rows: auto auto 1fr auto;
-  width: min(600px, 100%);
-  max-height: min(680px, 90vh);
+  width: min(560px, 100%);
+  max-height: min(640px, 90vh);
   background: var(--bg-elev);
   color: var(--fg);
   border: 1px solid var(--border-input, var(--border));
@@ -263,6 +311,9 @@ const active = computed(() => content.value[lang.value]);
 .body {
   overflow-y: auto;
   padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 .body[dir="rtl"] {
   font-family: var(--arabic);
@@ -272,7 +323,6 @@ const active = computed(() => content.value[lang.value]);
   align-items: center;
   gap: 12px;
   padding-bottom: 14px;
-  margin-bottom: 6px;
   border-bottom: 1px solid var(--border);
 }
 .mark {
@@ -285,34 +335,137 @@ const active = computed(() => content.value[lang.value]);
   font-weight: 700;
   font-size: 18px;
 }
-.name { font-weight: 600; font-size: 16px; }
-.ver {
-  color: var(--fg-faint);
-  font-family: var(--mono);
-  font-size: var(--fs-small);
+.hero-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
-.body[dir="rtl"] .ver {
-  font-family: var(--arabic);
+.hero-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
-
-section { margin-top: 14px; }
-h3 {
-  margin: 0 0 4px;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.name {
+  font-weight: 600;
+  font-size: 16px;
+}
+.ver-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--bg-pill);
+  border: 1px solid var(--border);
   color: var(--fg-muted);
   font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
 }
-.body[dir="rtl"] h3 {
+.body[dir="rtl"] .ver-badge {
   font-family: var(--arabic);
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 14px;
-  font-weight: 700;
 }
-p { margin: 0; line-height: 1.55; color: var(--fg); }
-.body[dir="rtl"] p { line-height: 1.7; }
+.ver {
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+.intro {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--fg);
+  font-size: 13.5px;
+}
+.body[dir="rtl"] .intro {
+  line-height: 1.75;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 520px) {
+  .features-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.feature-card {
+  padding: 11px 12px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.feature-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.feature-ico {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.feature-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.feature-desc {
+  margin: 0;
+  font-size: var(--fs-small);
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+.body[dir="rtl"] .feature-desc {
+  line-height: 1.65;
+}
+
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.note-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--bg-pill);
+  border: 1px solid var(--border);
+  font-size: var(--fs-small);
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+.body[dir="rtl"] .note-row {
+  line-height: 1.65;
+}
+.note-row.caution {
+  background: color-mix(in oklab, var(--accent) 10%, var(--bg-pill));
+  border-color: color-mix(in oklab, var(--accent) 35%, var(--border));
+  color: var(--fg);
+}
+.note-ico {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--fg-muted);
+  display: grid;
+  place-items: center;
+}
+.note-row.caution .note-ico {
+  color: var(--accent);
+}
 
 .foot {
   display: flex;
