@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref, shallowRef, watch, onMounted } from "vue";
+import { computed, reactive, ref, shallowRef, watch, onMounted, onUnmounted } from "vue";
 import Icon from "../components/Icon.vue";
 import Tooltip from "../components/Tooltip.vue";
 import { useSession } from "../composables/useSession.js";
@@ -19,7 +19,15 @@ const fonts = shallowRef(["Tahoma", "Arial", "Segoe UI"]);
 const confirmRedownload = ref(false);
 const showBundleModal = ref(false);
 
+function onKeyDown(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    if (isDirty.value) onSave();
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener("keydown", onKeyDown);
   const st = await refreshUnityFontStatus();
   if (
     !props.onboardingOpen &&
@@ -34,6 +42,10 @@ onMounted(async () => {
   }
   const list = await listFonts();
   if (list?.length) fonts.value = list;
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKeyDown);
 });
 
 function onDownloadFromModal() {
@@ -74,6 +86,31 @@ watch(
   },
   { immediate: true },
 );
+
+const isDirty = computed(() => {
+  const saved = config.value?.embed;
+  if (!saved) return false;
+  return (
+    (Number(form.timeoutMs) || 2000) !== Number(saved.timeoutMs) ||
+    Number(form.displayMode) !== Number(saved.displayMode) ||
+    Boolean(form.clearText) !== Boolean(saved.clearText) ||
+    Boolean(form.changeFont) !== Boolean(saved.changeFont) ||
+    form.fontFamily.trim() !== (saved.fontFamily || "").trim() ||
+    Boolean(form.useUnityBundle) !== Boolean(saved.useUnityBundle) ||
+    Boolean(form.changeFontSize) !== Boolean(saved.changeFontSize) ||
+    Math.abs((Number(form.fontSizeRelative) || 1.0) - (Number(saved.fontSizeRelative) || 1.0)) > 0.001 ||
+    Boolean(form.limitLineLength) !== Boolean(saved.limitLineLength) ||
+    (Number(form.maxLineLength) || 40) !== Number(saved.maxLineLength) ||
+    Boolean(form.stripTypewriterTags) !== Boolean(saved.stripTypewriterTags) ||
+    Boolean(form.nonBlocking) !== Boolean(saved.nonBlocking) ||
+    form.pendingText.trim() !== (saved.pendingText || "").trim()
+  );
+});
+
+function onDiscard() {
+  if (!config.value?.embed) return;
+  Object.assign(form, config.value.embed);
+}
 
 function onSave() {
   if (!config.value) return;
@@ -144,17 +181,6 @@ function onSave() {
           {{ unityFontStatus.error || unityFontStatus.message }}
         </span>
       </div>
-
-      <Tooltip :text="unityFontStatus.installed ? '' : 'Download bundles first to enable this fallback'">
-        <label class="chk" :class="{ disabled: !unityFontStatus.installed || !form.changeFont }">
-          <input
-            v-model="form.useUnityBundle"
-            type="checkbox"
-            :disabled="!unityFontStatus.installed || !form.changeFont"
-          />
-          <span>{{ t("embUseBundleChk") }}</span>
-        </label>
-      </Tooltip>
     </div>
 
     <div class="card">
@@ -182,33 +208,62 @@ function onSave() {
         </label>
       </div>
 
-      <div class="grid-2">
-        <label class="field" :class="{ disabled: !form.changeFont }">
-          <span class="lbl">{{ t("embFontFamily") }}</span>
-          <select v-model="form.fontFamily" class="input" :disabled="!form.changeFont">
-            <option v-if="form.fontFamily && !fonts.includes(form.fontFamily)" :value="form.fontFamily">
-              {{ form.fontFamily }}
-            </option>
-            <option v-for="f in fonts" :key="f" :value="f">{{ f }}</option>
-          </select>
-          <span class="field-hint">{{ t("embFontFamilyHint") }}</span>
-        </label>
+      <div class="font-grid">
+        <div class="sub-panel">
+          <label class="chk strong-chk">
+            <input v-model="form.changeFont" type="checkbox" />
+            <span>{{ t("embChangeFont") }}</span>
+          </label>
 
-        <label class="field">
-          <span class="lbl">{{ t("embFontScale") }}</span>
-          <input v-model.number="form.fontSizeRelative" type="number" min="0.5" max="2.5" step="0.05" class="input" />
-        </label>
-      </div>
+          <label class="field" :class="{ disabled: !form.changeFont }">
+            <span class="lbl">{{ t("embFontFamily") }}</span>
+            <select v-model="form.fontFamily" class="input" :disabled="!form.changeFont">
+              <option v-if="form.fontFamily && !fonts.includes(form.fontFamily)" :value="form.fontFamily">
+                {{ form.fontFamily }}
+              </option>
+              <option v-for="f in fonts" :key="f" :value="f">{{ f }}</option>
+            </select>
+            <div
+              class="font-preview"
+              dir="rtl"
+              :style="{ fontFamily: form.fontFamily ? `'${form.fontFamily}', sans-serif` : 'inherit' }"
+            >
+              {{ t("embFontPreview") }}
+            </div>
+            <span class="field-hint">{{ t("embFontFamilyHint") }}</span>
+          </label>
 
-      <div class="checks">
-        <label class="chk">
-          <input v-model="form.changeFont" type="checkbox" />
-          <span>{{ t("embChangeFont") }}</span>
-        </label>
-        <label class="chk">
-          <input v-model="form.changeFontSize" type="checkbox" />
-          <span>{{ t("embChangeScale") }}</span>
-        </label>
+          <Tooltip :text="unityFontStatus.installed ? '' : 'Download bundles first to enable this fallback'">
+            <label class="chk" :class="{ disabled: !unityFontStatus.installed || !form.changeFont }">
+              <input
+                v-model="form.useUnityBundle"
+                type="checkbox"
+                :disabled="!unityFontStatus.installed || !form.changeFont"
+              />
+              <span>{{ t("embUseBundleChk") }}</span>
+            </label>
+          </Tooltip>
+        </div>
+
+        <div class="sub-panel">
+          <label class="chk strong-chk">
+            <input v-model="form.changeFontSize" type="checkbox" />
+            <span>{{ t("embChangeScale") }}</span>
+          </label>
+
+          <label class="field" :class="{ disabled: !form.changeFontSize }">
+            <span class="lbl">{{ t("embFontScale") }}</span>
+            <input
+              v-model.number="form.fontSizeRelative"
+              type="number"
+              min="0.5"
+              max="2.5"
+              step="0.05"
+              class="input"
+              :disabled="!form.changeFontSize"
+            />
+          </label>
+        </div>
       </div>
 
       <details class="adv-details" :open="!isSimple">
@@ -256,10 +311,19 @@ function onSave() {
         </div>
       </details>
 
-      <div class="actions">
-        <button class="btn primary" type="button" @click="onSave">
-          {{ saveState === "saving" ? t("embSaving") : saveState === "saved" ? t("trSavedBtn") : t("embApplySave") }}
-        </button>
+      <div class="save-bar" :class="{ dirty: isDirty }">
+        <div v-if="isDirty" class="unsaved-msg">
+          <span class="unsaved-dot"></span>
+          <span>{{ t("embUnsavedHint") }}</span>
+        </div>
+        <div class="save-bar-btns">
+          <button v-if="isDirty" class="btn secondary" type="button" @click="onDiscard">
+            {{ t("embDiscardChanges") }}
+          </button>
+          <button class="btn primary" :class="{ 'dirty-btn': isDirty }" type="button" @click="onSave">
+            {{ saveState === "saving" ? t("embSaving") : saveState === "saved" ? t("trSavedBtn") : t("embApplySave") }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -333,11 +397,38 @@ function onSave() {
   gap: 12px;
   align-items: end;
 }
-.grid-2 {
+.font-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
+}
+.sub-panel {
+  padding: 12px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sub-panel .input {
+  background: var(--bg-elev);
+}
+.strong-chk {
+  font-weight: 600;
+}
+.font-preview {
+  padding: 8px 10px;
+  border-radius: 5px;
+  background: var(--bg-elev);
+  border: 1px dashed var(--border);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .hint {
   opacity: 0.7;
@@ -419,9 +510,42 @@ function onSave() {
   opacity: 0.55;
   cursor: not-allowed;
 }
-.actions {
+.save-bar {
+  position: sticky;
+  bottom: 0;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 12px;
+  padding: 10px 12px;
+  margin: 4px -6px -4px;
+  background: var(--bg-elev);
+  border-top: 1px solid transparent;
+  border-radius: 6px;
+}
+.save-bar.dirty {
+  justify-content: space-between;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--paper));
+}
+.unsaved-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg);
+}
+.unsaved-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.save-bar-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .adv-details {
   border-top: 1px solid var(--border);
@@ -528,6 +652,9 @@ function onSave() {
   font: inherit;
   font-size: 12px;
   cursor: pointer;
+}
+.btn.primary.dirty-btn {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .modal-overlay {
   position: fixed;
