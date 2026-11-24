@@ -12,7 +12,7 @@ const props = defineProps({
 
 const emit = defineEmits(["close"]);
 
-const { config, listFonts, saveGameOverrides, saveState } = useSession();
+const { config, listFonts, unityFontStatus, saveGameOverrides, saveState } = useSession();
 const { t, isRtl } = useI18n();
 
 const fonts = shallowRef(["Tahoma", "Arial", "Segoe UI"]);
@@ -160,14 +160,15 @@ async function onSave() {
                   <input v-model.number="embedForm.maxLineLength" type="number" min="15" max="120" class="input" />
                 </label>
 
-                <label class="field">
+                <label class="field" :class="{ disabled: !embedForm.changeFont }">
                   <span class="lbl">{{ t("embFontFamily") }}</span>
-                  <select v-model="embedForm.fontFamily" class="input">
+                  <select v-model="embedForm.fontFamily" class="input" :disabled="!embedForm.changeFont">
                     <option v-if="embedForm.fontFamily && !fonts.includes(embedForm.fontFamily)" :value="embedForm.fontFamily">
                       {{ embedForm.fontFamily }}
                     </option>
                     <option v-for="f in fonts" :key="f" :value="f">{{ f }}</option>
                   </select>
+                  <span class="field-hint">{{ t("embFontFamilyHint") }}</span>
                 </label>
 
                 <label class="field">
@@ -184,6 +185,14 @@ async function onSave() {
                   <label class="chk">
                     <input v-model="embedForm.changeFont" type="checkbox" />
                     <span>{{ t("embChangeFont") }}</span>
+                  </label>
+                  <label class="chk" :class="{ disabled: !embedForm.changeFont || !unityFontStatus.installed }">
+                    <input
+                      v-model="embedForm.useUnityBundle"
+                      type="checkbox"
+                      :disabled="!embedForm.changeFont || !unityFontStatus.installed"
+                    />
+                    <span>{{ t("embUseBundleChk") }}</span>
                   </label>
                   <label class="chk">
                     <input v-model="embedForm.changeFontSize" type="checkbox" />
@@ -338,6 +347,11 @@ async function onSave() {
   font-size: 11px;
   color: var(--fg-muted);
 }
+.field-hint {
+  font-size: 11px;
+  color: var(--fg-muted);
+  line-height: 1.4;
+}
 .input {
   height: 30px;
   padding: 0 10px;
@@ -354,6 +368,11 @@ async function onSave() {
   gap: 6px;
   font-size: 12px;
   cursor: pointer;
+}
+.field.disabled,
+.chk.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .err {
   color: #f87171;

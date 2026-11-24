@@ -146,11 +146,11 @@ function onSave() {
       </div>
 
       <Tooltip :text="unityFontStatus.installed ? '' : 'Download bundles first to enable this fallback'">
-        <label class="chk" :class="{ disabled: !unityFontStatus.installed }">
+        <label class="chk" :class="{ disabled: !unityFontStatus.installed || !form.changeFont }">
           <input
             v-model="form.useUnityBundle"
             type="checkbox"
-            :disabled="!unityFontStatus.installed"
+            :disabled="!unityFontStatus.installed || !form.changeFont"
           />
           <span>{{ t("embUseBundleChk") }}</span>
         </label>
@@ -183,14 +183,15 @@ function onSave() {
       </div>
 
       <div class="grid-2">
-        <label class="field">
+        <label class="field" :class="{ disabled: !form.changeFont }">
           <span class="lbl">{{ t("embFontFamily") }}</span>
-          <select v-model="form.fontFamily" class="input">
+          <select v-model="form.fontFamily" class="input" :disabled="!form.changeFont">
             <option v-if="form.fontFamily && !fonts.includes(form.fontFamily)" :value="form.fontFamily">
               {{ form.fontFamily }}
             </option>
             <option v-for="f in fonts" :key="f" :value="f">{{ f }}</option>
           </select>
+          <span class="field-hint">{{ t("embFontFamilyHint") }}</span>
         </label>
 
         <label class="field">
@@ -336,10 +337,15 @@ function onSave() {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  align-items: end;
+  align-items: start;
 }
 .hint {
   opacity: 0.7;
+}
+.field-hint {
+  font-size: 11px;
+  color: var(--fg-muted);
+  line-height: 1.4;
 }
 .field-tip {
   width: 100%;

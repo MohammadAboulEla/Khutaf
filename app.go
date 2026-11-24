@@ -638,7 +638,7 @@ var (
 	})
 )
 
-// ListFonts returns installed Windows font family names.
+// ListFonts returns installed Windows font family names that support Arabic.
 func (a *App) ListFonts() []string {
 	hdc, _, _ := procGetDC.Call(0)
 	if hdc == 0 {
@@ -648,7 +648,7 @@ func (a *App) ListFonts() []string {
 
 	fontEnumMu.Lock()
 	fontEnumSeen = map[string]bool{}
-	lf := logFontW{CharSet: 1} // DEFAULT_CHARSET
+	lf := logFontW{CharSet: 178} // ARABIC_CHARSET
 	procEnumFontFamiliesW.Call(hdc, uintptr(unsafe.Pointer(&lf)), enumFontProc, 0, 0)
 	out := make([]string, 0, len(fontEnumSeen))
 	for n := range fontEnumSeen {
@@ -657,6 +657,9 @@ func (a *App) ListFonts() []string {
 	fontEnumSeen = nil
 	fontEnumMu.Unlock()
 
+	if len(out) == 0 {
+		return []string{"Arial", "Segoe UI", "Tahoma"}
+	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
 	return out
 }

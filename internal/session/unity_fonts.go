@@ -164,6 +164,14 @@ func (s *Session) DownloadUnityFontsTo(ctx context.Context, location string) err
 			st.Message = "Installed"
 		}
 	})
+	if err == nil {
+		s.mu.Lock()
+		pids := s.pidList()
+		s.mu.Unlock()
+		for _, pid := range pids {
+			s.pushEmbedSettings(pid)
+		}
+	}
 	return err
 }
 

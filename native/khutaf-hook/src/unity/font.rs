@@ -7,6 +7,11 @@ use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 
 use khutaf_proto::level;
+use windows_sys::Win32::Foundation::{ERROR_NO_MORE_ITEMS, ERROR_SUCCESS};
+use windows_sys::Win32::System::Registry::{
+    RegCloseKey, RegEnumValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
+    KEY_READ, REG_EXPAND_SZ, REG_SZ,
+};
 
 use super::{
     is_tmp_hook, UnityRuntime, HOOK_TEXTMESH_SET_TEXT, HOOK_UI_TEXT_SET_TEXT,
@@ -14,15 +19,17 @@ use super::{
 use crate::embed;
 
 const MAX_SCALED_CACHE: usize = 4096;
+const MAX_TRIED_DONORS: usize = 16;
 
 struct FontState {
     initialized: bool,
     loaded_dir: String,
     loaded_family: String,
+    bundle_ab: *mut c_void,
     bundle_font: *mut c_void,
     dyn_font: *mut c_void,
     os_font: *mut c_void,
-    tried_tmp_retry: bool,
+    tried_donors: HashSet<usize>,
     t_tmp: *mut c_void,
     t_fa: *mut c_void,
     f_font: *mut c_void,
@@ -32,8 +39,6 @@ struct FontState {
     bundle_handles: Vec<u32>,
     os_handles: Vec<u32>,
     scaled: HashMap<usize, u32>,
-    bundle_checked: HashMap<u32, bool>,
-    bundle_supports_arabic: Option<bool>,
     fallback_attached: HashSet<usize>,
 }
 
@@ -44,10 +49,11 @@ static STATE: LazyLock<Mutex<FontState>> = LazyLock::new(|| {
         initialized: false,
         loaded_dir: String::new(),
         loaded_family: String::new(),
+        bundle_ab: std::ptr::null_mut(),
         bundle_font: std::ptr::null_mut(),
         dyn_font: std::ptr::null_mut(),
         os_font: std::ptr::null_mut(),
-        tried_tmp_retry: false,
+        tried_donors: HashSet::new(),
         t_tmp: std::ptr::null_mut(),
         t_fa: std::ptr::null_mut(),
         f_font: std::ptr::null_mut(),
@@ -57,13 +63,11 @@ static STATE: LazyLock<Mutex<FontState>> = LazyLock::new(|| {
         bundle_handles: Vec::new(),
         os_handles: Vec::new(),
         scaled: HashMap::new(),
-        bundle_checked: HashMap::new(),
-        bundle_supports_arabic: None,
         fallback_attached: HashSet::new(),
     })
 });
 
-pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text: &str) {
+pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, _text: &str) {
     let settings = embed::settings();
     let dir = settings.font_dir.trim();
     let family = settings.font_family.trim();
@@ -74,45 +78,48 @@ pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text
         reload_fonts(rt, &mut st, dir, family, component, hook_id);
     } else if st.dyn_font.is_null()
         && !st.os_font.is_null()
-        && !st.tried_tmp_retry
         && is_tmp_hook(hook_id)
         && !component.is_null()
+        && st.tried_donors.len() < MAX_TRIED_DONORS
     {
-        // Retry TMP font creation once we see an actual TMP component that can donate its shader.
-        st.tried_tmp_retry = true;
-        let t_retry = std::time::Instant::now();
+        // Retry TMP font creation across distinct TMP components that can donate a shader.
         if let Some(donor) = read_component_tmp_font(rt, component) {
-            let dyn_tmp = create_tmp_font_asset(rt, st.os_font, donor);
-            if !dyn_tmp.is_null() {
-                let h = rt.gchandle_pin(dyn_tmp);
-                if h != 0 {
-                    st.os_handles.push(h);
-                }
-                dont_destroy(rt, dyn_tmp);
-                st.dyn_font = dyn_tmp;
-                if st.t_fa.is_null() {
-                    st.t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
-                }
-                let t_fa = st.t_fa;
-                if !t_fa.is_null() {
-                    if !st.bundle_font.is_null() && st.bundle_font != st.dyn_font {
-                        attach_fallback_to_asset(rt, t_fa, st.bundle_font, st.dyn_font);
+            if st.tried_donors.insert(donor as usize) {
+                let t_retry = std::time::Instant::now();
+                let dyn_tmp = create_tmp_font_asset(rt, st.os_font, donor, "retry");
+                if !dyn_tmp.is_null() {
+                    let h = rt.gchandle_pin(dyn_tmp);
+                    if h != 0 {
+                        st.os_handles.push(h);
                     }
-                    register_global_fallbacks(rt, t_fa, st.bundle_font, st.dyn_font);
+                    dont_destroy(rt, dyn_tmp);
+                    st.dyn_font = dyn_tmp;
+                    if st.t_fa.is_null() {
+                        st.t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
+                    }
+                    let t_fa = st.t_fa;
+                    if !t_fa.is_null() {
+                        if !st.bundle_font.is_null() && st.bundle_font != st.dyn_font {
+                            attach_fallback_to_asset(rt, t_fa, st.dyn_font, st.bundle_font);
+                            attach_fallback_to_asset(rt, t_fa, st.bundle_font, st.dyn_font);
+                        }
+                        register_global_fallbacks(rt, t_fa, st.bundle_font, st.dyn_font);
+                    }
+                    let fam_label = if family.is_empty() { "(default)" } else { family };
+                    crate::telemetry(
+                        "UNITY_FONT",
+                        "font::on_text",
+                        t_retry.elapsed().as_micros() as u64,
+                        "info",
+                        &format!("active=os_dynamic family={fam_label} via=shader_donor_retry"),
+                    );
                 }
-                crate::telemetry(
-                    "UNITY_FONT",
-                    "font::on_text",
-                    t_retry.elapsed().as_micros() as u64,
-                    "info",
-                    "TMP dynamic font created via shader donor",
-                );
             }
         }
     }
 
     if !component.is_null() {
-        apply_component_font(rt, &mut st, component, hook_id, text);
+        apply_component_font(rt, &mut st, component, hook_id);
         if settings.change_font_size
             && settings.font_scale > 0.0
             && (settings.font_scale - 1.0).abs() > 0.001
@@ -158,13 +165,9 @@ fn reload_fonts(
     st.initialized = true;
     st.loaded_dir = dir.to_owned();
     st.loaded_family = family.to_owned();
-    st.tried_tmp_retry = false;
+    st.tried_donors.clear();
     st.scaled.clear();
     st.size_methods.clear();
-    if dir_changed {
-        st.bundle_checked.clear();
-        st.bundle_supports_arabic = None;
-    }
     st.fallback_attached.clear();
 
     if st.t_tmp.is_null() {
@@ -186,6 +189,10 @@ fn reload_fonts(
     }
 
     if dir.is_empty() && family.is_empty() {
+        unregister_fallback_everywhere(rt, st, st.bundle_font);
+        unregister_fallback_everywhere(rt, st, st.dyn_font);
+        unload_bundle(rt, st.bundle_ab);
+        st.bundle_ab = std::ptr::null_mut();
         for h in st.bundle_handles.drain(..) {
             rt.gchandle_free(h);
         }
@@ -199,17 +206,23 @@ fn reload_fonts(
     }
 
     if dir_changed {
+        unregister_fallback_everywhere(rt, st, st.bundle_font);
+        unload_bundle(rt, st.bundle_ab);
+        st.bundle_ab = std::ptr::null_mut();
         for h in st.bundle_handles.drain(..) {
             rt.gchandle_free(h);
         }
-        st.bundle_font = if dir.is_empty() {
-            std::ptr::null_mut()
+        let (ab, font) = if dir.is_empty() {
+            (std::ptr::null_mut(), std::ptr::null_mut())
         } else {
             load_bundle_font(rt, dir, &mut st.bundle_handles)
         };
+        st.bundle_ab = ab;
+        st.bundle_font = font;
     }
 
-    if fam_changed {
+    if fam_changed || (dir_changed && !st.bundle_font.is_null() && st.dyn_font.is_null()) {
+        unregister_fallback_everywhere(rt, st, st.dyn_font);
         for h in st.os_handles.drain(..) {
             rt.gchandle_free(h);
         }
@@ -227,19 +240,30 @@ fn reload_fonts(
 
     let t_fa = st.t_fa;
     if !t_fa.is_null() {
-        if !st.bundle_font.is_null() && !st.dyn_font.is_null() && st.bundle_font != st.dyn_font {
+        if !st.dyn_font.is_null() && !st.bundle_font.is_null() && st.dyn_font != st.bundle_font {
+            attach_fallback_to_asset(rt, t_fa, st.dyn_font, st.bundle_font);
             attach_fallback_to_asset(rt, t_fa, st.bundle_font, st.dyn_font);
         }
         register_global_fallbacks(rt, t_fa, st.bundle_font, st.dyn_font);
     }
 
+    let (active, reason) = if !st.dyn_font.is_null() {
+        ("os_dynamic", "ok")
+    } else if !st.bundle_font.is_null() {
+        ("bundle_fallback", "os_tmp_failed")
+    } else if !st.os_font.is_null() {
+        ("os_ui_only", "tmp_unavailable")
+    } else {
+        ("none", "no_font_loaded")
+    };
+    let fam_label = if family.is_empty() { "(default)" } else { family };
     crate::telemetry(
         "UNITY_FONT",
         "font::reload_fonts",
         start.elapsed().as_micros() as u64,
         "info",
         &format!(
-            "fonts ready | bundle={} os_tmp={} os_ui={}",
+            "active={active} reason={reason} family={fam_label} bundle_ready={} os_tmp={} os_ui={}",
             !st.bundle_font.is_null(),
             !st.dyn_font.is_null(),
             !st.os_font.is_null()
@@ -310,7 +334,31 @@ fn dont_destroy(rt: &dyn UnityRuntime, obj: *mut c_void) {
     }
 }
 
-fn load_bundle_font(rt: &dyn UnityRuntime, dir: &str, handles: &mut Vec<u32>) -> *mut c_void {
+fn unload_bundle(rt: &dyn UnityRuntime, ab: *mut c_void) {
+    if ab.is_null() {
+        return;
+    }
+    let t_ab = rt.find_class("UnityEngine.AssetBundleModule", "UnityEngine", "AssetBundle");
+    if !t_ab.is_null() {
+        let m_unload = rt.find_method(t_ab, "Unload", 1);
+        if !m_unload.is_null() {
+            let mut unload_all: u8 = 0;
+            let _ = rt.invoke(m_unload, ab, &mut [&mut unload_all as *mut u8 as *mut c_void]);
+            return;
+        }
+    }
+    let icall = rt.resolve_icall("UnityEngine.AssetBundle::Unload");
+    if !icall.is_null() {
+        let f: unsafe extern "C" fn(*mut c_void, u8) = unsafe { std::mem::transmute_copy(&icall) };
+        unsafe { f(ab, 0) };
+    }
+}
+
+fn load_bundle_font(
+    rt: &dyn UnityRuntime,
+    dir: &str,
+    handles: &mut Vec<u32>,
+) -> (*mut c_void, *mut c_void) {
     let ver = unity_version(rt);
     let path = Path::new(dir).join(pick_bundle(&ver));
     if !path.exists() {
@@ -321,18 +369,20 @@ fn load_bundle_font(rt: &dyn UnityRuntime, dir: &str, handles: &mut Vec<u32>) ->
             "warn",
             &format!("TMP bundle missing | unity={ver}"),
         );
-        return std::ptr::null_mut();
+        return (std::ptr::null_mut(), std::ptr::null_mut());
     }
-    let Some(path_str_arg) = path.to_str() else { return std::ptr::null_mut() };
+    let Some(path_str_arg) = path.to_str() else {
+        return (std::ptr::null_mut(), std::ptr::null_mut());
+    };
     let path_managed = rt.string_new(path_str_arg);
     if path_managed.is_null() {
-        return std::ptr::null_mut();
+        return (std::ptr::null_mut(), std::ptr::null_mut());
     }
 
     let t_ab = rt.find_class("UnityEngine.AssetBundleModule", "UnityEngine", "AssetBundle");
     let t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
     if t_fa.is_null() {
-        return std::ptr::null_mut();
+        return (std::ptr::null_mut(), std::ptr::null_mut());
     }
 
     let mut ab = std::ptr::null_mut();
@@ -351,7 +401,7 @@ fn load_bundle_font(rt: &dyn UnityRuntime, dir: &str, handles: &mut Vec<u32>) ->
         }
     }
     if ab.is_null() {
-        return std::ptr::null_mut();
+        return (std::ptr::null_mut(), std::ptr::null_mut());
     }
     let h_ab = rt.gchandle_pin(ab);
     if h_ab != 0 {
@@ -387,10 +437,168 @@ fn load_bundle_font(rt: &dyn UnityRuntime, dir: &str, handles: &mut Vec<u32>) ->
                 handles.push(h);
             }
             dont_destroy(rt, elem);
-            return elem;
+            return (ab, elem);
         }
     }
-    std::ptr::null_mut()
+    unload_bundle(rt, ab);
+    (std::ptr::null_mut(), std::ptr::null_mut())
+}
+
+fn match_font_reg_name(reg_name: &str, family_lc: &str) -> Option<u8> {
+    let clean = reg_name
+        .split('(')
+        .next()
+        .unwrap_or(reg_name)
+        .trim()
+        .to_ascii_lowercase();
+    if clean == family_lc {
+        return Some(0);
+    }
+    if clean.starts_with(family_lc) && clean.as_bytes().get(family_lc.len()) == Some(&b' ') {
+        let rest = &clean[family_lc.len()..];
+        let is_regular = rest.contains("regular");
+        let is_styled = rest.contains("bold")
+            || rest.contains("italic")
+            || rest.contains("light")
+            || rest.contains("thin")
+            || rest.contains("black");
+        return Some(if is_regular && !is_styled {
+            1
+        } else if !is_styled {
+            2
+        } else {
+            3
+        });
+    }
+    None
+}
+
+fn resolve_font_paths(family: &str) -> Vec<String> {
+    let fam_lc = family.trim().to_ascii_lowercase();
+    let mut ranked: Vec<(u8, String)> = Vec::new();
+    if !fam_lc.is_empty() {
+        let subkey: Vec<u16> = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts\0"
+            .encode_utf16()
+            .collect();
+        for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+            let mut hkey: HKEY = std::ptr::null_mut();
+            if unsafe { RegOpenKeyExW(hive, subkey.as_ptr(), 0, KEY_READ, &mut hkey) } != ERROR_SUCCESS {
+                continue;
+            }
+            for index in 0u32..4096 {
+                let mut name_buf = [0u16; 256];
+                let mut data_buf = [0u16; 512];
+                let mut name_len: u32 = name_buf.len() as u32;
+                let mut data_bytes: u32 = (data_buf.len() * 2) as u32;
+                let mut val_type: u32 = 0;
+                let res = unsafe {
+                    RegEnumValueW(
+                        hkey,
+                        index,
+                        name_buf.as_mut_ptr(),
+                        &mut name_len,
+                        std::ptr::null_mut(),
+                        &mut val_type,
+                        data_buf.as_mut_ptr() as *mut u8,
+                        &mut data_bytes,
+                    )
+                };
+                if res == ERROR_NO_MORE_ITEMS {
+                    break;
+                }
+                if res != ERROR_SUCCESS || (val_type != REG_SZ && val_type != REG_EXPAND_SZ) {
+                    continue;
+                }
+                let reg_name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
+                let Some(rank) = match_font_reg_name(&reg_name, &fam_lc) else {
+                    continue;
+                };
+                let wlen = (data_bytes as usize) / 2;
+                let file_raw = String::from_utf16_lossy(&data_buf[..wlen])
+                    .trim_end_matches('\0')
+                    .trim()
+                    .to_owned();
+                if file_raw.is_empty() {
+                    continue;
+                }
+                let full_path = if file_raw.contains(':') || file_raw.starts_with('\\') {
+                    file_raw
+                } else {
+                    format!(r"C:\Windows\Fonts\{file_raw}")
+                };
+                let ext = Path::new(&full_path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_ascii_lowercase())
+                    .unwrap_or_default();
+                if matches!(ext.as_str(), "ttf" | "otf" | "ttc") && Path::new(&full_path).exists() {
+                    ranked.push((rank, full_path));
+                }
+            }
+            unsafe { RegCloseKey(hkey) };
+        }
+        ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    }
+
+    let mut out = Vec::new();
+    for (_, p) in ranked {
+        if !out.iter().any(|x: &String| x.eq_ignore_ascii_case(&p)) {
+            out.push(p);
+        }
+    }
+    for fb in [
+        r"C:\Windows\Fonts\tahoma.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\segoeui.ttf",
+    ] {
+        if Path::new(fb).exists() && !out.iter().any(|x| x.eq_ignore_ascii_case(fb)) {
+            out.push(fb.to_owned());
+        }
+    }
+    out
+}
+
+fn is_unity_obj_valid(rt: &dyn UnityRuntime, obj: *mut c_void) -> bool {
+    if obj.is_null() {
+        return false;
+    }
+    let t_obj = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Object");
+    if !t_obj.is_null() {
+        let f_ptr = rt.find_field_in_hierarchy(t_obj, "m_CachedPtr");
+        if !f_ptr.is_null() {
+            let mut ptr: *mut c_void = std::ptr::null_mut();
+            rt.field_get_value(obj, f_ptr, &mut ptr as *mut *mut c_void as *mut c_void);
+            return !ptr.is_null();
+        }
+    }
+    true
+}
+
+fn create_font_from_ttf_path(
+    rt: &dyn UnityRuntime,
+    t_font: *mut c_void,
+    ttf_path: &str,
+) -> *mut c_void {
+    let icall = rt.resolve_icall("UnityEngine.Font::Internal_CreateFontFromPath");
+    if icall.is_null() {
+        return std::ptr::null_mut();
+    }
+    let s = rt.string_new(ttf_path);
+    if s.is_null() {
+        return std::ptr::null_mut();
+    }
+    let obj = rt.object_new(t_font);
+    if obj.is_null() {
+        return std::ptr::null_mut();
+    }
+    let f: unsafe extern "C" fn(*mut c_void, *mut c_void) =
+        unsafe { std::mem::transmute_copy(&icall) };
+    unsafe { f(obj, s) };
+    if is_unity_obj_valid(rt, obj) {
+        obj
+    } else {
+        std::ptr::null_mut()
+    }
 }
 
 fn load_os_fonts(
@@ -412,29 +620,18 @@ fn load_os_fonts(
     let names_arr = rt.string_array_new(&names);
 
     let mut os_font = std::ptr::null_mut();
+    let mut os_src = "none";
 
-    // Try Internal_CreateDynamicFont icall first (IL2CPP) so CreateDynamicFontFromOSFont(string, int)
-    // vs (string[], int) overload resolution cannot collide.
     if !names_arr.is_null() {
-        let icall = rt.resolve_icall("UnityEngine.Font::Internal_CreateDynamicFont");
-        if !icall.is_null() {
-            let obj = rt.object_new(t_font);
-            if !obj.is_null() {
-                let f: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) =
-                    unsafe { std::mem::transmute_copy(&icall) };
-                unsafe { f(obj, names_arr, 32) };
-                os_font = obj;
-            }
-        }
-    }
-
-    if os_font.is_null() && !names_arr.is_null() {
         let m_dyn_arr = rt.find_method_param0(t_font, "CreateDynamicFontFromOSFont", 2, "String[]");
         if !m_dyn_arr.is_null() {
             let mut size: i32 = 32;
             let mut args = [names_arr, &mut size as *mut i32 as *mut c_void];
             if let Some(res) = rt.invoke(m_dyn_arr, std::ptr::null_mut(), &mut args) {
-                os_font = res;
+                if is_unity_obj_valid(rt, res) {
+                    os_font = res;
+                    os_src = "managed_arr";
+                }
             }
         }
     }
@@ -447,31 +644,38 @@ fn load_os_fonts(
                 let mut size: i32 = 32;
                 let mut args = [s, &mut size as *mut i32 as *mut c_void];
                 if let Some(res) = rt.invoke(m_dyn_str, std::ptr::null_mut(), &mut args) {
-                    os_font = res;
+                    if is_unity_obj_valid(rt, res) {
+                        os_font = res;
+                        os_src = "managed_str";
+                    }
                 }
             }
         }
     }
 
-    if os_font.is_null() {
-        let icall = rt.resolve_icall("UnityEngine.Font::Internal_CreateFontFromPath");
+    if os_font.is_null() && !names_arr.is_null() {
+        let icall = rt.resolve_icall("UnityEngine.Font::Internal_CreateDynamicFont");
         if !icall.is_null() {
-            let f: unsafe extern "C" fn(*mut c_void, *mut c_void) =
-                unsafe { std::mem::transmute_copy(&icall) };
-            for ttf in [
-                r"C:\Windows\Fonts\tahoma.ttf",
-                r"C:\Windows\Fonts\arial.ttf",
-                r"C:\Windows\Fonts\segoeui.ttf",
-            ] {
-                if !Path::new(ttf).exists() {
-                    continue;
+            let obj = rt.object_new(t_font);
+            if !obj.is_null() {
+                let f: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) =
+                    unsafe { std::mem::transmute_copy(&icall) };
+                unsafe { f(obj, names_arr, 32) };
+                if is_unity_obj_valid(rt, obj) {
+                    os_font = obj;
+                    os_src = "icall_dyn";
                 }
-                let obj = rt.object_new(t_font);
-                if obj.is_null() {
-                    break;
-                }
-                unsafe { f(obj, rt.string_new(ttf)) };
+            }
+        }
+    }
+
+    let font_paths = resolve_font_paths(family);
+    if os_font.is_null() {
+        for ttf in &font_paths {
+            let obj = create_font_from_ttf_path(rt, t_font, ttf);
+            if !obj.is_null() {
                 os_font = obj;
+                os_src = "icall_path";
                 break;
             }
         }
@@ -486,7 +690,26 @@ fn load_os_fonts(
     }
     dont_destroy(rt, os_font);
 
-    let dyn_tmp = create_tmp_font_asset(rt, os_font, donor_font);
+    let mut dyn_tmp = create_tmp_font_asset(rt, os_font, donor_font, os_src);
+    if dyn_tmp.is_null() && os_src != "icall_path" {
+        for ttf in &font_paths {
+            let path_font = create_font_from_ttf_path(rt, t_font, ttf);
+            if path_font.is_null() {
+                continue;
+            }
+            let candidate = create_tmp_font_asset(rt, path_font, donor_font, "icall_path");
+            if !candidate.is_null() {
+                let h_path = rt.gchandle_pin(path_font);
+                if h_path != 0 {
+                    handles.push(h_path);
+                }
+                dont_destroy(rt, path_font);
+                os_font = path_font;
+                dyn_tmp = candidate;
+                break;
+            }
+        }
+    }
     if !dyn_tmp.is_null() {
         let h_dyn = rt.gchandle_pin(dyn_tmp);
         if h_dyn != 0 {
@@ -497,10 +720,73 @@ fn load_os_fonts(
     (os_font, dyn_tmp)
 }
 
-fn ensure_mobile_sdf_shader(rt: &dyn UnityRuntime, t_fa: *mut c_void, donor_font: *mut c_void) {
+fn find_shader_by_name(rt: &dyn UnityRuntime, name: &str) -> *mut c_void {
+    let name_managed = rt.string_new(name);
+    if name_managed.is_null() {
+        return std::ptr::null_mut();
+    }
+    let t_shader = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Shader");
+    if !t_shader.is_null() {
+        let m_find = rt.find_method_param0(t_shader, "Find", 1, "String");
+        if let Some(sh) = rt.invoke(m_find, std::ptr::null_mut(), &mut [name_managed]) {
+            if !sh.is_null() {
+                return sh;
+            }
+        }
+    }
+    let icall = rt.resolve_icall("UnityEngine.Shader::Find");
+    if !icall.is_null() {
+        let f: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+            unsafe { std::mem::transmute_copy(&icall) };
+        let sh = unsafe { f(name_managed) };
+        if !sh.is_null() {
+            return sh;
+        }
+    }
+    std::ptr::null_mut()
+}
+
+fn extract_shader_from_font_asset(
+    rt: &dyn UnityRuntime,
+    t_fa: *mut c_void,
+    asset: *mut c_void,
+) -> *mut c_void {
+    if asset.is_null() {
+        return std::ptr::null_mut();
+    }
+    let mut mat_obj: *mut c_void = std::ptr::null_mut();
+    let asset_cls = rt.object_get_class(asset);
+    let m_get_mat = rt.find_method_in_hierarchy(asset_cls, "get_material", 0);
+    if let Some(m) = rt.invoke(m_get_mat, asset, &mut []) {
+        mat_obj = m;
+    }
+    if mat_obj.is_null() {
+        let mut f_mat = rt.find_field_in_hierarchy(t_fa, "material");
+        if f_mat.is_null() {
+            f_mat = rt.find_field_in_hierarchy(t_fa, "m_Material");
+        }
+        if !f_mat.is_null() {
+            rt.field_get_value(asset, f_mat, &mut mat_obj as *mut *mut c_void as *mut c_void);
+        }
+    }
+    if mat_obj.is_null() {
+        return std::ptr::null_mut();
+    }
+    let icall_sh = rt.resolve_icall("UnityEngine.Material::get_shader");
+    if !icall_sh.is_null() {
+        let f: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+            unsafe { std::mem::transmute_copy(&icall_sh) };
+        return unsafe { f(mat_obj) };
+    }
+    let t_mat = rt.object_get_class(mat_obj);
+    let m_sh = rt.find_method(t_mat, "get_shader", 0);
+    rt.invoke(m_sh, mat_obj, &mut []).unwrap_or(std::ptr::null_mut())
+}
+
+fn ensure_mobile_sdf_shader(rt: &dyn UnityRuntime, t_fa: *mut c_void, donor_font: *mut c_void) -> &'static str {
     let t_shader_util = rt.find_class("Unity.TextMeshPro", "TMPro", "ShaderUtilities");
     if t_shader_util.is_null() {
-        return;
+        return "no_shader_util";
     }
     rt.class_init(t_shader_util);
 
@@ -512,70 +798,79 @@ fn ensure_mobile_sdf_shader(rt: &dyn UnityRuntime, t_fa: *mut c_void, donor_font
     let m_get_shader = rt.find_method(t_shader_util, "get_ShaderRef_MobileSDF", 0);
     if let Some(sh) = rt.invoke(m_get_shader, std::ptr::null_mut(), &mut []) {
         if !sh.is_null() {
-            return;
+            return "existing";
         }
     }
 
-    let mut donor = donor_font;
-    if donor.is_null() {
+    let mut source = "missing";
+    let mut shader = find_shader_by_name(rt, "TextMeshPro/Mobile/Distance Field");
+    if !shader.is_null() {
+        source = "shader_find_mobile";
+    }
+    if shader.is_null() {
+        shader = find_shader_by_name(rt, "TextMeshPro/Distance Field");
+        if !shader.is_null() {
+            source = "shader_find_sdf";
+        }
+    }
+    if shader.is_null() && !donor_font.is_null() {
+        shader = extract_shader_from_font_asset(rt, t_fa, donor_font);
+        if !shader.is_null() {
+            source = "donor";
+        }
+    }
+    if shader.is_null() {
         let t_settings = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_Settings");
         let m_def = rt.find_method(t_settings, "get_defaultFontAsset", 0);
-        if let Some(d) = rt.invoke(m_def, std::ptr::null_mut(), &mut []) {
-            donor = d;
+        if let Some(def_font) = rt.invoke(m_def, std::ptr::null_mut(), &mut []) {
+            shader = extract_shader_from_font_asset(rt, t_fa, def_font);
+            if !shader.is_null() {
+                source = "default_font";
+            }
         }
     }
-    if donor.is_null() {
-        return;
-    }
-
-    let mut mat_obj: *mut c_void = std::ptr::null_mut();
-    let donor_cls = rt.object_get_class(donor);
-    let m_get_mat = rt.find_method_in_hierarchy(donor_cls, "get_material", 0);
-    if let Some(m) = rt.invoke(m_get_mat, donor, &mut []) {
-        mat_obj = m;
-    }
-    if mat_obj.is_null() {
-        let mut f_mat = rt.find_field_in_hierarchy(t_fa, "material");
-        if f_mat.is_null() {
-            f_mat = rt.find_field_in_hierarchy(t_fa, "m_Material");
-        }
-        rt.field_get_value(donor, f_mat, &mut mat_obj as *mut *mut c_void as *mut c_void);
-    }
-    if mat_obj.is_null() {
-        return;
-    }
-
-    let mut shader = std::ptr::null_mut();
-    let icall_sh = rt.resolve_icall("UnityEngine.Material::get_shader");
-    if !icall_sh.is_null() {
-        let f: unsafe extern "C" fn(*mut c_void) -> *mut c_void = unsafe { std::mem::transmute_copy(&icall_sh) };
-        shader = unsafe { f(mat_obj) };
-    } else {
-        let t_mat = rt.object_get_class(mat_obj);
-        let m_sh = rt.find_method(t_mat, "get_shader", 0);
-        if let Some(s) = rt.invoke(m_sh, mat_obj, &mut []) {
-            shader = s;
+    if shader.is_null() {
+        let t_res = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Resources");
+        let type_obj = rt.class_get_type_object(t_fa);
+        if !t_res.is_null() && !type_obj.is_null() {
+            let m_find_all = rt.find_method_param0(t_res, "FindObjectsOfTypeAll", 1, "Type");
+            if let Some(arr) = rt.invoke(m_find_all, std::ptr::null_mut(), &mut [type_obj]) {
+                for elem in rt.array_elements(arr) {
+                    shader = extract_shader_from_font_asset(rt, t_fa, elem);
+                    if !shader.is_null() {
+                        source = "resources_scan";
+                        break;
+                    }
+                }
+            }
         }
     }
     if !shader.is_null() {
         let f_ref = rt.field_from_name(t_shader_util, "k_ShaderRef_MobileSDF");
+        if f_ref.is_null() {
+            return "field_missing";
+        }
         rt.field_static_set_value(f_ref, shader);
     }
+    source
 }
 
 fn create_tmp_font_asset(
     rt: &dyn UnityRuntime,
     os_font: *mut c_void,
     donor_font: *mut c_void,
+    os_src: &str,
 ) -> *mut c_void {
     let t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
     if t_fa.is_null() {
+        crate::telemetry("UNITY_FONT", "font::create_tmp_font_asset", 0, "warn", "failed | no TMP_FontAsset");
         return std::ptr::null_mut();
     }
-    ensure_mobile_sdf_shader(rt, t_fa, donor_font);
+    let shader_src = ensure_mobile_sdf_shader(rt, t_fa, donor_font);
 
     let m1 = rt.find_method_param0(t_fa, "CreateFontAsset", 1, "Font");
-    if !m1.is_null() {
+    let has_m1 = !m1.is_null();
+    if has_m1 {
         if let Some(fa) = rt.invoke(m1, std::ptr::null_mut(), &mut [os_font]) {
             if !fa.is_null() {
                 return fa;
@@ -594,7 +889,8 @@ fn create_tmp_font_asset(
     let mut multi_atlas: u8 = 1;
 
     let m9 = rt.find_method_param0(t_fa, "CreateFontAsset", 9, "Font");
-    if !m9.is_null() {
+    let has_m9 = !m9.is_null();
+    if has_m9 {
         let mut args = [
             os_font,
             &mut face_index as *mut i32 as *mut c_void,
@@ -614,7 +910,8 @@ fn create_tmp_font_asset(
     }
 
     let m8 = rt.find_method_param0(t_fa, "CreateFontAsset", 8, "Font");
-    if !m8.is_null() {
+    let has_m8 = !m8.is_null();
+    if has_m8 {
         let mut args = [
             os_font,
             &mut sampling as *mut i32 as *mut c_void,
@@ -633,7 +930,8 @@ fn create_tmp_font_asset(
     }
 
     let m7 = rt.find_method_param0(t_fa, "CreateFontAsset", 7, "Font");
-    if !m7.is_null() {
+    let has_m7 = !m7.is_null();
+    if has_m7 {
         let mut args = [
             os_font,
             &mut sampling as *mut i32 as *mut c_void,
@@ -649,7 +947,74 @@ fn create_tmp_font_asset(
             }
         }
     }
+
+    let has_str7 = !rt.find_method_param0(t_fa, "CreateFontAsset", 7, "String").is_null();
+    let has_str3 = !rt.find_method_param0(t_fa, "CreateFontAsset", 3, "String").is_null();
+    crate::telemetry(
+        "UNITY_FONT",
+        "font::create_tmp_font_asset",
+        0,
+        "warn",
+        &format!(
+            "failed | os_src={os_src} shader={shader_src} m1={has_m1} m9={has_m9} m8={has_m8} m7={has_m7} str7={has_str7} str3={has_str3}"
+        ),
+    );
     std::ptr::null_mut()
+}
+
+fn remove_from_font_list(rt: &dyn UnityRuntime, list: *mut c_void, font_asset: *mut c_void) {
+    if list.is_null() || font_asset.is_null() {
+        return;
+    }
+    let t_list = rt.object_get_class(list);
+    if t_list.is_null() {
+        return;
+    }
+    let m_remove = rt.find_method_in_hierarchy(t_list, "Remove", 1);
+    if !m_remove.is_null() {
+        let _ = rt.invoke(m_remove, list, &mut [font_asset]);
+    }
+}
+
+fn detach_fallback_from_asset(
+    rt: &dyn UnityRuntime,
+    t_fa: *mut c_void,
+    target_font: *mut c_void,
+    fallback: *mut c_void,
+) {
+    if target_font.is_null() || fallback.is_null() || target_font == fallback {
+        return;
+    }
+    let mut m_get = rt.find_method_in_hierarchy(t_fa, "get_fallbackFontAssetTable", 0);
+    if m_get.is_null() {
+        m_get = rt.find_method_in_hierarchy(t_fa, "get_fallbackFontAssets", 0);
+    }
+    if let Some(fb_list) = rt.invoke(m_get, target_font, &mut []) {
+        remove_from_font_list(rt, fb_list, fallback);
+    }
+}
+
+fn unregister_fallback_everywhere(rt: &dyn UnityRuntime, st: &FontState, old_font: *mut c_void) {
+    if old_font.is_null() || st.t_fa.is_null() {
+        return;
+    }
+    let t_settings = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_Settings");
+    if !t_settings.is_null() {
+        let m_fb = rt.find_method(t_settings, "get_fallbackFontAssets", 0);
+        if let Some(fb_list) = rt.invoke(m_fb, std::ptr::null_mut(), &mut []) {
+            remove_from_font_list(rt, fb_list, old_font);
+        }
+        let m_def = rt.find_method(t_settings, "get_defaultFontAsset", 0);
+        if let Some(def_font) = rt.invoke(m_def, std::ptr::null_mut(), &mut []) {
+            detach_fallback_from_asset(rt, st.t_fa, def_font, old_font);
+        }
+    }
+    if !st.bundle_font.is_null() && st.bundle_font != old_font {
+        detach_fallback_from_asset(rt, st.t_fa, st.bundle_font, old_font);
+    }
+    if !st.dyn_font.is_null() && st.dyn_font != old_font {
+        detach_fallback_from_asset(rt, st.t_fa, st.dyn_font, old_font);
+    }
 }
 
 fn add_to_font_list(rt: &dyn UnityRuntime, list: *mut c_void, font_asset: *mut c_void) {
@@ -739,54 +1104,11 @@ fn register_global_fallbacks(
     }
 }
 
-fn has_all_non_ascii(
-    rt: &dyn UnityRuntime,
-    t_fa: *mut c_void,
-    font_asset: *mut c_void,
-    cache: &mut HashMap<u32, bool>,
-    text: &str,
-) -> bool {
-    let mut m_has: *mut c_void = std::ptr::null_mut();
-    for ch in text.chars() {
-        let code = ch as u32;
-        if !(0x0080..=0xFFFF).contains(&code) {
-            continue;
-        }
-        if let Some(&ok) = cache.get(&code) {
-            if !ok {
-                return false;
-            }
-            continue;
-        }
-        if m_has.is_null() {
-            m_has = rt.find_method_in_hierarchy(t_fa, "HasCharacter", 1);
-            if m_has.is_null() {
-                return true;
-            }
-        }
-        let mut c32 = code;
-        let mut args = [&mut c32 as *mut u32 as *mut c_void];
-        let Some(boxed) = rt.invoke(m_has, font_asset, &mut args) else {
-            return true;
-        };
-        let ptr = rt.unbox(boxed) as *const u8;
-        let ok = ptr.is_null() || unsafe { *ptr } != 0;
-        if cache.len() < MAX_SCALED_CACHE {
-            cache.insert(code, ok);
-        }
-        if !ok {
-            return false;
-        }
-    }
-    true
-}
-
 fn apply_component_font(
     rt: &dyn UnityRuntime,
     st: &mut FontState,
     component: *mut c_void,
     hook_id: u64,
-    text: &str,
 ) {
     if hook_id == HOOK_UI_TEXT_SET_TEXT {
         if st.os_font.is_null() {
@@ -834,17 +1156,12 @@ fn apply_component_font(
         return;
     }
 
-    let mut target = if !st.bundle_font.is_null() { st.bundle_font } else { st.dyn_font };
-    if !st.bundle_font.is_null() && !st.dyn_font.is_null() {
-        if st.bundle_supports_arabic == Some(false) {
-            target = st.dyn_font;
-        } else if !has_all_non_ascii(rt, t_fa, st.bundle_font, &mut st.bundle_checked, text) {
-            target = st.dyn_font;
-            if text.chars().any(|c| ('\u{FE80}'..='\u{FEFF}').contains(&c)) {
-                st.bundle_supports_arabic = Some(false);
-            }
-        }
-    }
+    // Prefer user-selected OS dynamic font; fall back to bundle only if dynamic creation failed.
+    let target = if !st.dyn_font.is_null() {
+        st.dyn_font
+    } else {
+        st.bundle_font
+    };
 
     let f_font = st.f_font;
     let mut cur_font: *mut c_void = std::ptr::null_mut();
@@ -967,5 +1284,24 @@ fn scale_component_font(
             }
             st.scaled.insert(key, next as u32);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_font_paths_finds_windows_fonts() {
+        let tahoma = resolve_font_paths("Tahoma");
+        assert!(
+            tahoma.first().is_some_and(|p| p.to_ascii_lowercase().ends_with("tahoma.ttf")),
+            "expected tahoma.ttf first, got {tahoma:?}"
+        );
+        let arial = resolve_font_paths("Arial");
+        assert!(
+            arial.first().is_some_and(|p| p.to_ascii_lowercase().ends_with("arial.ttf")),
+            "expected arial.ttf first, got {arial:?}"
+        );
     }
 }

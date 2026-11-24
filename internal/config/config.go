@@ -20,7 +20,7 @@ type EmbedSettings struct {
 	ClearText        bool    `json:"clearText"`
 	ChangeFont       bool    `json:"changeFont"`
 	FontFamily       string  `json:"fontFamily"`
-	UseUnityBundle   bool    `json:"useUnityBundle"` // load arialuni_sdf_u* (overrides OS font when glyphs exist)
+	UseUnityBundle   bool    `json:"useUnityBundle"` // load arialuni_sdf_u* as TMP fallback & shader donor when OS dynamic font fails
 	ChangeFontSize   bool    `json:"changeFontSize"`
 	FontSizeRelative float32 `json:"fontSizeRelative"`
 	LimitLineLength     bool    `json:"limitLineLength"` // wrap non-Arabic output too
