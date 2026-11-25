@@ -32,7 +32,7 @@ import (
 
 // AppVersion is the single source of truth for the application version.
 // Can be overridden at build time via: -ldflags "-X main.AppVersion=x.y.z"
-var AppVersion = "0.2.0"
+var AppVersion = "0.2.1"
 
 // App is the Wails-bound facade over the session.
 type App struct {
