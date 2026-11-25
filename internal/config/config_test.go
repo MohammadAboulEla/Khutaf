@@ -327,3 +327,22 @@ func TestHotkeysAndAutoAttachPersistence(t *testing.T) {
 		t.Fatal("expected AutoAttach=true to persist")
 	}
 }
+
+func TestUpdateSettingsDefaultsForLegacyConfig(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"ui":{"language":"en","mode":"simple","onboarded":true}}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(legacy), 0o644); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open legacy config: %v", err)
+	}
+	upd := st.Config().Update
+	if !upd.AutoCheck || !upd.IncludePrerelease {
+		t.Fatalf("expected Update defaults (AutoCheck=true, IncludePrerelease=true), got %+v", upd)
+	}
+	if st.Config().Embed.DisplayMode != 0 {
+		t.Fatalf("expected default DisplayMode 0 (Translation Only), got %d", st.Config().Embed.DisplayMode)
+	}
+}

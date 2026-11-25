@@ -4,6 +4,7 @@ import AppHeader from "./components/AppHeader.vue";
 import AppSidebar from "./components/AppSidebar.vue";
 import AppFooter from "./components/AppFooter.vue";
 import AboutModal from "./components/AboutModal.vue";
+import UpdateModal from "./components/UpdateModal.vue";
 import OnboardingWizard from "./components/OnboardingWizard.vue";
 import TroubleshooterModal from "./components/TroubleshooterModal.vue";
 import QuickHooksModal from "./components/QuickHooksModal.vue";
@@ -39,6 +40,8 @@ const {
   logs,
   config,
   saveConfig,
+  unityFontStatus,
+  updateStatus,
   errorBanner,
   clearError,
   appVersion,
@@ -51,6 +54,12 @@ const {
   hotkeyToast,
   hideToTray,
   quitApp,
+  checkForUpdates,
+  downloadUpdate,
+  cancelUpdateDownload,
+  installUpdate,
+  skipUpdateVersion,
+  openReleasePage,
 } = useSession();
 
 const embeddableHooksCount = computed(() => hooks.value.filter((h) => h.embeddable).length);
@@ -65,9 +74,56 @@ function onCloseWindow() {
 
 const activeTab = shallowRef(isSimple.value ? "quickplay" : "games");
 const aboutOpen = shallowRef(false);
+const updateModalOpen = shallowRef(false);
+const updatedToast = shallowRef("");
 const wizardOpen = shallowRef(false);
 const troubleshooterOpen = shallowRef(false);
 let configSynced = false;
+let updatedToastShown = false;
+let updatedToastTimer = null;
+
+watch(
+  () => updateStatus.value?.updatedFrom,
+  (from) => {
+    if (!from || updatedToastShown) return;
+    updatedToastShown = true;
+    const ver = appVersion.value || updateStatus.value?.currentVersion || "";
+    updatedToast.value = t("updToastUpdated", { version: ver });
+    if (updatedToastTimer) clearTimeout(updatedToastTimer);
+    updatedToastTimer = setTimeout(() => {
+      updatedToast.value = "";
+      updatedToastTimer = null;
+    }, 4500);
+  },
+  { immediate: true },
+);
+
+async function onToggleAutoCheck(enabled) {
+  if (!config.value) return;
+  await saveConfig({
+    ...config.value,
+    update: {
+      ...(config.value.update || {}),
+      autoCheck: Boolean(enabled),
+    },
+  });
+}
+
+async function onDownloadUpdate() {
+  try {
+    await downloadUpdate();
+  } catch {
+    // Error state is emitted via updater:status.
+  }
+}
+
+async function onInstallUpdate(detach) {
+  try {
+    await installUpdate(detach);
+  } catch {
+    // Error state is emitted via updater:status.
+  }
+}
 
 watch(
   config,
@@ -197,11 +253,13 @@ onBeforeUnmount(() => window.removeEventListener("focus", onWindowFocus));
       :hooks-count="embeddableHooksCount"
       :hooks-hotkey="config?.hotkeys?.toggleHooksMenu || 'Ctrl+Alt+H'"
       :version="appVersion"
+      :update-status="updateStatus"
       @toggle-theme="toggleTheme"
       @toggle-sidebar="toggleSidebar"
       @open-about="aboutOpen = true"
       @open-troubleshooter="troubleshooterOpen = true"
       @open-quick-hooks="setQuickHooksOpen(true)"
+      @open-update="updateModalOpen = true"
       @toggle-mode="onToggleMode"
       @toggle-lang="onToggleLang"
       @close-window="onCloseWindow"
@@ -276,7 +334,28 @@ onBeforeUnmount(() => window.removeEventListener("focus", onWindowFocus));
 
     <AppFooter class="foot" :status="footerText" :version="appVersion" />
 
-    <AboutModal :open="aboutOpen" :version="appVersion" @close="aboutOpen = false" />
+    <AboutModal
+      :open="aboutOpen"
+      :version="appVersion"
+      :update-status="updateStatus"
+      :auto-check-updates="config?.update?.autoCheck !== false"
+      @close="aboutOpen = false"
+      @check-updates="checkForUpdates(true)"
+      @open-update="aboutOpen = false; updateModalOpen = true"
+      @toggle-auto-check="onToggleAutoCheck"
+    />
+    <UpdateModal
+      :open="updateModalOpen"
+      :status="updateStatus"
+      :attached="status.attached"
+      @close="updateModalOpen = false"
+      @download="onDownloadUpdate"
+      @cancel-download="cancelUpdateDownload"
+      @install="onInstallUpdate"
+      @skip="skipUpdateVersion"
+      @open-github="openReleasePage"
+      @restart-admin="restartAsAdmin"
+    />
     <OnboardingWizard :open="wizardOpen" @complete="onWizardComplete" @close="wizardOpen = false" />
     <TroubleshooterModal
       :open="troubleshooterOpen"
@@ -289,6 +368,9 @@ onBeforeUnmount(() => window.removeEventListener("focus", onWindowFocus));
   <Transition name="fade">
     <div v-if="hotkeyToast" class="hotkey-toast" :class="{ warn: hotkeyToast.action === 'warning' }">
       {{ hotkeyToast.label }}
+    </div>
+    <div v-else-if="updatedToast" class="hotkey-toast">
+      {{ updatedToast }}
     </div>
   </Transition>
 </template>

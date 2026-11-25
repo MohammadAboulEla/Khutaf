@@ -1202,4 +1202,59 @@ mod tests {
         set_settings(Settings::default());
         reset_for_session();
     }
+
+    #[test]
+    fn all_display_modes_format_and_bypass_correctly() {
+        let _guard = test_guard();
+        reset_for_session();
+        let _rx = ipc::install_test_sink();
+        set_enabled(1, 55, 0, true);
+        let seed_cache = || {
+            RECENT_TRANSLATIONS
+                .lock()
+                .unwrap()
+                .insert("Hello World".to_owned(), Some("مرحبا".to_owned()), None);
+        };
+
+        // Mode 0: Translation Only
+        set_settings(Settings { display_mode: 0, ..Default::default() });
+        seed_cache();
+        assert_eq!(
+            process_unity(1, || 55, 0, 0x5000, "Hello World", "Hello World", || 0),
+            ProcessOutcome::Replace { text: "مرحبا".to_owned(), apply_font: true }
+        );
+
+        // Mode 1: Original + Translation
+        set_settings(Settings { display_mode: 1, ..Default::default() });
+        seed_cache();
+        assert_eq!(
+            process_unity(1, || 55, 0, 0x5001, "Hello World", "Hello World", || 0),
+            ProcessOutcome::Replace { text: "Hello World\nمرحبا".to_owned(), apply_font: true }
+        );
+
+        // Mode 2: Translation + Original
+        set_settings(Settings { display_mode: 2, ..Default::default() });
+        seed_cache();
+        assert_eq!(
+            process_unity(1, || 55, 0, 0x5002, "Hello World", "Hello World", || 0),
+            ProcessOutcome::Replace { text: "مرحبا\nHello World".to_owned(), apply_font: true }
+        );
+
+        // Mode 3: Original Only (Bypass)
+        set_settings(Settings { display_mode: 3, ..Default::default() });
+        seed_cache();
+        assert_eq!(
+            process_unity(1, || 55, 0, 0x5003, "Hello World", "Hello World", || 0),
+            ProcessOutcome::KeepOriginal
+        );
+
+        assert_eq!(format_display(0, "Orig", "Trans"), Some("Trans".to_owned()));
+        assert_eq!(format_display(1, "Orig", "Trans"), Some("Orig\nTrans".to_owned()));
+        assert_eq!(format_display(2, "Orig", "Trans"), Some("Trans\nOrig".to_owned()));
+        assert_eq!(format_display(3, "Orig", "Trans"), None);
+
+        ipc::clear_test_sink();
+        set_settings(Settings::default());
+        reset_for_session();
+    }
 }

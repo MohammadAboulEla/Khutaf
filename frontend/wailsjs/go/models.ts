@@ -14,6 +14,26 @@ export namespace config {
 	        this.targetLang = source["targetLang"];
 	    }
 	}
+	export class UpdateSettings {
+	    autoCheck: boolean;
+	    includePrerelease: boolean;
+	    skippedVersion?: string;
+	    lastCheckedAt?: string;
+	    etag?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.autoCheck = source["autoCheck"];
+	        this.includePrerelease = source["includePrerelease"];
+	        this.skippedVersion = source["skippedVersion"];
+	        this.lastCheckedAt = source["lastCheckedAt"];
+	        this.etag = source["etag"];
+	    }
+	}
 	export class HotkeySettings {
 	    enabled: boolean;
 	    minimizeToTray: boolean;
@@ -304,6 +324,7 @@ export namespace config {
 	    pipeline: PipelineSettings;
 	    ui: UISettings;
 	    hotkeys: HotkeySettings;
+	    update: UpdateSettings;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -316,6 +337,7 @@ export namespace config {
 	        this.pipeline = this.convertValues(source["pipeline"], PipelineSettings);
 	        this.ui = this.convertValues(source["ui"], UISettings);
 	        this.hotkeys = this.convertValues(source["hotkeys"], HotkeySettings);
+	        this.update = this.convertValues(source["update"], UpdateSettings);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -354,6 +376,7 @@ export namespace config {
 	        this.ctx2 = source["ctx2"];
 	    }
 	}
+	
 	
 	
 	
@@ -924,6 +947,61 @@ export namespace translator {
 	        this.modelName = source["modelName"];
 	        this.lastError = source["lastError"];
 	        this.recentLogs = source["recentLogs"];
+	    }
+	}
+
+}
+
+export namespace updater {
+	
+	export class Status {
+	    state: string;
+	    currentVersion: string;
+	    latestVersion: string;
+	    tagName: string;
+	    releaseName: string;
+	    releaseNotes: string;
+	    releaseUrl: string;
+	    publishedAt: string;
+	    assetName: string;
+	    assetUrl: string;
+	    assetSize: number;
+	    assetSha256: string;
+	    progress: number;
+	    downloadedBytes: number;
+	    totalBytes: number;
+	    lastCheckedAt: string;
+	    writable: boolean;
+	    prerelease: boolean;
+	    error: string;
+	    updatedFrom: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Status(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.currentVersion = source["currentVersion"];
+	        this.latestVersion = source["latestVersion"];
+	        this.tagName = source["tagName"];
+	        this.releaseName = source["releaseName"];
+	        this.releaseNotes = source["releaseNotes"];
+	        this.releaseUrl = source["releaseUrl"];
+	        this.publishedAt = source["publishedAt"];
+	        this.assetName = source["assetName"];
+	        this.assetUrl = source["assetUrl"];
+	        this.assetSize = source["assetSize"];
+	        this.assetSha256 = source["assetSha256"];
+	        this.progress = source["progress"];
+	        this.downloadedBytes = source["downloadedBytes"];
+	        this.totalBytes = source["totalBytes"];
+	        this.lastCheckedAt = source["lastCheckedAt"];
+	        this.writable = source["writable"];
+	        this.prerelease = source["prerelease"];
+	        this.error = source["error"];
+	        this.updatedFrom = source["updatedFrom"];
 	    }
 	}
 

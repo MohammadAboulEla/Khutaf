@@ -138,6 +138,15 @@ type HotkeySettings struct {
 	PopupHasPos     bool   `json:"popupHasPos,omitempty"`
 }
 
+// UpdateSettings configures automatic GitHub release checks and skipped versions.
+type UpdateSettings struct {
+	AutoCheck         bool   `json:"autoCheck"`
+	IncludePrerelease bool   `json:"includePrerelease"`
+	SkippedVersion    string `json:"skippedVersion,omitempty"`
+	LastCheckedAt     string `json:"lastCheckedAt,omitempty"`
+	ETag              string `json:"etag,omitempty"`
+}
+
 // Config is the root of config.json.
 type Config struct {
 	Embed      EmbedSettings      `json:"embed"`
@@ -145,6 +154,7 @@ type Config struct {
 	Pipeline   PipelineSettings   `json:"pipeline"`
 	UI         UISettings         `json:"ui"`
 	Hotkeys    HotkeySettings     `json:"hotkeys"`
+	Update     UpdateSettings     `json:"update"`
 }
 
 // EmbedHook identifies a hook whose embedding is re-enabled on reattach.
@@ -170,7 +180,7 @@ func Default() Config {
 	return Config{
 		Embed: EmbedSettings{
 			TimeoutMs:        3000,
-			DisplayMode:      1,
+			DisplayMode:      0,
 			ChangeFont:       true,
 			FontFamily:       "Tahoma",
 			UseUnityBundle:   true,
@@ -227,6 +237,10 @@ func Default() Config {
 			FontScaleUp:     "Ctrl+Alt+Up",
 			FontScaleDown:   "Ctrl+Alt+Down",
 			ToggleHooksMenu: "Ctrl+Alt+H",
+		},
+		Update: UpdateSettings{
+			AutoCheck:         true,
+			IncludePrerelease: true,
 		},
 	}
 }

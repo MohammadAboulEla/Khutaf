@@ -39,9 +39,10 @@ Follow these steps in order whenever creating a new release of Khutaf:
   wails build -ldflags "-X main.AppVersion=<version>"
   ```
 
-## 5. Package Release Zip in `dist/`
+## 5. Package Release Zip & Checksum in `dist/`
+- Keep the GitHub release tag `v<version>` identical to `AppVersion` in `app.go` (e.g. `v0.1.6-beta`) so in-app auto-update version checks stay aligned.
 - Stage only `Khutaf.exe` and `runtime/khutaf-hook64.dll` (never include `runtime/TMP_Font_AssetBundles/` — users download that in-app from the `unity-fonts` release).
-- Zip with `.NET ZipFile` (avoid `Compress-Archive` progress-bar errors in non-interactive shells):
+- Zip with `.NET ZipFile` (avoid `Compress-Archive` progress-bar errors in non-interactive shells) and write `dist/SHA256SUMS.txt` for updater integrity verification:
   ```powershell
   $stage = "E:\programing\go\Khutaf\dist\_stage"
   Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
@@ -53,6 +54,8 @@ Follow these steps in order whenever creating a new release of Khutaf:
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
   Remove-Item -Recurse -Force $stage
+  $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+  "$hash  $(Split-Path $zip -Leaf)" | Set-Content -Encoding ascii "E:\programing\go\Khutaf\dist\SHA256SUMS.txt"
   Get-Item $zip | Select-Object Name, Length
   ```
 
@@ -61,4 +64,4 @@ Follow these steps in order whenever creating a new release of Khutaf:
   - **What's New / Fixed** (bulleted list)
   - **What's Included** (`Khutaf.exe`, `runtime/khutaf-hook64.dll`)
   - **Notes** (portable install, optional in-app `TMP_Font_AssetBundles` download, Windows 10/11 x64 + WebView2 requirement)
-- If `gh` CLI is installed and authenticated, offer or run `gh release create v<version> dist/Khutaf-v<version>-win64.zip ...`; otherwise provide the output zip path and copy-pasteable release notes.
+- If `gh` CLI is installed and authenticated, offer or run `gh release create v<version> dist/Khutaf-v<version>-win64.zip dist/SHA256SUMS.txt ...`; otherwise provide the output zip & checksum paths and copy-pasteable release notes.

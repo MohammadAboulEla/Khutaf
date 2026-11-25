@@ -7,10 +7,12 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   title: { type: String, default: "Khutaf" },
   version: { type: String, default: "0.1.5-beta" },
+  updateStatus: { type: Object, default: () => ({ state: "idle" }) },
+  autoCheckUpdates: { type: Boolean, default: true },
 });
 
-const emit = defineEmits(["close"]);
-const { lang: appLang } = useI18n();
+const emit = defineEmits(["close", "check-updates", "open-update", "toggle-auto-check"]);
+const { lang: appLang, t } = useI18n();
 
 const STORAGE_KEY = "khutaf.aboutLang";
 const readInitialLang = () => {
@@ -136,6 +138,24 @@ const content = computed(() => ({
 }));
 
 const active = computed(() => content.value[lang.value]);
+
+const updateSummary = computed(() => {
+  const st = props.updateStatus?.state || "idle";
+  if (st === "checking") return t("updAboutChecking");
+  if (st === "available" || st === "downloading" || st === "verifying") {
+    return t("updAboutAvailable", { version: props.updateStatus?.latestVersion || "" });
+  }
+  if (st === "ready") {
+    return t("updAboutReady", { version: props.updateStatus?.latestVersion || "" });
+  }
+  if (st === "up_to_date") return t("updAboutUpToDate");
+  if (st === "error") return props.updateStatus?.error || t("updAboutIdle");
+  return t("updAboutIdle");
+});
+
+const hasActionableUpdate = computed(() =>
+  ["available", "downloading", "verifying", "ready"].includes(props.updateStatus?.state),
+);
 </script>
 
 <template>
@@ -221,6 +241,44 @@ const active = computed(() => content.value[lang.value]);
                 </span>
                 <span class="note-text">{{ note.text }}</span>
               </div>
+            </div>
+
+            <div class="update-card">
+              <div class="update-top">
+                <div class="update-info">
+                  <span class="update-title">{{ t("updAboutSection") }}</span>
+                  <span class="update-sub" :class="{ avail: hasActionableUpdate }">
+                    {{ updateSummary }}
+                  </span>
+                </div>
+                <button
+                  v-if="hasActionableUpdate"
+                  class="upd-btn accent"
+                  type="button"
+                  @click="emit('open-update')"
+                >
+                  <Icon name="Download" :size="13" />
+                  <span>{{ t("updAboutViewBtn") }}</span>
+                </button>
+                <button
+                  v-else
+                  class="upd-btn"
+                  type="button"
+                  :disabled="updateStatus?.state === 'checking'"
+                  @click="emit('check-updates')"
+                >
+                  <Icon name="RefreshCw" :size="13" />
+                  <span>{{ t("updAboutCheckBtn") }}</span>
+                </button>
+              </div>
+              <label class="upd-check">
+                <input
+                  type="checkbox"
+                  :checked="autoCheckUpdates"
+                  @change="emit('toggle-auto-check', $event.target.checked)"
+                />
+                <span>{{ t("updAboutAutoCheck") }}</span>
+              </label>
             </div>
           </div>
 
@@ -491,6 +549,80 @@ const active = computed(() => content.value[lang.value]);
   cursor: pointer;
 }
 .btn:hover { opacity: 0.9; }
+
+.update-card {
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.update-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.update-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.update-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.update-sub {
+  font-size: var(--fs-small);
+  color: var(--fg-muted);
+}
+.update-sub.avail {
+  color: var(--accent);
+  font-weight: 500;
+}
+.upd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border-input, var(--border));
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  cursor: pointer;
+}
+.upd-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.upd-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.upd-btn.accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.upd-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-small);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.upd-check input {
+  accent-color: var(--accent);
+}
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.12s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }

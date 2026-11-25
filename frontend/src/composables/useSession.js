@@ -53,6 +53,28 @@ const unityFontStatus = ref({
   message: "",
   error: "",
 });
+const updateStatus = ref({
+  state: "idle",
+  currentVersion: "",
+  latestVersion: "",
+  tagName: "",
+  releaseName: "",
+  releaseNotes: "",
+  releaseUrl: "",
+  publishedAt: "",
+  assetName: "",
+  assetUrl: "",
+  assetSize: 0,
+  assetSha256: "",
+  progress: 0,
+  downloadedBytes: 0,
+  totalBytes: 0,
+  lastCheckedAt: "",
+  writable: true,
+  prerelease: false,
+  error: "",
+  updatedFrom: "",
+});
 const errorBanner = shallowRef("");
 const saveState = shallowRef("");
 const benchmarkItems = ref([]);
@@ -100,6 +122,10 @@ function init() {
 
   on("unityfonts:progress", (st) => {
     if (st) unityFontStatus.value = st;
+  });
+
+  on("updater:status", (st) => {
+    if (st) updateStatus.value = st;
   });
 
   on("translator:bench:item", (item) => {
@@ -223,18 +249,20 @@ async function refreshHooks() {
 }
 
 async function refreshAll() {
-  const [st, cfg, hk, ver, adm] = await Promise.all([
+  const [st, cfg, hk, ver, adm, upd] = await Promise.all([
     call("Status"),
     call("GetConfig"),
     call("Hooks"),
     call("AppVersion"),
     call("IsAdmin"),
+    call("GetUpdateStatus"),
   ]);
   if (st) status.value = st;
   if (cfg) config.value = cfg;
   applyHooksSnapshot(hk);
   if (ver) appVersion.value = ver;
   if (typeof adm === "boolean") isAdmin.value = adm;
+  if (upd) updateStatus.value = upd;
   await Promise.all([refreshProcesses(), refreshSavedGames(), refreshUnityFontStatus(), refreshTelemetry()]);
 }
 
@@ -604,6 +632,38 @@ function setQuickHooksOpen(open) {
   call("SetHooksPopupOpen", Boolean(open));
 }
 
+async function checkForUpdates(manual = true) {
+  try {
+    const st = await call("CheckForUpdates", Boolean(manual));
+    if (st) updateStatus.value = st;
+    return st;
+  } catch (e) {
+    const cur = await call("GetUpdateStatus");
+    if (cur) updateStatus.value = cur;
+    throw e;
+  }
+}
+
+async function downloadUpdate() {
+  return call("DownloadUpdate");
+}
+
+function cancelUpdateDownload() {
+  return call("CancelUpdateDownload");
+}
+
+async function installUpdate(detachIfAttached = true) {
+  return call("InstallUpdate", Boolean(detachIfAttached));
+}
+
+async function skipUpdateVersion(version) {
+  return call("SkipUpdateVersion", version || "");
+}
+
+function openReleasePage(url) {
+  return call("OpenReleasePage", url || "");
+}
+
 export function useSession() {
   init();
   return {
@@ -623,6 +683,7 @@ export function useSession() {
     pipelineTarget,
     config,
     unityFontStatus: readonly(unityFontStatus),
+    updateStatus: readonly(updateStatus),
     errorBanner: readonly(errorBanner),
     saveState: readonly(saveState),
     benchmarkItems: readonly(benchmarkItems),
@@ -677,5 +738,11 @@ export function useSession() {
     clearTelemetry,
     exportDiagnosticBundle,
     clearError,
+    checkForUpdates,
+    downloadUpdate,
+    cancelUpdateDownload,
+    installUpdate,
+    skipUpdateVersion,
+    openReleasePage,
   };
 }

@@ -4,17 +4,30 @@ package main
 
 import (
 	"embed"
+	"os"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+
+	"khutaf/internal/updater"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
+	if handled, code := updater.CheckApplyFlag(os.Args[1:]); handled {
+		os.Exit(code)
+	}
+
 	app := NewApp()
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "--updated-from=") {
+			app.updatedFrom = strings.TrimPrefix(arg, "--updated-from=")
+		}
+	}
 
 	err := wails.Run(&options.App{
 		Title:     "Khutaf",

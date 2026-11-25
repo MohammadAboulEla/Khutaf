@@ -30,6 +30,14 @@ export function CancelBenchmark() {
   return window['go']['main']['App']['CancelBenchmark']();
 }
 
+export function CancelUpdateDownload() {
+  return window['go']['main']['App']['CancelUpdateDownload']();
+}
+
+export function CheckForUpdates(arg1) {
+  return window['go']['main']['App']['CheckForUpdates'](arg1);
+}
+
 export function ClearSavedGameHooks(arg1) {
   return window['go']['main']['App']['ClearSavedGameHooks'](arg1);
 }
@@ -66,6 +74,10 @@ export function DownloadUnityFontsTo(arg1) {
   return window['go']['main']['App']['DownloadUnityFontsTo'](arg1);
 }
 
+export function DownloadUpdate() {
+  return window['go']['main']['App']['DownloadUpdate']();
+}
+
 export function EnsureMainWindowGeometry() {
   return window['go']['main']['App']['EnsureMainWindowGeometry']();
 }
@@ -82,12 +94,20 @@ export function GetTelemetrySnapshot() {
   return window['go']['main']['App']['GetTelemetrySnapshot']();
 }
 
+export function GetUpdateStatus() {
+  return window['go']['main']['App']['GetUpdateStatus']();
+}
+
 export function HideToTray() {
   return window['go']['main']['App']['HideToTray']();
 }
 
 export function Hooks() {
   return window['go']['main']['App']['Hooks']();
+}
+
+export function InstallUpdate(arg1) {
+  return window['go']['main']['App']['InstallUpdate'](arg1);
 }
 
 export function IsAdmin() {
@@ -112,6 +132,10 @@ export function ListProcesses() {
 
 export function LlamaServerStatus() {
   return window['go']['main']['App']['LlamaServerStatus']();
+}
+
+export function OpenReleasePage(arg1) {
+  return window['go']['main']['App']['OpenReleasePage'](arg1);
 }
 
 export function PreviewArabic(arg1) {
@@ -172,6 +196,10 @@ export function SetHooksPopupOpen(arg1) {
 
 export function ShowFromTray() {
   return window['go']['main']['App']['ShowFromTray']();
+}
+
+export function SkipUpdateVersion(arg1) {
+  return window['go']['main']['App']['SkipUpdateVersion'](arg1);
 }
 
 export function SmartAutoEmbed() {

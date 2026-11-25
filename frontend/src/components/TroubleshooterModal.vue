@@ -26,7 +26,7 @@ const { t, isRtl } = useI18n();
 const fontMsg = shallowRef("");
 const wrapLen = shallowRef(40);
 const fontScale = shallowRef(1.0);
-const displayMode = shallowRef(1);
+const displayMode = shallowRef(0);
 
 watch(
   config,
@@ -34,7 +34,7 @@ watch(
     if (!cfg?.embed) return;
     wrapLen.value = cfg.embed.maxLineLength || 40;
     fontScale.value = cfg.embed.fontSizeRelative || 1.0;
-    displayMode.value = cfg.embed.displayMode ?? 1;
+    displayMode.value = cfg.embed.displayMode ?? 0;
   },
   { immediate: true },
 );
@@ -155,6 +155,7 @@ function onOpenBench() {
                   <select v-model.number="displayMode" class="input">
                     <option :value="0">{{ t("qpDisplayTransOnly") }}</option>
                     <option :value="1">{{ t("qpDisplayOriTrans") }}</option>
+                    <option :value="2">{{ t("embOptTransOri") }}</option>
                     <option :value="3">{{ t("qpDisplayOriOnly") }}</option>
                   </select>
                 </label>

@@ -49,7 +49,7 @@ const embeddableHooks = computed(() =>
   sortPinned(hooks.value.filter((h) => h.embeddable)),
 );
 
-const activeDisplayMode = computed(() => config.value?.embed?.displayMode ?? 1);
+const activeDisplayMode = computed(() => config.value?.embed?.displayMode ?? 0);
 
 const activeProviderName = computed(
   () => status.value.provider || config.value?.translator?.active || "bing",

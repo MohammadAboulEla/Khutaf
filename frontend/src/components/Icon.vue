@@ -75,6 +75,8 @@ const PATHS = {
     '<path d="m2 19 5-14 5 14"/><path d="M3.8 15h6.4"/><circle cx="18" cy="15.5" r="3.5"/><path d="M21.5 12v7"/>',
   ArrowUpDown:
     '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
+  ExternalLink:
+    '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
 };
 </script>
 

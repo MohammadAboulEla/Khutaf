@@ -22,7 +22,7 @@ const errMsg = ref("");
 
 const embedForm = reactive({
   timeoutMs: 3000,
-  displayMode: 1,
+  displayMode: 0,
   clearText: false,
   changeFont: true,
   fontFamily: "Tahoma",
