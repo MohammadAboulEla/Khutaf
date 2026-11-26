@@ -21,6 +21,19 @@ use crate::embed;
 const MAX_SCALED_CACHE: usize = 4096;
 const MAX_TRIED_DONORS: usize = 16;
 
+#[derive(Clone, Copy, Default)]
+struct LayoutMethods {
+    resolved: bool,
+    m_get_overflow: *mut c_void,
+    m_set_overflow: *mut c_void,
+    m_get_max_lines: *mut c_void,
+    m_set_max_lines: *mut c_void,
+    m_get_max_chars: *mut c_void,
+    m_set_max_chars: *mut c_void,
+    m_get_v_overflow: *mut c_void,
+    m_set_v_overflow: *mut c_void,
+}
+
 struct FontState {
     initialized: bool,
     loaded_dir: String,
@@ -36,6 +49,7 @@ struct FontState {
     m_tmp_get_font: *mut c_void,
     m_tmp_set_font: *mut c_void,
     size_methods: HashMap<usize, (*mut c_void, *mut c_void)>,
+    layout_methods: HashMap<usize, LayoutMethods>,
     bundle_handles: Vec<u32>,
     os_handles: Vec<u32>,
     scaled: HashMap<usize, u32>,
@@ -60,6 +74,7 @@ static STATE: LazyLock<Mutex<FontState>> = LazyLock::new(|| {
         m_tmp_get_font: std::ptr::null_mut(),
         m_tmp_set_font: std::ptr::null_mut(),
         size_methods: HashMap::new(),
+        layout_methods: HashMap::new(),
         bundle_handles: Vec::new(),
         os_handles: Vec::new(),
         scaled: HashMap::new(),
@@ -67,7 +82,7 @@ static STATE: LazyLock<Mutex<FontState>> = LazyLock::new(|| {
     })
 });
 
-pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, _text: &str) {
+pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text: &str) {
     let settings = embed::settings();
     let dir = settings.font_dir.trim();
     let family = settings.font_family.trim();
@@ -120,6 +135,9 @@ pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, _tex
 
     if !component.is_null() {
         apply_component_font(rt, &mut st, component, hook_id);
+        if matches!(embed::current_display_mode(), 1 | 2) || text.contains('\n') {
+            ensure_bilingual_layout(rt, &mut st, component, hook_id, text);
+        }
         if settings.change_font_size
             && settings.font_scale > 0.0
             && (settings.font_scale - 1.0).abs() > 0.001
@@ -1283,6 +1301,113 @@ fn scale_component_font(
                 st.scaled.clear();
             }
             st.scaled.insert(key, next as u32);
+        }
+    }
+}
+
+fn read_i32_prop(rt: &dyn UnityRuntime, component: *mut c_void, getter: *mut c_void) -> Option<i32> {
+    if getter.is_null() {
+        return None;
+    }
+    let boxed = rt.invoke(getter, component, &mut [])?;
+    let ptr = rt.unbox(boxed);
+    if ptr.is_null() {
+        return None;
+    }
+    Some(unsafe { *(ptr as *const i32) })
+}
+
+fn ensure_bilingual_layout(
+    rt: &dyn UnityRuntime,
+    st: &mut FontState,
+    component: *mut c_void,
+    hook_id: u64,
+    text: &str,
+) {
+    let comp_cls = rt.object_get_class(component);
+    if comp_cls.is_null() {
+        return;
+    }
+    let cls_key = comp_cls as usize;
+    let methods = if let Some(&cached) = st.layout_methods.get(&cls_key) {
+        cached
+    } else {
+        let resolved = if is_tmp_hook(hook_id) {
+            LayoutMethods {
+                resolved: true,
+                m_get_overflow: rt.find_method_in_hierarchy(comp_cls, "get_overflowMode", 0),
+                m_set_overflow: rt.find_method_in_hierarchy(comp_cls, "set_overflowMode", 1),
+                m_get_max_lines: rt.find_method_in_hierarchy(comp_cls, "get_maxVisibleLines", 0),
+                m_set_max_lines: rt.find_method_in_hierarchy(comp_cls, "set_maxVisibleLines", 1),
+                m_get_max_chars: rt.find_method_in_hierarchy(comp_cls, "get_maxVisibleCharacters", 0),
+                m_set_max_chars: rt.find_method_in_hierarchy(comp_cls, "set_maxVisibleCharacters", 1),
+                ..Default::default()
+            }
+        } else if hook_id == HOOK_UI_TEXT_SET_TEXT {
+            LayoutMethods {
+                resolved: true,
+                m_get_v_overflow: rt.find_method_in_hierarchy(comp_cls, "get_verticalOverflow", 0),
+                m_set_v_overflow: rt.find_method_in_hierarchy(comp_cls, "set_verticalOverflow", 1),
+                ..Default::default()
+            }
+        } else {
+            LayoutMethods { resolved: true, ..Default::default() }
+        };
+        if st.layout_methods.len() >= 128 {
+            st.layout_methods.clear();
+        }
+        st.layout_methods.insert(cls_key, resolved);
+        resolved
+    };
+    if !methods.resolved {
+        return;
+    }
+
+    if is_tmp_hook(hook_id) {
+        if let Some(cur_overflow) = read_i32_prop(rt, component, methods.m_get_overflow) {
+            // TextOverflowModes: 0=Overflow, 1=Ellipsis, 3=Truncate.
+            if matches!(cur_overflow, 1 | 3) && !methods.m_set_overflow.is_null() {
+                let mut overflow_mode: i32 = 0;
+                let _ = rt.invoke(
+                    methods.m_set_overflow,
+                    component,
+                    &mut [&mut overflow_mode as *mut i32 as *mut c_void],
+                );
+            }
+        }
+        let line_count = text.lines().count().max(1) as i32;
+        if let Some(cur_lines) = read_i32_prop(rt, component, methods.m_get_max_lines) {
+            if cur_lines > 0 && cur_lines < line_count && !methods.m_set_max_lines.is_null() {
+                let mut unlimited: i32 = 99_999;
+                let _ = rt.invoke(
+                    methods.m_set_max_lines,
+                    component,
+                    &mut [&mut unlimited as *mut i32 as *mut c_void],
+                );
+            }
+        }
+        let visible_chars = embed::visible_char_count(text).min(i32::MAX as usize) as i32;
+        if let Some(cur_chars) = read_i32_prop(rt, component, methods.m_get_max_chars) {
+            if cur_chars > 0 && cur_chars < visible_chars && !methods.m_set_max_chars.is_null() {
+                let mut unlimited: i32 = 99_999;
+                let _ = rt.invoke(
+                    methods.m_set_max_chars,
+                    component,
+                    &mut [&mut unlimited as *mut i32 as *mut c_void],
+                );
+            }
+        }
+    } else if hook_id == HOOK_UI_TEXT_SET_TEXT {
+        if let Some(cur_v) = read_i32_prop(rt, component, methods.m_get_v_overflow) {
+            // VerticalWrapMode: 0=Truncate, 1=Overflow.
+            if cur_v == 0 && !methods.m_set_v_overflow.is_null() {
+                let mut overflow: i32 = 1;
+                let _ = rt.invoke(
+                    methods.m_set_v_overflow,
+                    component,
+                    &mut [&mut overflow as *mut i32 as *mut c_void],
+                );
+            }
         }
     }
 }

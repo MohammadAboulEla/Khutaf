@@ -50,7 +50,6 @@ struct AsyncTarget {
     orig_text: String,
     raw_orig_text: String,
     pending_text: String,
-    display_mode: u32,
     showed_placeholder: bool,
     created_at: Instant,
 }
@@ -139,6 +138,7 @@ static ENABLED_GEN: AtomicU64 = AtomicU64::new(1);
 static ENABLED_HOOK_MASK: AtomicU64 = AtomicU64::new(0);
 static ENABLED_HIGH_HOOKS: AtomicBool = AtomicBool::new(false);
 static COMPONENT_CTX: LazyLock<Mutex<HashMap<(u64, usize), ComponentEntry>>> = LazyLock::new(Default::default);
+static COMPONENT_CHAR_BUDGET: LazyLock<Mutex<HashMap<usize, (i32, i32)>>> = LazyLock::new(Default::default);
 static RECENT_TRANSLATIONS: LazyLock<Mutex<RecentCache>> = LazyLock::new(Default::default);
 static OWN_OUTPUTS: LazyLock<Mutex<OwnOutputs>> = LazyLock::new(Default::default);
 static HAS_OWN_OUTPUTS: AtomicBool = AtomicBool::new(false);
@@ -207,10 +207,67 @@ pub fn set_settings(s: Settings) {
     *SETTINGS.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(s);
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
 pub fn settings() -> Arc<Settings> {
     Arc::clone(&SETTINGS.read().unwrap_or_else(|p| p.into_inner()))
+}
+
+pub(crate) fn current_display_mode() -> u32 {
+    DISPLAY_MODE.load(Ordering::Relaxed)
+}
+
+pub(crate) fn visible_char_count(s: &str) -> usize {
+    let mut n = 0usize;
+    let mut in_tag = false;
+    let bytes = s.as_bytes();
+    for (idx, ch) in s.char_indices() {
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+            }
+            continue;
+        }
+        if ch == '<' && bytes[idx + 1..].contains(&b'>') {
+            in_tag = true;
+            continue;
+        }
+        if ch != '\r' {
+            n += 1;
+        }
+    }
+    n
+}
+
+pub(crate) fn record_component_text_len(component: usize, orig: &str, out: &str) {
+    if component == 0 {
+        return;
+    }
+    let orig_len = visible_char_count(orig).min(i32::MAX as usize) as i32;
+    let out_len = visible_char_count(out).min(i32::MAX as usize) as i32;
+    let mut map = COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner());
+    if out_len > orig_len && orig_len > 0 {
+        if map.len() >= MAX_COMPONENT_CTX && !map.contains_key(&component) {
+            map.clear();
+        }
+        map.insert(component, (orig_len, out_len));
+    } else {
+        map.remove(&component);
+    }
+}
+
+pub(crate) fn adjust_max_visible_chars(component: usize, requested: i32) -> i32 {
+    if component == 0 || requested <= 0 {
+        return requested;
+    }
+    let map = COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(&(orig_len, out_len)) = map.get(&component) {
+        if requested >= orig_len && requested < out_len {
+            return 99_999;
+        }
+    }
+    requested
 }
 
 pub(crate) fn strip_typewriter_tags() -> bool {
@@ -417,9 +474,15 @@ fn is_arabic_char(c: char) -> bool {
     )
 }
 
-/// Reports whether `s` contains at least one non-Arabic alphabetic letter outside `<...>` rich-text tags.
+fn is_shaped_arabic_char(c: char) -> bool {
+    matches!(c as u32, 0xFB50..=0xFDFF | 0xFE70..=0xFEFF)
+}
+
+/// Reports whether `s` contains at least one non-Arabic alphabetic letter outside `<...>` rich-text tags,
+/// and no shaped Arabic Presentation Forms (which indicate already-processed Khutaf bilingual output).
 pub(crate) fn has_translatable_letters(s: &str) -> bool {
     let mut in_tag = false;
+    let mut has_letter = false;
     let bytes = s.as_bytes();
     for (idx, ch) in s.char_indices() {
         if in_tag {
@@ -432,17 +495,28 @@ pub(crate) fn has_translatable_letters(s: &str) -> bool {
             in_tag = true;
             continue;
         }
+        if is_shaped_arabic_char(ch) {
+            return false;
+        }
         if ch.is_alphabetic() && !is_arabic_char(ch) {
-            return true;
+            has_letter = true;
         }
     }
-    false
+    has_letter
 }
 
 fn format_display(mode: u32, orig: &str, trans: &str) -> Option<String> {
     match mode {
-        1 => Some(format!("{orig}\n{trans}")),
-        2 => Some(format!("{trans}\n{orig}")),
+        1 => {
+            let o = orig.trim_end_matches(['\r', '\n']);
+            let t = trans.trim_matches(['\r', '\n']);
+            Some(format!("{o}\n{t}"))
+        }
+        2 => {
+            let o = orig.trim_end_matches(['\r', '\n']);
+            let t = trans.trim_matches(['\r', '\n']);
+            Some(format!("{t}\n{o}"))
+        }
         3 => None,
         _ => Some(trans.to_owned()),
     }
@@ -493,6 +567,7 @@ pub fn process_unity(
         let Some(out) = format_display(cfg.display_mode, cleaned, &cached) else {
             return ProcessOutcome::KeepOriginal;
         };
+        record_component_text_len(component, cleaned, &out);
         remember_output(&out);
         return ProcessOutcome::Replace { text: out, apply_font: true };
     }
@@ -579,7 +654,6 @@ pub fn process_unity(
                         orig_text: cleaned.to_owned(),
                         raw_orig_text: raw.to_owned(),
                         pending_text: cfg.pending_text.clone(),
-                        display_mode: cfg.display_mode,
                         showed_placeholder,
                         created_at: Instant::now(),
                     },
@@ -695,6 +769,7 @@ pub fn process_unity(
             let Some(out) = format_display(cfg.display_mode, cleaned, &t) else {
                 return ProcessOutcome::KeepOriginal;
             };
+            record_component_text_len(component, cleaned, &out);
             remember_output(&out);
             ProcessOutcome::Replace { text: out, apply_font: true }
         }
@@ -762,11 +837,13 @@ pub fn complete(req_id: u64, text: Option<String>) {
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
                     .insert(target.orig_text.clone(), Some(t.clone()), None);
-                let out = format_display(target.display_mode, &target.orig_text, &t);
+                let mode = DISPLAY_MODE.load(Ordering::Relaxed);
+                let out = format_display(mode, &target.orig_text, &t);
                 let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
                 let still_current = st.comp_gen.get(&target.component).copied() == Some(target.generation);
                 if still_current {
                     if let Some(out) = out {
+                        record_component_text_len(target.component, &target.orig_text, &out);
                         st.ready.push_back(ReadyUpdate {
                             hook_id: target.hook_id,
                             component: target.component,
@@ -886,6 +963,7 @@ pub fn release_all() {
     clear_async_state();
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner()).clear();
     LAST_SENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
     let _guard = PENDING.lock().unwrap_or_else(|p| p.into_inner());
     PENDING_CV.notify_all();
@@ -900,6 +978,7 @@ pub fn reset_for_session() {
     ENABLED_HIGH_HOOKS.store(false, Ordering::Release);
     ENABLED_GEN.fetch_add(1, Ordering::AcqRel);
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner()).clear();
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     LAST_SENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
     {
@@ -1250,8 +1329,19 @@ mod tests {
 
         assert_eq!(format_display(0, "Orig", "Trans"), Some("Trans".to_owned()));
         assert_eq!(format_display(1, "Orig", "Trans"), Some("Orig\nTrans".to_owned()));
+        assert_eq!(format_display(1, "Orig\r\n", "\nTrans\n"), Some("Orig\nTrans".to_owned()));
         assert_eq!(format_display(2, "Orig", "Trans"), Some("Trans\nOrig".to_owned()));
+        assert_eq!(format_display(2, "Orig\n", "Trans\n"), Some("Trans\nOrig".to_owned()));
         assert_eq!(format_display(3, "Orig", "Trans"), None);
+
+        assert!(!has_translatable_letters("Hello World\n\u{FE8E}\u{FE92}"));
+        assert!(!has_translatable_letters("\u{FE8E}\u{FE92}\nHello World"));
+
+        record_component_text_len(0x7001, "Hello", "Hello\nمرحبا");
+        assert_eq!(adjust_max_visible_chars(0x7001, 0), 0);
+        assert_eq!(adjust_max_visible_chars(0x7001, 3), 3);
+        assert_eq!(adjust_max_visible_chars(0x7001, 5), 99_999);
+        assert_eq!(adjust_max_visible_chars(0x7001, 11), 11);
 
         ipc::clear_test_sink();
         set_settings(Settings::default());

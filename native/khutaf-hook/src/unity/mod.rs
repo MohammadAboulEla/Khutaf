@@ -205,6 +205,7 @@ pub(crate) fn utf16_has_translatable_letters(units: &[u16]) -> bool {
         return false;
     }
     let mut in_tag = false;
+    let mut has_letter = false;
     let mut i = 0;
     while i < units.len() {
         let u = units[i];
@@ -220,9 +221,12 @@ pub(crate) fn utf16_has_translatable_letters(units: &[u16]) -> bool {
             i += 1;
             continue;
         }
+        if matches!(u, 0xFB50..=0xFDFF | 0xFE70..=0xFEFF) {
+            return false;
+        }
         if u < 0x80 {
             if (u as u8).is_ascii_alphabetic() {
-                return true;
+                has_letter = true;
             }
         } else if !(0xD800..=0xDFFF).contains(&u) {
             if let Some(ch) = char::from_u32(u as u32) {
@@ -232,13 +236,13 @@ pub(crate) fn utf16_has_translatable_letters(units: &[u16]) -> bool {
                     0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF
                 );
                 if ch.is_alphabetic() && !is_arabic {
-                    return true;
+                    has_letter = true;
                 }
             }
         }
         i += 1;
     }
-    false
+    has_letter
 }
 
 fn strip_tag_prefix<'a>(s: &'a str, prefix: &str) -> Cow<'a, str> {
@@ -738,6 +742,8 @@ mod tests {
         assert!(!utf16_has_translatable_letters(&u("... --- !!!")));
         assert!(!utf16_has_translatable_letters(&u("<color=red>99%</color>")));
         assert!(!utf16_has_translatable_letters(&u("مرحبا بالعالم \u{FE8E}\u{FE92}")));
+        assert!(!utf16_has_translatable_letters(&u("Hello World\n\u{FE8E}\u{FE92}")));
+        assert!(!utf16_has_translatable_letters(&u("\u{FE8E}\u{FE92}\nHello World")));
         assert!(utf16_has_translatable_letters(&u("Health < 50 HP")));
         assert!(utf16_has_translatable_letters(&u("<color=red>HP:</color> 50")));
         assert!(utf16_has_translatable_letters(&u("Start Game")));

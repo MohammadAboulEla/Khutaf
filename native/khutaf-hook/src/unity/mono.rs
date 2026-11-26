@@ -84,6 +84,7 @@ static ORIG_GUITEXT_SET_TEXT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_
 static ORIG_NGUILABEL_SET_TEXT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_CANVAS_WILL_RENDER: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_CAMERA_PRE_CULL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_TMP_SET_MAX_VISIBLE_CHARS: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 fn find_mono_module() -> HMODULE {
     for name in ["mono-2.0-bdwgc.dll", "mono-2.0-sgen.dll", "mono.dll"] {
@@ -635,6 +636,18 @@ pub fn install() -> usize {
         }
     }
 
+    let k_tmp = api.find_class("Unity.TextMeshPro", "TMPro", "TMP_Text");
+    if !k_tmp.is_null() {
+        let m_max = api.find_method(k_tmp, "set_maxVisibleCharacters", 1);
+        let _ = hook_mono(
+            api,
+            m_max,
+            detour_tmp_set_max_visible_chars as *mut c_void,
+            &ORIG_TMP_SET_MAX_VISIBLE_CHARS,
+            &mut seen,
+        );
+    }
+
     installed
 }
 
@@ -783,6 +796,16 @@ unsafe extern "C" fn detour_camera_pre_cull(cam: *mut c_void) {
         }
     }
     orig(cam);
+}
+
+unsafe extern "C" fn detour_tmp_set_max_visible_chars(this: *mut c_void, value: i32) {
+    let orig: unsafe extern "C" fn(*mut c_void, i32) = load_fn(&ORIG_TMP_SET_MAX_VISIBLE_CHARS);
+    let adjusted = if let Some(_guard) = hooks::Enter::try_new() {
+        embed::adjust_max_visible_chars(this as usize, value)
+    } else {
+        value
+    };
+    orig(this, adjusted);
 }
 
 unsafe fn load_fn<F: Copy>(slot: &AtomicPtr<c_void>) -> F {

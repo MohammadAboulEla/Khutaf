@@ -569,7 +569,7 @@ export const MESSAGES = {
     embRedownload: "Re-download",
     embDownloadBtn: "Download Bundles (~139 MB)",
     embDownloading: "Downloading…",
-    embUseBundleChk: "Use Unity Arial SDF Bundle (fallback if OS font fails)",
+    embUseBundleChk: "Use Unity Asset Bundle as fallback if OS font fails (Recomended)",
     embUnsavedBadge: "Unsaved",
     embUnsavedHint: "You have unsaved changes — click Apply & Save to apply them.",
     embDiscardChanges: "Discard",
