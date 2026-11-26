@@ -6,7 +6,11 @@ import { useI18n } from "../composables/useI18n.js";
 import { usePinnedHookSort } from "../composables/usePinnedHookSort.js";
 import { formatHookLabel } from "../utils/hookLabels.js";
 
-const emit = defineEmits(["open-translators", "open-troubleshooter", "open-wizard"]);
+const emit = defineEmits([
+  "open-translators",
+  "open-troubleshooter",
+  "open-wizard",
+]);
 
 const {
   status,
@@ -28,9 +32,12 @@ const {
 } = useSession();
 
 const { t, lang } = useI18n();
-const { snapshotPinned, sortPinned, needsSort } = usePinnedHookSort(() => hooks.value);
+const { snapshotPinned, sortPinned, needsSort } = usePinnedHookSort(
+  () => hooks.value,
+);
 
 const showAllProcs = shallowRef(false);
+const refreshing = shallowRef(false);
 
 const savedByPath = computed(() => {
   const m = new Map();
@@ -41,7 +48,9 @@ const savedByPath = computed(() => {
 });
 
 const visibleProcesses = computed(() => {
-  const list = showAllProcs.value ? processes.value : processes.value.filter((p) => p.supported);
+  const list = showAllProcs.value
+    ? processes.value
+    : processes.value.filter((p) => p.supported);
   return list.filter((p) => !isProcessAttached(p));
 });
 
@@ -56,7 +65,14 @@ const activeProviderName = computed(
 );
 
 async function onRefresh() {
-  await Promise.all([refreshProcesses(), refreshSavedGames()]);
+  refreshing.value = true;
+  try {
+    await Promise.all([refreshProcesses(), refreshSavedGames()]);
+  } finally {
+    setTimeout(() => {
+      refreshing.value = false;
+    }, 350);
+  }
 }
 
 async function onConnect(proc) {
@@ -104,7 +120,11 @@ function isProcessSaved(p) {
           <Icon name="Sparkles" :size="13" />
           <span>{{ t("qpWizardBtn") }}</span>
         </button>
-        <button class="btn warn-btn" type="button" @click="emit('open-troubleshooter')">
+        <button
+          class="btn warn-btn"
+          type="button"
+          @click="emit('open-troubleshooter')"
+        >
           <Icon name="HelpCircle" :size="13" />
           <span>{{ t("qpTroubleBtn") }}</span>
         </button>
@@ -113,7 +133,10 @@ function isProcessSaved(p) {
 
     <div class="readiness-strip">
       <div class="pill-card" :class="unityFontStatus.installed ? 'ok' : 'warn'">
-        <Icon :name="unityFontStatus.installed ? 'CheckCircle' : 'AlertTri'" :size="15" />
+        <Icon
+          :name="unityFontStatus.installed ? 'CheckCircle' : 'AlertTri'"
+          :size="15"
+        />
         <span class="pill-text">
           {{
             unityFontStatus.installed
@@ -138,8 +161,14 @@ function isProcessSaved(p) {
 
       <div class="pill-card">
         <Icon name="Globe" :size="15" />
-        <span class="pill-text">{{ t("qpTranslatorActive", { name: activeProviderName }) }}</span>
-        <button class="btn small" type="button" @click="emit('open-translators')">
+        <span class="pill-text">{{
+          t("qpTranslatorActive", { name: activeProviderName })
+        }}</span>
+        <button
+          class="btn small"
+          type="button"
+          @click="emit('open-translators')"
+        >
           <Icon name="Zap" :size="12" />
           <span>{{ t("qpCompareTranslators") }}</span>
         </button>
@@ -157,7 +186,16 @@ function isProcessSaved(p) {
             <input v-model="showAllProcs" type="checkbox" />
             <span>{{ t("qpShowAllProcs") }}</span>
           </label>
-          <button class="btn" type="button" @click="onRefresh">
+          <button
+            class="btn refresh-btn"
+            :class="{
+              highlight: !status.attached && !visibleProcesses.length,
+              spinning: refreshing,
+            }"
+            type="button"
+            :disabled="refreshing"
+            @click="onRefresh"
+          >
             <Icon name="RefreshCw" :size="13" />
             <span>{{ t("qpRefresh") }}</span>
           </button>
@@ -176,7 +214,10 @@ function isProcessSaved(p) {
         </button>
       </div>
 
-      <div v-if="!status.attached && !visibleProcesses.length" class="empty-box">
+      <div
+        v-if="!status.attached && !visibleProcesses.length"
+        class="empty-box"
+      >
         <Icon name="Gamepad" :size="24" />
         <div class="empty-title">{{ t("qpNoGames") }}</div>
         <div class="sub">{{ t("qpNoGamesHint") }}</div>
@@ -194,9 +235,15 @@ function isProcessSaved(p) {
             <div class="proc-sub">
               <span>{{ p.name }}</span>
               <span v-if="p.engine" class="badge">{{ p.engine }}</span>
-              <span v-if="isProcessSaved(p)" class="badge saved">{{ t("qpSavedBadge") }}</span>
-              <span v-if="!p.is64" class="badge bad">{{ t("qp32BitBadge") }}</span>
-              <span v-else-if="!p.supported" class="badge bad">{{ t("qpUnsupportedBadge") }}</span>
+              <span v-if="isProcessSaved(p)" class="badge saved">{{
+                t("qpSavedBadge")
+              }}</span>
+              <span v-if="!p.is64" class="badge bad">{{
+                t("qp32BitBadge")
+              }}</span>
+              <span v-else-if="!p.supported" class="badge bad">{{
+                t("qpUnsupportedBadge")
+              }}</span>
             </div>
           </div>
 
@@ -216,14 +263,20 @@ function isProcessSaved(p) {
             @click="onConnect(p)"
           >
             <Icon name="Play" :size="12" />
-            <span>{{ isProcessSaved(p) ? t("qpQuickConnect") : t("qpConnect") }}</span>
+            <span>{{
+              isProcessSaved(p) ? t("qpQuickConnect") : t("qpConnect")
+            }}</span>
           </button>
         </div>
       </div>
 
       <div class="hotkey-tip">
         <Icon name="Keyboard" :size="14" />
-        <span>{{ t("qpHooksHotkeyTip", { key: config?.hotkeys?.toggleHooksMenu || "Ctrl+Alt+H" }) }}</span>
+        <span>{{
+          t("qpHooksHotkeyTip", {
+            key: config?.hotkeys?.toggleHooksMenu || "Ctrl+Alt+H",
+          })
+        }}</span>
       </div>
 
       <p class="notice">{{ t("qpOfflineNotice") }}</p>
@@ -249,8 +302,12 @@ function isProcessSaved(p) {
       </div>
 
       <details open class="hooks-details">
-        <summary>{{ t("qpShowHooks", { count: embeddableHooks.length }) }}</summary>
-        <div v-if="!embeddableHooks.length" class="sub pad-top">{{ t("qpNoHooksYet") }}</div>
+        <summary>
+          {{ t("qpShowHooks", { count: embeddableHooks.length }) }}
+        </summary>
+        <div v-if="!embeddableHooks.length" class="sub pad-top">
+          {{ t("qpNoHooksYet") }}
+        </div>
         <div v-else class="hooks-list">
           <label
             v-for="(h, idx) in embeddableHooks"
@@ -264,7 +321,11 @@ function isProcessSaved(p) {
               @change="setEmbed(h.key, $event.target.checked)"
             />
             <div class="hook-info">
-              <div class="hook-sample" :class="{ empty: !hookOutputs[h.key] }" dir="auto">
+              <div
+                class="hook-sample"
+                :class="{ empty: !hookOutputs[h.key] }"
+                dir="auto"
+              >
                 {{ hookOutputs[h.key] || "—" }}
               </div>
               <div class="hook-name">{{ formatHookLabel(h, idx, lang) }}</div>
@@ -306,11 +367,19 @@ function isProcessSaved(p) {
       </div>
 
       <div class="feed-title">{{ t("qpLiveFeedTitle") }}</div>
-      <div v-if="!embedFeed.length" class="empty-mini">{{ t("qpLiveFeedEmpty") }}</div>
+      <div v-if="!embedFeed.length" class="empty-mini">
+        {{ t("qpLiveFeedEmpty") }}
+      </div>
       <div v-else class="feed-list">
-        <div v-for="(item, idx) in embedFeed.slice(0, 12)" :key="idx" class="feed-item">
+        <div
+          v-for="(item, idx) in embedFeed.slice(0, 12)"
+          :key="idx"
+          class="feed-item"
+        >
           <div class="feed-src" dir="ltr">{{ item.original }}</div>
-          <div v-if="item.translated" class="feed-ar" dir="rtl">{{ item.translated }}</div>
+          <div v-if="item.translated" class="feed-ar" dir="rtl">
+            {{ item.translated }}
+          </div>
           <div v-if="item.error" class="feed-err">{{ item.error }}</div>
         </div>
       </div>
@@ -690,5 +759,35 @@ function isProcessSaved(p) {
   font-size: 11px;
   color: #f87171;
   margin-top: 2px;
+}
+.refresh-btn {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+  background: color-mix(in oklab, var(--accent) 14%, var(--paper));
+  color: var(--accent);
+  font-weight: 600;
+}
+.refresh-btn:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent) 22%, var(--paper));
+}
+.refresh-btn.highlight {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
+}
+.refresh-btn.highlight:hover:not(:disabled) {
+  opacity: 0.92;
+  background: var(--accent);
+}
+.refresh-btn.spinning svg {
+  animation: qp-spin 0.6s linear infinite;
+}
+@keyframes qp-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>
