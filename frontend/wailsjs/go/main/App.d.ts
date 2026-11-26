@@ -106,6 +106,8 @@ export function SetHooksPopupOpen(arg1:boolean):Promise<void>;
 
 export function ShowFromTray():Promise<void>;
 
+export function ShowMainFromHooksPopup():Promise<void>;
+
 export function SkipUpdateVersion(arg1:string):Promise<void>;
 
 export function SmartAutoEmbed():Promise<session.SmartAutoEmbedResult>;

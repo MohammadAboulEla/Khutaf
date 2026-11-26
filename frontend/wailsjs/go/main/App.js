@@ -198,6 +198,10 @@ export function ShowFromTray() {
   return window['go']['main']['App']['ShowFromTray']();
 }
 
+export function ShowMainFromHooksPopup() {
+  return window['go']['main']['App']['ShowMainFromHooksPopup']();
+}
+
 export function SkipUpdateVersion(arg1) {
   return window['go']['main']['App']['SkipUpdateVersion'](arg1);
 }

@@ -51,6 +51,7 @@ export const MESSAGES = {
     qhActiveBadge: "مفعّل",
     qhHotkeyHint: "يمكنك ضغط {key} أثناء اللعب لفتح هذه النافذة أو إغلاقها فوراً.",
     qhClose: "إغلاق",
+    qhShowAppTip: "إغلاق النافذة وإظهار البرنامج بالكامل",
     sortCheckedTop: "المفعّل أولاً",
     sortCheckedTopTip: "نقل القنوات المفعّلة إلى أعلى القائمة",
 
@@ -440,6 +441,7 @@ export const MESSAGES = {
     qhActiveBadge: "Active",
     qhHotkeyHint: "Press {key} anytime in-game to toggle this popup.",
     qhClose: "Close",
+    qhShowAppTip: "Close picker and show full app",
     sortCheckedTop: "Checked First",
     sortCheckedTopTip: "Move currently checked hooks to the top",
 

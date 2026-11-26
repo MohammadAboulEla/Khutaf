@@ -12,7 +12,7 @@ const props = defineProps({
 
 const emit = defineEmits(["close"]);
 const { t } = useI18n();
-const { hooks, hookOutputs, status, config, setEmbed, refreshHooks } = useSession();
+const { hooks, hookOutputs, status, config, setEmbed, refreshHooks, showMainFromHooksPopup } = useSession();
 const { snapshotPinned, sortPinned, needsSort } = usePinnedHookSort(() => hooks.value);
 
 watch(
@@ -78,15 +78,26 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
                 {{ status.attached ? t("qhSubAttached", { game: status.gameName, active: activeCount }) : t("qhSubIdle") }}
               </div>
             </div>
-            <button
-              class="modal-close"
-              :class="{ 'no-drag': standalone }"
-              type="button"
-              :aria-label="t('qhClose')"
-              @click="emit('close')"
-            >
-              <Icon name="X" :size="14" />
-            </button>
+            <div class="head-actions" :class="{ 'no-drag': standalone }">
+              <button
+                v-if="standalone"
+                class="modal-icon-btn"
+                type="button"
+                :title="t('qhShowAppTip')"
+                :aria-label="t('qhShowAppTip')"
+                @click="showMainFromHooksPopup"
+              >
+                <Icon name="Maximize" :size="13" />
+              </button>
+              <button
+                class="modal-icon-btn"
+                type="button"
+                :aria-label="t('qhClose')"
+                @click="emit('close')"
+              >
+                <Icon name="X" :size="14" />
+              </button>
+            </div>
           </header>
 
           <div class="toolbar">
@@ -211,12 +222,25 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
   color: var(--fg-muted);
   margin-top: 2px;
 }
-.modal-close {
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.modal-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
   background: transparent;
   border: none;
+  border-radius: 5px;
   color: var(--fg-muted);
   cursor: pointer;
-  padding: 4px;
+}
+.modal-icon-btn:hover {
+  background: color-mix(in oklab, var(--fg) 10%, transparent);
+  color: var(--fg);
 }
 .toolbar {
   display: flex;

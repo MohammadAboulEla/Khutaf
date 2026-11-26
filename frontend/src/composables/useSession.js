@@ -642,6 +642,12 @@ function setQuickHooksOpen(open) {
   call("SetHooksPopupOpen", Boolean(open));
 }
 
+function showMainFromHooksPopup() {
+  quickHooksOpen.value = false;
+  quickHooksStandalone.value = false;
+  call("ShowMainFromHooksPopup");
+}
+
 async function checkForUpdates(manual = true) {
   try {
     const st = await call("CheckForUpdates", Boolean(manual));
@@ -745,6 +751,7 @@ export function useSession() {
     hideToTray,
     quitApp,
     setQuickHooksOpen,
+    showMainFromHooksPopup,
     setDebugMode,
     clearDebugTraces,
     refreshTelemetry,

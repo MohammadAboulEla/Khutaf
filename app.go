@@ -305,6 +305,23 @@ func (a *App) SetHooksPopupOpen(open bool) {
 	}
 }
 
+// ShowMainFromHooksPopup closes the Quick Hooks popup and restores the full Khutaf window.
+func (a *App) ShowMainFromHooksPopup() {
+	if a.hooksStandalone.Load() {
+		a.closeStandaloneHooksPopup(false)
+		if a.ctx != nil {
+			a.windowHidden.Store(false)
+			runtime.WindowUnminimise(a.ctx)
+			if !runtime.WindowIsMaximised(a.ctx) {
+				runtime.WindowCenter(a.ctx)
+			}
+			runtime.WindowShow(a.ctx)
+		}
+		return
+	}
+	a.SetHooksPopupOpen(false)
+}
+
 func (a *App) saveStandaloneHooksGeometry() {
 	if a.ctx == nil || a.session == nil {
 		return
@@ -414,6 +431,8 @@ func (a *App) restoreMainWindowGeometry() {
 	runtime.WindowSetSize(a.ctx, w, h)
 	if hasPos {
 		runtime.WindowSetPosition(a.ctx, x, y)
+	} else {
+		runtime.WindowCenter(a.ctx)
 	}
 	if wasMax {
 		runtime.WindowMaximise(a.ctx)
