@@ -135,9 +135,7 @@ pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text
 
     if !component.is_null() {
         apply_component_font(rt, &mut st, component, hook_id);
-        if matches!(embed::current_display_mode(), 1 | 2) || text.contains('\n') {
-            ensure_bilingual_layout(rt, &mut st, component, hook_id, text);
-        }
+        ensure_text_layout(rt, &mut st, component, hook_id, text);
         if settings.change_font_size
             && settings.font_scale > 0.0
             && (settings.font_scale - 1.0).abs() > 0.001
@@ -1317,13 +1315,17 @@ fn read_i32_prop(rt: &dyn UnityRuntime, component: *mut c_void, getter: *mut c_v
     Some(unsafe { *(ptr as *const i32) })
 }
 
-fn ensure_bilingual_layout(
+fn ensure_text_layout(
     rt: &dyn UnityRuntime,
     st: &mut FontState,
     component: *mut c_void,
     hook_id: u64,
     text: &str,
 ) {
+    let relax_multiline = matches!(embed::current_display_mode(), 1 | 2) || text.contains('\n');
+    if !is_tmp_hook(hook_id) && !relax_multiline {
+        return;
+    }
     let comp_cls = rt.object_get_class(component);
     if comp_cls.is_null() {
         return;
@@ -1364,28 +1366,6 @@ fn ensure_bilingual_layout(
     }
 
     if is_tmp_hook(hook_id) {
-        if let Some(cur_overflow) = read_i32_prop(rt, component, methods.m_get_overflow) {
-            // TextOverflowModes: 0=Overflow, 1=Ellipsis, 3=Truncate.
-            if matches!(cur_overflow, 1 | 3) && !methods.m_set_overflow.is_null() {
-                let mut overflow_mode: i32 = 0;
-                let _ = rt.invoke(
-                    methods.m_set_overflow,
-                    component,
-                    &mut [&mut overflow_mode as *mut i32 as *mut c_void],
-                );
-            }
-        }
-        let line_count = text.lines().count().max(1) as i32;
-        if let Some(cur_lines) = read_i32_prop(rt, component, methods.m_get_max_lines) {
-            if cur_lines > 0 && cur_lines < line_count && !methods.m_set_max_lines.is_null() {
-                let mut unlimited: i32 = 99_999;
-                let _ = rt.invoke(
-                    methods.m_set_max_lines,
-                    component,
-                    &mut [&mut unlimited as *mut i32 as *mut c_void],
-                );
-            }
-        }
         let visible_chars = embed::visible_char_count(text).min(i32::MAX as usize) as i32;
         if let Some(cur_chars) = read_i32_prop(rt, component, methods.m_get_max_chars) {
             if cur_chars > 0 && cur_chars < visible_chars && !methods.m_set_max_chars.is_null() {
@@ -1397,7 +1377,31 @@ fn ensure_bilingual_layout(
                 );
             }
         }
-    } else if hook_id == HOOK_UI_TEXT_SET_TEXT {
+        if relax_multiline {
+            if let Some(cur_overflow) = read_i32_prop(rt, component, methods.m_get_overflow) {
+                // TextOverflowModes: 0=Overflow, 1=Ellipsis, 3=Truncate.
+                if matches!(cur_overflow, 1 | 3) && !methods.m_set_overflow.is_null() {
+                    let mut overflow_mode: i32 = 0;
+                    let _ = rt.invoke(
+                        methods.m_set_overflow,
+                        component,
+                        &mut [&mut overflow_mode as *mut i32 as *mut c_void],
+                    );
+                }
+            }
+            let line_count = text.lines().count().max(1) as i32;
+            if let Some(cur_lines) = read_i32_prop(rt, component, methods.m_get_max_lines) {
+                if cur_lines > 0 && cur_lines < line_count && !methods.m_set_max_lines.is_null() {
+                    let mut unlimited: i32 = 99_999;
+                    let _ = rt.invoke(
+                        methods.m_set_max_lines,
+                        component,
+                        &mut [&mut unlimited as *mut i32 as *mut c_void],
+                    );
+                }
+            }
+        }
+    } else if hook_id == HOOK_UI_TEXT_SET_TEXT && relax_multiline {
         if let Some(cur_v) = read_i32_prop(rt, component, methods.m_get_v_overflow) {
             // VerticalWrapMode: 0=Truncate, 1=Overflow.
             if cur_v == 0 && !methods.m_set_v_overflow.is_null() {

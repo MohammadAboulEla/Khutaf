@@ -240,18 +240,31 @@ pub(crate) fn visible_char_count(s: &str) -> usize {
     n
 }
 
-pub(crate) fn record_component_text_len(component: usize, orig: &str, out: &str) {
+pub(crate) fn clear_component_text_len(component: usize) {
+    if component == 0 {
+        return;
+    }
+    COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner()).remove(&component);
+}
+
+pub(crate) fn record_component_text_len(
+    component: usize,
+    orig: &str,
+    out: &str,
+    showed_placeholder: bool,
+) {
     if component == 0 {
         return;
     }
     let orig_len = visible_char_count(orig).min(i32::MAX as usize) as i32;
     let out_len = visible_char_count(out).min(i32::MAX as usize) as i32;
+    let trigger_len = if showed_placeholder { 1 } else { orig_len };
     let mut map = COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner());
-    if out_len > orig_len && orig_len > 0 {
+    if out_len > trigger_len && trigger_len > 0 {
         if map.len() >= MAX_COMPONENT_CTX && !map.contains_key(&component) {
             map.clear();
         }
-        map.insert(component, (orig_len, out_len));
+        map.insert(component, (trigger_len, out_len));
     } else {
         map.remove(&component);
     }
@@ -567,7 +580,7 @@ pub fn process_unity(
         let Some(out) = format_display(cfg.display_mode, cleaned, &cached) else {
             return ProcessOutcome::KeepOriginal;
         };
-        record_component_text_len(component, cleaned, &out);
+        record_component_text_len(component, cleaned, &out, false);
         remember_output(&out);
         return ProcessOutcome::Replace { text: out, apply_font: true };
     }
@@ -636,6 +649,7 @@ pub fn process_unity(
 
         let gc_handle = pin_fn();
         if gc_handle != 0 {
+            clear_component_text_len(component);
             let req_id = NEXT_REQ.fetch_add(1, Ordering::Relaxed);
             let showed_placeholder = !cfg.pending_text.is_empty();
             {
@@ -769,7 +783,7 @@ pub fn process_unity(
             let Some(out) = format_display(cfg.display_mode, cleaned, &t) else {
                 return ProcessOutcome::KeepOriginal;
             };
-            record_component_text_len(component, cleaned, &out);
+            record_component_text_len(component, cleaned, &out, false);
             remember_output(&out);
             ProcessOutcome::Replace { text: out, apply_font: true }
         }
@@ -843,7 +857,12 @@ pub fn complete(req_id: u64, text: Option<String>) {
                 let still_current = st.comp_gen.get(&target.component).copied() == Some(target.generation);
                 if still_current {
                     if let Some(out) = out {
-                        record_component_text_len(target.component, &target.orig_text, &out);
+                        record_component_text_len(
+                            target.component,
+                            &target.orig_text,
+                            &out,
+                            target.showed_placeholder,
+                        );
                         st.ready.push_back(ReadyUpdate {
                             hook_id: target.hook_id,
                             component: target.component,
@@ -1337,11 +1356,18 @@ mod tests {
         assert!(!has_translatable_letters("Hello World\n\u{FE8E}\u{FE92}"));
         assert!(!has_translatable_letters("\u{FE8E}\u{FE92}\nHello World"));
 
-        record_component_text_len(0x7001, "Hello", "Hello\nمرحبا");
+        record_component_text_len(0x7001, "Hello", "Hello\nمرحبا", false);
         assert_eq!(adjust_max_visible_chars(0x7001, 0), 0);
         assert_eq!(adjust_max_visible_chars(0x7001, 3), 3);
         assert_eq!(adjust_max_visible_chars(0x7001, 5), 99_999);
         assert_eq!(adjust_max_visible_chars(0x7001, 11), 11);
+
+        record_component_text_len(0x7002, "Hmm... What are you doing?", "همم... ماذا تفعل؟", true);
+        assert_eq!(adjust_max_visible_chars(0x7002, 0), 0);
+        assert_eq!(adjust_max_visible_chars(0x7002, 1), 99_999);
+        assert_eq!(adjust_max_visible_chars(0x7002, 2), 99_999);
+        assert_eq!(adjust_max_visible_chars(0x7002, 3), 99_999);
+        assert_eq!(adjust_max_visible_chars(0x7002, 17), 17);
 
         ipc::clear_test_sink();
         set_settings(Settings::default());
