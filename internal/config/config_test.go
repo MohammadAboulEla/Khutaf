@@ -285,13 +285,13 @@ func TestHotkeysAndAutoAttachPersistence(t *testing.T) {
 	}
 
 	def := st.Config().Hotkeys
-	if !def.Enabled || def.MinimizeToTray || def.CycleMode != "Ctrl+Alt+M" || def.ToggleHooksMenu != "Ctrl+Alt+H" {
+	if !def.Enabled || !def.MinimizeToTray || def.CycleMode != "Ctrl+Alt+M" || def.ToggleHooksMenu != "Ctrl+Alt+H" {
 		t.Fatalf("unexpected default hotkeys: %+v", def)
 	}
 
 	cfg := st.Config()
 	cfg.Hotkeys.Enabled = false
-	cfg.Hotkeys.MinimizeToTray = true
+	cfg.Hotkeys.MinimizeToTray = false
 	cfg.Hotkeys.CycleMode = "Ctrl+Shift+M"
 	cfg.Hotkeys.TogglePause = ""
 	cfg.Hotkeys.ToggleHooksMenu = "Ctrl+Alt+K"
@@ -317,7 +317,7 @@ func TestHotkeysAndAutoAttachPersistence(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	hk := reopened.Config().Hotkeys
-	if hk.Enabled || !hk.MinimizeToTray || hk.CycleMode != "Ctrl+Shift+M" || hk.TogglePause != "" || hk.ToggleHooksMenu != "Ctrl+Alt+K" {
+	if hk.Enabled || hk.MinimizeToTray || hk.CycleMode != "Ctrl+Shift+M" || hk.TogglePause != "" || hk.ToggleHooksMenu != "Ctrl+Alt+K" {
 		t.Fatalf("reopened hotkeys = %+v", hk)
 	}
 	if hk.PopupW != 520 || hk.PopupH != 410 || hk.PopupX != -1200 || hk.PopupY != 140 || !hk.PopupHasPos {

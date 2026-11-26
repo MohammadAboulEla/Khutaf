@@ -230,7 +230,7 @@ func Default() Config {
 		},
 		Hotkeys: HotkeySettings{
 			Enabled:         true,
-			MinimizeToTray:  false,
+			MinimizeToTray:  true,
 			CycleMode:       "Ctrl+Alt+M",
 			TogglePause:     "Ctrl+Alt+P",
 			Retranslate:     "Ctrl+Alt+R",

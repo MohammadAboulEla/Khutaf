@@ -14,7 +14,7 @@ const { t } = useI18n();
 
 const defaultHotkeys = {
   enabled: true,
-  minimizeToTray: false,
+  minimizeToTray: true,
   cycleMode: "Ctrl+Alt+M",
   togglePause: "Ctrl+Alt+P",
   retranslate: "Ctrl+Alt+R",

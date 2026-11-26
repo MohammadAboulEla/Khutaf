@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, shallowRef, watch } from "vue";
 import Icon from "../components/Icon.vue";
 import Tooltip from "../components/Tooltip.vue";
+import ClearCacheModal from "../components/ClearCacheModal.vue";
 import { useSession } from "../composables/useSession.js";
 
 const {
@@ -193,9 +194,15 @@ async function onDeleteCacheRow(entry) {
   await refreshCache();
 }
 
-async function onClearAutoCache() {
-  const scope = pipelineTarget.value === "global" ? "" : pipelineTarget.value;
-  await clearScopeCache(scope, false);
+const clearCacheModalOpen = shallowRef(false);
+
+function onOpenClearAutoCache() {
+  clearCacheModalOpen.value = true;
+}
+
+async function onConfirmClearCache({ gamePath, includeManual }) {
+  await clearScopeCache(gamePath, includeManual);
+  clearCacheModalOpen.value = false;
   await refreshCache();
 }
 
@@ -371,7 +378,7 @@ function formatScopeName(gameUid) {
               <Icon name="RefreshCw" :size="12" />
               <span>Refresh</span>
             </button>
-            <button class="btn" type="button" @click="onClearAutoCache">Clear Auto Cache</button>
+            <button class="btn" type="button" @click="onOpenClearAutoCache">Clear Auto Cache</button>
           </div>
         </div>
 
@@ -432,6 +439,15 @@ function formatScopeName(gameUid) {
         </div>
       </div>
     </div>
+
+    <ClearCacheModal
+      :open="clearCacheModalOpen"
+      :games="savedGames"
+      :initial-game-path="pipelineTarget === 'global' ? '' : pipelineTarget"
+      :total-count="cacheCount"
+      @close="clearCacheModalOpen = false"
+      @confirm="onConfirmClearCache"
+    />
   </div>
 </template>
 

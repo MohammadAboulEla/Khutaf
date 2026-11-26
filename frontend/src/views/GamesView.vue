@@ -3,6 +3,7 @@ import { onMounted, ref, shallowRef } from "vue";
 import Icon from "../components/Icon.vue";
 import Tooltip from "../components/Tooltip.vue";
 import GameOverridesModal from "../components/GameOverridesModal.vue";
+import ClearCacheModal from "../components/ClearCacheModal.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
 import { formatHookLabel } from "../utils/hookLabels.js";
@@ -22,10 +23,12 @@ const {
   removeSavedGameHook,
   saveGamePipeline,
   setGameAutoAttach,
-  clearTranslationCache,
+  clearScopeCache,
 } = useSession();
 
 const cacheCleared = shallowRef(false);
+const clearCacheModalOpen = shallowRef(false);
+const clearCacheInitialGame = shallowRef("");
 const expandedHooks = ref({});
 
 function toggleHooks(exePath) {
@@ -46,8 +49,14 @@ async function onDetach() {
   await refreshSavedGames();
 }
 
-async function onClearCache() {
-  await clearTranslationCache();
+function openClearCache(exePath = "") {
+  clearCacheInitialGame.value = exePath;
+  clearCacheModalOpen.value = true;
+}
+
+async function onConfirmClearCache({ gamePath, includeManual }) {
+  await clearScopeCache(gamePath, includeManual);
+  clearCacheModalOpen.value = false;
   cacheCleared.value = true;
   setTimeout(() => {
     cacheCleared.value = false;
@@ -75,7 +84,7 @@ function ruleCount(g) {
           <Icon name="RefreshCw" :size="13" />
           <span>{{ t("qpRefresh") }}</span>
         </button>
-        <button class="btn" type="button" :disabled="cacheCount === 0 && !cacheCleared" @click="onClearCache">
+        <button class="btn" type="button" :disabled="cacheCount === 0 && !cacheCleared" @click="openClearCache('')">
           <Icon name="Trash" :size="13" />
           <span>{{ cacheCleared ? t("gvCacheCleared") : t("gvClearCache", { count: cacheCount }) }}</span>
         </button>
@@ -224,6 +233,14 @@ function ruleCount(g) {
               <span>{{ t("gvAutoAttach") }}</span>
             </label>
           </Tooltip>
+          <button
+            class="link-btn"
+            type="button"
+            :disabled="cacheCount === 0"
+            @click="openClearCache(g.exePath)"
+          >
+            {{ t("gvClearGameCache") }}
+          </button>
         </div>
       </div>
     </div>
@@ -232,6 +249,14 @@ function ruleCount(g) {
       :open="Boolean(overrideGame)"
       :game="overrideGame"
       @close="overrideGame = null"
+    />
+    <ClearCacheModal
+      :open="clearCacheModalOpen"
+      :games="savedGames"
+      :initial-game-path="clearCacheInitialGame"
+      :total-count="cacheCount"
+      @close="clearCacheModalOpen = false"
+      @confirm="onConfirmClearCache"
     />
   </div>
 </template>
@@ -419,9 +444,13 @@ function ruleCount(g) {
   font-size: 11px;
   cursor: pointer;
 }
-.link-btn:hover {
+.link-btn:hover:not(:disabled) {
   color: var(--accent);
   text-decoration: underline;
+}
+.link-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .no-hooks {
   font-size: 12px;
