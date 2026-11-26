@@ -15,7 +15,7 @@ const {
   saveConfig,
   saveState,
   unityFontStatus,
-  downloadUnityFonts,
+  openFontDownloadPrompt,
   processes,
   isAdmin,
   restartAsAdmin,
@@ -112,7 +112,7 @@ function onOpenBench() {
                   class="btn"
                   type="button"
                   :disabled="unityFontStatus.downloading"
-                  @click="downloadUnityFonts"
+                  @click="openFontDownloadPrompt"
                 >
                   {{ unityFontStatus.downloading ? t("embDownloading") : t("embDownloadBtn") }}
                 </button>

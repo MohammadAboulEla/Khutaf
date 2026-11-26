@@ -5,6 +5,7 @@ import AppSidebar from "./components/AppSidebar.vue";
 import AppFooter from "./components/AppFooter.vue";
 import AboutModal from "./components/AboutModal.vue";
 import UpdateModal from "./components/UpdateModal.vue";
+import FontDownloadModal from "./components/FontDownloadModal.vue";
 import OnboardingWizard from "./components/OnboardingWizard.vue";
 import TroubleshooterModal from "./components/TroubleshooterModal.vue";
 import QuickHooksModal from "./components/QuickHooksModal.vue";
@@ -47,7 +48,9 @@ const {
   appVersion,
   pipelineTarget,
   restartAsAdmin,
-  downloadUnityFonts,
+  fontDownloadPromptOpen,
+  openFontDownloadPrompt,
+  closeFontDownloadPrompt,
   quickHooksOpen,
   quickHooksStandalone,
   setQuickHooksOpen,
@@ -206,7 +209,7 @@ async function onErrorAction() {
     activeTab.value = "translators";
   } else if (act === "fonts") {
     clearError();
-    await downloadUnityFonts();
+    openFontDownloadPrompt();
   }
 }
 
@@ -356,6 +359,7 @@ onBeforeUnmount(() => window.removeEventListener("focus", onWindowFocus));
       @open-github="openReleasePage"
       @restart-admin="restartAsAdmin"
     />
+    <FontDownloadModal :open="fontDownloadPromptOpen" @close="closeFontDownloadPrompt" />
     <OnboardingWizard :open="wizardOpen" @complete="onWizardComplete" @close="wizardOpen = false" />
     <TroubleshooterModal
       :open="troubleshooterOpen"

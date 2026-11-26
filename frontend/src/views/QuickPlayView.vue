@@ -23,7 +23,7 @@ const {
   quickAttach,
   detach,
   setEmbed,
-  downloadUnityFonts,
+  openFontDownloadPrompt,
   saveConfig,
 } = useSession();
 
@@ -126,7 +126,7 @@ function isProcessSaved(p) {
           class="btn primary small"
           type="button"
           :disabled="unityFontStatus.downloading"
-          @click="downloadUnityFonts"
+          @click="openFontDownloadPrompt"
         >
           {{
             unityFontStatus.downloading

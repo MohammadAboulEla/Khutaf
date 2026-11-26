@@ -201,6 +201,7 @@ function onSkip() {
                 </div>
               </div>
 
+              <p class="note">{{ t("wizS2LocBothChecked") }}</p>
               <p class="note">{{ t("wizS2LaterNote") }}</p>
             </template>
 

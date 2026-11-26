@@ -85,6 +85,7 @@ const isAdmin = shallowRef(false);
 const quickHooksOpen = shallowRef(false);
 const quickHooksStandalone = shallowRef(false);
 const hotkeyToast = shallowRef(null);
+const fontDownloadPromptOpen = shallowRef(false);
 let toastTimer = null;
 
 let initialized = false;
@@ -523,6 +524,15 @@ async function refreshUnityFontStatus() {
   return st;
 }
 
+function openFontDownloadPrompt() {
+  refreshUnityFontStatus();
+  fontDownloadPromptOpen.value = true;
+}
+
+function closeFontDownloadPrompt() {
+  fontDownloadPromptOpen.value = false;
+}
+
 async function downloadUnityFonts(location = "appdata") {
   errorBanner.value = "";
   const loc = typeof location === "string" && location ? location : "appdata";
@@ -693,6 +703,9 @@ export function useSession() {
     quickHooksOpen: readonly(quickHooksOpen),
     quickHooksStandalone: readonly(quickHooksStandalone),
     hotkeyToast: readonly(hotkeyToast),
+    fontDownloadPromptOpen: readonly(fontDownloadPromptOpen),
+    openFontDownloadPrompt,
+    closeFontDownloadPrompt,
     refreshHooks,
     refreshProcesses,
     refreshSavedGames,

@@ -10,7 +10,7 @@ const props = defineProps({
   onboardingOpen: { type: Boolean, default: false },
 });
 
-const { config, saveConfig, saveState, listFonts, listAllFonts, unityFontStatus, refreshUnityFontStatus, downloadUnityFonts } =
+const { config, saveConfig, saveState, listFonts, listAllFonts, unityFontStatus, refreshUnityFontStatus, openFontDownloadPrompt } =
   useSession();
 const { t } = useI18n();
 const { isSimple } = useUiMode();
@@ -60,7 +60,7 @@ onUnmounted(() => {
 
 function onDownloadFromModal() {
   showBundleModal.value = false;
-  downloadUnityFonts();
+  openFontDownloadPrompt();
 }
 
 function onDownloadClick() {
@@ -69,7 +69,7 @@ function onDownloadClick() {
     return;
   }
   confirmRedownload.value = false;
-  downloadUnityFonts();
+  openFontDownloadPrompt();
 }
 
 const form = reactive({

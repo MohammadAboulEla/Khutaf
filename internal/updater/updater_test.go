@@ -300,6 +300,8 @@ func TestApplyUpdateSwapAndCleanup(t *testing.T) {
 
 	_ = os.WriteFile(filepath.Join(targetDir, "Khutaf.exe"), []byte("old-exe"), 0o644)
 	_ = os.WriteFile(filepath.Join(targetDir, "runtime", "khutaf-hook64.dll"), []byte("old-dll"), 0o644)
+	_ = os.MkdirAll(filepath.Join(targetDir, "runtime", "TMP_Font_AssetBundles"), 0o755)
+	_ = os.WriteFile(filepath.Join(targetDir, "runtime", "TMP_Font_AssetBundles", "arialuni_sdf_u2019"), []byte("font-bundle"), 0o644)
 	_ = os.WriteFile(filepath.Join(targetDir, "userconfig", "config.json"), []byte(`{"keep":true}`), 0o644)
 	_ = os.WriteFile(filepath.Join(stageDir, "Khutaf.exe"), []byte("new-exe"), 0o644)
 	_ = os.WriteFile(filepath.Join(stageDir, "runtime", "khutaf-hook64.dll"), []byte("new-dll"), 0o644)
@@ -310,9 +312,13 @@ func TestApplyUpdateSwapAndCleanup(t *testing.T) {
 
 	gotExe, _ := os.ReadFile(filepath.Join(targetDir, "Khutaf.exe"))
 	gotDLL, _ := os.ReadFile(filepath.Join(targetDir, "runtime", "khutaf-hook64.dll"))
+	gotFont, _ := os.ReadFile(filepath.Join(targetDir, "runtime", "TMP_Font_AssetBundles", "arialuni_sdf_u2019"))
 	gotCfg, _ := os.ReadFile(filepath.Join(targetDir, "userconfig", "config.json"))
 	if string(gotExe) != "new-exe" || string(gotDLL) != "new-dll" {
 		t.Fatalf("unexpected swapped files: exe=%q dll=%q", gotExe, gotDLL)
+	}
+	if string(gotFont) != "font-bundle" {
+		t.Fatalf("TMP_Font_AssetBundles was altered: %q", gotFont)
 	}
 	if string(gotCfg) != `{"keep":true}` {
 		t.Fatalf("userconfig was altered: %q", gotCfg)
