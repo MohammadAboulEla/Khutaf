@@ -3,7 +3,13 @@ export function formatHookLabel(h, idx = -1, lang = "en") {
   const isAr = lang === "ar";
   let base = h?.hookName || h?.hookCode || (isAr ? "قناة نصية" : "Text Hook");
 
-  if (src.includes("textmeshprougui")) {
+  if (src.includes("staticui")) {
+    if (src.includes("ui.text")) {
+      base = isAr ? "نصوص القوائم الثابتة (Static UI Text)" : "Static UI Menus & Labels (UI Text)";
+    } else {
+      base = isAr ? "نصوص القوائم الثابتة (Static TMP UI)" : "Static UI Menus & Labels (TMP)";
+    }
+  } else if (src.includes("textmeshprougui")) {
     base = isAr ? "نصوص الواجهة والحوار (TextMeshPro UI)" : "Unity TextMeshPro UI";
   } else if (src.includes("textmeshpro") || src.includes("tmp_text")) {
     base = isAr ? "نصوص اللعبة (TextMeshPro)" : "Unity TextMeshPro";

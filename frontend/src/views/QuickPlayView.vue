@@ -305,6 +305,16 @@ function isProcessSaved(p) {
         <summary>
           {{ t("qpShowHooks", { count: embeddableHooks.length }) }}
         </summary>
+        <div v-if="config" class="verbose-row">
+          <label class="chk" :title="t('verboseHooksTip')">
+            <input
+              type="checkbox"
+              :checked="Boolean(config?.embed?.verboseHooks)"
+              @change="saveConfig({ ...config, embed: { ...config.embed, verboseHooks: $event.target.checked } })"
+            />
+            <span>{{ t("verboseHooksLabel") }}</span>
+          </label>
+        </div>
         <div v-if="!embeddableHooks.length" class="sub pad-top">
           {{ t("qpNoHooksYet") }}
         </div>
@@ -646,6 +656,9 @@ function isProcessSaved(p) {
 }
 .pad-top {
   padding-top: 8px;
+}
+.verbose-row {
+  margin-top: 8px;
 }
 .hooks-list {
   margin-top: 8px;

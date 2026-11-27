@@ -4,6 +4,7 @@ import Icon from "./Icon.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
 import { usePinnedHookSort } from "../composables/usePinnedHookSort.js";
+import { formatHookLabel } from "../utils/hookLabels.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -11,15 +12,35 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["close"]);
-const { t } = useI18n();
-const { hooks, hookOutputs, status, config, setEmbed, refreshHooks, showMainFromHooksPopup } = useSession();
+const { t, lang } = useI18n();
+const {
+  hooks,
+  hookOutputs,
+  savedGames,
+  status,
+  config,
+  setEmbed,
+  refreshHooks,
+  refreshSavedGames,
+  removeSavedGameHook,
+  showMainFromHooksPopup,
+  saveConfig,
+} = useSession();
 const { snapshotPinned, sortPinned, needsSort } = usePinnedHookSort(() => hooks.value);
+
+async function toggleVerboseHooks(val) {
+  if (!config.value) return;
+  await saveConfig({
+    ...config.value,
+    embed: { ...config.value.embed, verboseHooks: Boolean(val) },
+  });
+}
 
 watch(
   () => props.open,
   async (isOpen) => {
     if (isOpen) {
-      await refreshHooks();
+      await Promise.all([refreshHooks(), refreshSavedGames()]);
       snapshotPinned();
     }
   },
@@ -27,6 +48,20 @@ watch(
 );
 
 const search = shallowRef("");
+const showAllActive = shallowRef(false);
+const refreshing = shallowRef(false);
+
+async function onRefresh() {
+  if (refreshing.value) return;
+  refreshing.value = true;
+  try {
+    await Promise.all([refreshHooks(), refreshSavedGames()]);
+  } finally {
+    setTimeout(() => {
+      refreshing.value = false;
+    }, 250);
+  }
+}
 
 function onKeydown(e) {
   if (props.open && e.key === "Escape") {
@@ -38,22 +73,70 @@ function onKeydown(e) {
 onMounted(() => window.addEventListener("keydown", onKeydown));
 onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
 
+const savedOnlyHooks = computed(() => {
+  if (!status.value.attached || !status.value.gamePath) return [];
+  const norm = (p) => (p || "").toLowerCase().replace(/\//g, "\\");
+  const curPath = norm(status.value.gamePath);
+  const game = savedGames.value.find((g) => norm(g.exePath) === curPath);
+  if (!game?.embedHooks?.length) return [];
+
+  const liveIds = new Set(hooks.value.map((h) => `${h.hookCode}|${h.ctx || 0}|${h.ctx2 || 0}`));
+  return game.embedHooks
+    .filter((s) => !liveIds.has(`${s.hookCode}|${s.ctx || 0}|${s.ctx2 || 0}`))
+    .map((s) => ({
+      key: `saved:${s.hookCode}:${(s.ctx || 0).toString(16)}:${(s.ctx2 || 0).toString(16)}`,
+      hookCode: s.hookCode,
+      hookName: s.hookName || s.hookCode,
+      ctx: s.ctx || 0,
+      ctx2: s.ctx2 || 0,
+      embeddable: true,
+      embedding: true,
+      savedOnly: true,
+      sample: s.sample || "",
+    }));
+});
+
 const embeddableHooks = computed(() => {
   const q = search.value.trim().toLowerCase();
-  const list = hooks.value.filter((h) => h.embeddable);
+  const live = hooks.value.filter((h) => h.embeddable);
+  const list = showAllActive.value ? [...live, ...savedOnlyHooks.value] : live;
   const filtered = q
     ? list.filter((h) => {
-        const text = (hookOutputs.value[h.key] || "").toLowerCase();
+        const text = (hookOutputs.value[h.key] || h.sample || "").toLowerCase();
         const name = (h.hookName || "").toLowerCase();
         const code = (h.hookCode || "").toLowerCase();
-        return text.includes(q) || name.includes(q) || code.includes(q);
+        const ctxHex = h.ctx ? h.ctx.toString(16).toLowerCase() : "";
+        return text.includes(q) || name.includes(q) || code.includes(q) || ctxHex.includes(q);
       })
     : list;
 
   return sortPinned(filtered);
 });
 
-const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.embedding).length);
+const activeCount = computed(() => {
+  const liveActive = hooks.value.filter((h) => h.embeddable && h.embedding).length;
+  return showAllActive.value ? liveActive + savedOnlyHooks.value.length : liveActive;
+});
+
+async function onToggleHook(h, checked) {
+  if (h.savedOnly) {
+    if (!checked && status.value.gamePath) {
+      await removeSavedGameHook(status.value.gamePath, h);
+    }
+    return;
+  }
+  await setEmbed(h.key, checked);
+  await refreshSavedGames();
+}
+
+function hookDisplayText(h) {
+  if (h.savedOnly) {
+    if (h.sample) return h.sample;
+    const base = formatHookLabel(h, -1, lang.value);
+    return h.ctx ? `${base} · 0x${h.ctx.toString(16)}` : base;
+  }
+  return hookOutputs.value[h.key] || "—";
+}
 </script>
 
 <template>
@@ -79,6 +162,16 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
               </div>
             </div>
             <div class="head-actions" :class="{ 'no-drag': standalone }">
+              <button
+                class="modal-icon-btn"
+                type="button"
+                :title="t('qhRefreshTip')"
+                :aria-label="t('qhRefreshTip')"
+                :disabled="refreshing"
+                @click="onRefresh"
+              >
+                <Icon name="RefreshCw" :size="13" :class="{ spin: refreshing }" />
+              </button>
               <button
                 v-if="standalone"
                 class="modal-icon-btn"
@@ -120,6 +213,23 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
             </button>
           </div>
 
+          <div class="verbose-bar">
+            <label class="chk" :title="t('verboseHooksTip')">
+              <input
+                type="checkbox"
+                :checked="Boolean(config?.embed?.verboseHooks)"
+                @change="toggleVerboseHooks($event.target.checked)"
+              />
+              <span>{{ t("verboseHooksLabel") }}</span>
+            </label>
+            <label v-if="status.attached" class="chk" :title="t('qhShowAllActiveTip')">
+              <input v-model="showAllActive" type="checkbox" />
+              <span>
+                {{ t("qhShowAllActive") }}<template v-if="savedOnlyHooks.length"> (+{{ savedOnlyHooks.length }})</template>
+              </span>
+            </label>
+          </div>
+
           <div class="modal-body">
             <div v-if="!status.attached" class="empty-msg">{{ t("qhNotAttached") }}</div>
             <div v-else-if="!embeddableHooks.length" class="empty-msg">{{ t("qhEmpty") }}</div>
@@ -133,18 +243,19 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
                 <input
                   type="checkbox"
                   :checked="h.embedding"
-                  @change="setEmbed(h.key, $event.target.checked)"
+                  @change="onToggleHook(h, $event.target.checked)"
                 />
                 <div class="hook-info">
                   <div class="hook-primary">
                     <div
                       class="hook-sample"
-                      :class="{ empty: !hookOutputs[h.key] }"
+                      :class="{ empty: !h.savedOnly && !hookOutputs[h.key] }"
                       dir="auto"
                     >
-                      {{ hookOutputs[h.key] || "—" }}
+                      {{ hookDisplayText(h) }}
                     </div>
-                    <span v-if="!h.embedding" class="badge new">{{ t("qhNewBadge") }}</span>
+                    <span v-if="h.savedOnly" class="badge saved">{{ t("qhSavedBadge") }}</span>
+                    <span v-else-if="!h.embedding" class="badge new">{{ t("qhNewBadge") }}</span>
                     <span v-else class="badge on">{{ t("qhActiveBadge") }}</span>
                   </div>
                 </div>
@@ -242,12 +353,44 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
   background: color-mix(in oklab, var(--fg) 10%, transparent);
   color: var(--fg);
 }
+.modal-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.spin {
+  animation: spin 0.6s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .toolbar {
   display: flex;
   gap: 8px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
+}
+.verbose-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--paper);
+}
+.verbose-bar .chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.verbose-bar .chk input[type="checkbox"] {
+  accent-color: var(--accent);
 }
 .search-input {
   flex: 1;
@@ -343,6 +486,10 @@ const activeCount = computed(() => hooks.value.filter((h) => h.embeddable && h.e
 .badge.on {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
+}
+.badge.saved {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg-muted);
 }
 .modal-foot {
   display: flex;

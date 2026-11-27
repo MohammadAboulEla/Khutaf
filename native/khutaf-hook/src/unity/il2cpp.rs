@@ -11,8 +11,8 @@ use super::{
     caller_rel_ctx, clean_tmp_tags, cstr_to_string, font, is_tmp_hook, module_handle, proc_addr,
     UnityRuntime, HOOK_GUITEXT_SET_TEXT, HOOK_NGUILABEL_SET_TEXT, HOOK_TEXTMESHPRO_SET_TEXT,
     HOOK_TEXTMESHPRO_UGUI_SETTEXT, HOOK_TEXTMESHPRO_UGUI_SET_TEXT, HOOK_TEXTMESH_SET_TEXT,
-    HOOK_TMP_SETTEXT, HOOK_TMP_SET_TEXT, HOOK_UIE_TEXTELEMENT_SET_TEXT,
-    HOOK_UIE_TEXTFIELD_SET_VALUE, HOOK_UI_TEXT_SET_TEXT,
+    HOOK_TMP_SETTEXT, HOOK_TMP_SET_TEXT, HOOK_TMP_STATIC_UI, HOOK_UIE_TEXTELEMENT_SET_TEXT,
+    HOOK_UIE_TEXTFIELD_SET_VALUE, HOOK_UI_TEXT_SET_TEXT, HOOK_UI_TEXT_STATIC_UI,
 };
 use crate::{embed, hooks};
 
@@ -75,6 +75,9 @@ static ORIG_NGUILABEL_SET_TEXT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::nul
 static ORIG_CANVAS_WILL_RENDER: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_CAMERA_PRE_CULL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_TMP_SET_MAX_VISIBLE_CHARS: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_TMP_UGUI_ON_ENABLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_TMP_3D_ON_ENABLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_UI_TEXT_ON_ENABLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 impl Il2CppApi {
     pub(crate) fn get() -> Option<&'static Il2CppApi> {
@@ -559,6 +562,25 @@ pub fn install() -> usize {
         );
     }
 
+    let mut static_tmp_hooked = false;
+    let k_ugui = api.find_class("Unity.TextMeshPro", "TMPro", "TextMeshProUGUI");
+    if hook_il2cpp(api.find_method(k_ugui, "OnEnable", 0), detour_tmp_ugui_on_enable as *mut c_void, &ORIG_TMP_UGUI_ON_ENABLE, &mut seen) {
+        static_tmp_hooked = true;
+    }
+    let k_3d = api.find_class("Unity.TextMeshPro", "TMPro", "TextMeshPro");
+    if hook_il2cpp(api.find_method(k_3d, "OnEnable", 0), detour_tmp_3d_on_enable as *mut c_void, &ORIG_TMP_3D_ON_ENABLE, &mut seen) {
+        static_tmp_hooked = true;
+    }
+    if static_tmp_hooked {
+        emit_hook(HOOK_TMP_STATIC_UI, "UNITY:TMP.StaticUI", "TMP::StaticUI (OnEnable)");
+        installed += 1;
+    }
+    let k_ui_text = api.find_class("UnityEngine.UI", "UnityEngine.UI", "Text");
+    if hook_il2cpp(api.find_method(k_ui_text, "OnEnable", 0), detour_ui_text_on_enable as *mut c_void, &ORIG_UI_TEXT_ON_ENABLE, &mut seen) {
+        emit_hook(HOOK_UI_TEXT_STATIC_UI, "UNITY:UI.Text.StaticUI", "UI.Text::StaticUI (OnEnable)");
+        installed += 1;
+    }
+
     installed
 }
 
@@ -791,5 +813,29 @@ il2cpp_detour_1!(detour_ui_text_set_text, ORIG_UI_TEXT_SET_TEXT, HOOK_UI_TEXT_SE
 il2cpp_detour_1!(detour_textmesh_set_text, ORIG_TEXTMESH_SET_TEXT, HOOK_TEXTMESH_SET_TEXT);
 il2cpp_detour_1!(detour_uie_textelement_set_text, ORIG_UIE_TEXTELEMENT_SET_TEXT, HOOK_UIE_TEXTELEMENT_SET_TEXT);
 il2cpp_detour_1!(detour_uie_textfield_set_value, ORIG_UIE_TEXTFIELD_SET_VALUE, HOOK_UIE_TEXTFIELD_SET_VALUE);
+
+macro_rules! il2cpp_on_enable_detour {
+    ($fn_name:ident, $slot:ident, $hook_id:expr) => {
+        unsafe extern "C" fn $fn_name(this: *mut c_void, method: *const c_void) {
+            let orig: unsafe extern "C" fn(*mut c_void, *const c_void) = load_fn(&$slot);
+            orig(this, method);
+            if !embed::verbose_hooks_enabled() {
+                return;
+            }
+            let Some(_guard) = hooks::Enter::try_new() else {
+                return;
+            };
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(api) = Il2CppApi::get() {
+                    super::handle_static_ui_on_enable(api, this, $hook_id);
+                }
+            }));
+        }
+    };
+}
+
+il2cpp_on_enable_detour!(detour_tmp_ugui_on_enable, ORIG_TMP_UGUI_ON_ENABLE, HOOK_TMP_STATIC_UI);
+il2cpp_on_enable_detour!(detour_tmp_3d_on_enable, ORIG_TMP_3D_ON_ENABLE, HOOK_TMP_STATIC_UI);
+il2cpp_on_enable_detour!(detour_ui_text_on_enable, ORIG_UI_TEXT_ON_ENABLE, HOOK_UI_TEXT_STATIC_UI);
 il2cpp_detour_1!(detour_guitext_set_text, ORIG_GUITEXT_SET_TEXT, HOOK_GUITEXT_SET_TEXT);
 il2cpp_detour_1!(detour_nguilabel_set_text, ORIG_NGUILABEL_SET_TEXT, HOOK_NGUILABEL_SET_TEXT);

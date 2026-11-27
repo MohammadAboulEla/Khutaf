@@ -46,6 +46,7 @@ pub struct Settings {
     pub strip_typewriter_tags: bool,
     pub non_blocking: bool,
     pub pending_text: String,
+    pub verbose_hooks: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -146,6 +147,7 @@ impl Msg {
                 e.bool(s.strip_typewriter_tags);
                 e.bool(s.non_blocking);
                 e.str(&s.pending_text);
+                e.bool(s.verbose_hooks);
             }
             Msg::SetEmbed { hook_id, ctx, ctx2, on } => {
                 e.u64(*hook_id);
@@ -209,6 +211,7 @@ impl Msg {
                 strip_typewriter_tags: d.bool()?,
                 non_blocking: d.bool()?,
                 pending_text: d.str()?,
+                verbose_hooks: if d.pos < d.buf.len() { d.bool()? } else { false },
             }),
             kind::SET_EMBED => Msg::SetEmbed { hook_id: d.u64()?, ctx: d.u64()?, ctx2: d.u64()?, on: d.bool()? },
             kind::EMBED_RESPONSE => {
@@ -302,6 +305,7 @@ mod tests {
                 strip_typewriter_tags: true,
                 non_blocking: true,
                 pending_text: "...".into(),
+                verbose_hooks: true,
             }),
             Msg::SetEmbed { hook_id: 7, ctx: 0, ctx2: 0, on: true },
             Msg::EmbedResponse { req_id: 9, text: Some("ok".into()) },

@@ -28,6 +28,7 @@ type EmbedSettings struct {
 	StripTypewriterTags bool    `json:"stripTypewriterTags"` // strip <color=#00000000> typewriter tags
 	NonBlocking         bool    `json:"nonBlocking"`         // return immediately and update next frame
 	PendingText         string  `json:"pendingText"`         // empty keeps original while translating
+	VerboseHooks        bool    `json:"verboseHooks"`        // opt-in OnEnable hooks for static menus & prefab UI
 }
 
 // LLMSettings configures an OpenAI-compatible chat completion endpoint.
@@ -163,6 +164,7 @@ type EmbedHook struct {
 	HookName string `json:"hookName"`
 	Ctx      uint64 `json:"ctx"`
 	Ctx2     uint64 `json:"ctx2"`
+	Sample   string `json:"sample,omitempty"`
 }
 
 // GameProfile stores per-game state keyed by executable path.

@@ -143,6 +143,7 @@ type Session struct {
 	is64       bool
 	pids       map[uint32]bool
 	hooks      map[string]hook.HookInfo
+	hookAddrs  map[string]map[uint32]uint64
 	embedding  map[string]bool
 	lastOutput map[string]string
 
@@ -181,6 +182,7 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 		telemetry:  newTelemetryStore(),
 		pids:           map[uint32]bool{},
 		hooks:          map[string]hook.HookInfo{},
+		hookAddrs:      map[string]map[uint32]uint64{},
 		embedding:      map[string]bool{},
 		lastOutput:     map[string]string{},
 		detachCooldown: map[string]time.Time{},
@@ -592,9 +594,9 @@ func (s *Session) ClearSavedGameHooks(exePath string) error {
 	})
 }
 
-// RemoveSavedGameHook removes a single saved embed hook from exePath.
+// RemoveSavedGameHook removes a single saved embed hook from exePath and disables it live when attached.
 func (s *Session) RemoveSavedGameHook(exePath, hookCode string, ctx, ctx2 uint64) error {
-	return s.store.UpdateGame(exePath, func(g *config.GameProfile) {
+	err := s.store.UpdateGame(exePath, func(g *config.GameProfile) {
 		kept := g.EmbedHooks[:0]
 		for _, h := range g.EmbedHooks {
 			if h.HookCode == hookCode && h.Ctx == ctx && h.Ctx2 == ctx2 {
@@ -604,6 +606,47 @@ func (s *Session) RemoveSavedGameHook(exePath, hookCode string, ctx, ctx2 uint64
 		}
 		g.EmbedHooks = kept
 	})
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	attachedMatch := s.gamePath != "" && strings.EqualFold(filepath.Clean(s.gamePath), filepath.Clean(exePath))
+	var tps []hook.ThreadParam
+	var liveDisabled []hook.HookInfo
+	if attachedMatch {
+		seenTP := map[string]bool{}
+		for _, h := range s.hooks {
+			if h.HookCode == hookCode && h.Ctx == ctx && h.Ctx2 == ctx2 {
+				delete(s.embedding, h.Key)
+				liveDisabled = append(liveDisabled, h)
+				if !seenTP[h.Key] {
+					seenTP[h.Key] = true
+					tps = append(tps, h.TP)
+				}
+			}
+		}
+		for pid, addr := range s.hookAddrs[hookCode] {
+			tp := hook.ThreadParam{ProcessID: pid, Addr: addr, Ctx: ctx, Ctx2: ctx2}
+			k := tp.Key()
+			delete(s.embedding, k)
+			if !seenTP[k] {
+				seenTP[k] = true
+				tps = append(tps, tp)
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	if s.host != nil {
+		for _, tp := range tps {
+			s.host.UseEmbed(tp, false)
+		}
+	}
+	for _, h := range liveDisabled {
+		s.post(EventHookNew, HookView{HookInfo: h, Embedding: false})
+	}
+	return nil
 }
 
 // SaveGamePipeline validates, persists, and (if currently attached) applies per-game rules.
@@ -772,6 +815,7 @@ func (s *Session) Detach() {
 	pids := s.pidList()
 	s.pids = map[uint32]bool{}
 	s.hooks = map[string]hook.HookInfo{}
+	s.hookAddrs = map[string]map[uint32]uint64{}
 	s.embedding = map[string]bool{}
 	s.lastOutput = map[string]string{}
 	s.gamePath = ""
@@ -799,9 +843,11 @@ func (s *Session) SetEmbed(key string, enabled bool) error {
 	s.mu.Lock()
 	h, ok := s.hooks[key]
 	path := s.gamePath
+	sample := ""
 	if ok {
 		if enabled {
 			s.embedding[key] = true
+			sample = truncateSample(s.lastOutput[key], 120)
 		} else {
 			delete(s.embedding, key)
 		}
@@ -820,7 +866,13 @@ func (s *Session) SetEmbed(key string, enabled bool) error {
 		}
 		g.EmbedHooks = kept
 		if enabled {
-			g.EmbedHooks = append(g.EmbedHooks, config.EmbedHook{HookCode: h.HookCode, HookName: h.HookName, Ctx: h.Ctx, Ctx2: h.Ctx2})
+			g.EmbedHooks = append(g.EmbedHooks, config.EmbedHook{
+				HookCode: h.HookCode,
+				HookName: h.HookName,
+				Ctx:      h.Ctx,
+				Ctx2:     h.Ctx2,
+				Sample:   sample,
+			})
 		}
 		if g.Title == "" {
 			g.Title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -830,6 +882,18 @@ func (s *Session) SetEmbed(key string, enabled bool) error {
 	}
 	s.post(EventHookNew, HookView{HookInfo: h, Embedding: enabled})
 	return nil
+}
+
+func truncateSample(raw string, maxRunes int) string {
+	clean := strings.TrimSpace(strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(raw))
+	if clean == "" || maxRunes <= 0 {
+		return ""
+	}
+	r := []rune(clean)
+	if len(r) <= maxRunes {
+		return clean
+	}
+	return strings.TrimSpace(string(r[:maxRunes-1])) + "…"
 }
 
 // SmartAutoEmbedResult reports the outcome of one-click auto-enabling Unity text hooks.
@@ -978,6 +1042,7 @@ func (s *Session) pushEmbedSettings(pid uint32) {
 		StripTypewriterTags: cfg.StripTypewriterTags,
 		NonBlocking:         cfg.NonBlocking,
 		PendingText:         pending,
+		VerboseHooks:        cfg.VerboseHooks,
 	})
 }
 
@@ -1347,6 +1412,15 @@ func (s *Session) emitPerfTrace(payload string) {
 // OnHookInsert implements hook.Handler: re-enables saved embed hooks.
 func (s *Session) OnHookInsert(pid uint32, addr uint64, hookCode string) {
 	s.mu.Lock()
+	if s.hookAddrs == nil {
+		s.hookAddrs = map[string]map[uint32]uint64{}
+	}
+	byPid := s.hookAddrs[hookCode]
+	if byPid == nil {
+		byPid = map[uint32]uint64{}
+		s.hookAddrs[hookCode] = byPid
+	}
+	byPid[pid] = addr
 	path := s.gamePath
 	s.mu.Unlock()
 	if path == "" {

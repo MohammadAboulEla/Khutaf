@@ -51,6 +51,7 @@ type EmbedSettings struct {
 	StripTypewriterTags bool
 	NonBlocking         bool
 	PendingText         string // shown immediately while async translation runs; empty keeps original
+	VerboseHooks        bool
 }
 
 // HookInfo describes a discovered text thread.

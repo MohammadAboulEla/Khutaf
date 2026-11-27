@@ -14,7 +14,7 @@ use windows_sys::Win32::System::Registry::{
 };
 
 use super::{
-    is_tmp_hook, UnityRuntime, HOOK_TEXTMESH_SET_TEXT, HOOK_UI_TEXT_SET_TEXT,
+    is_tmp_hook, is_ui_text_hook, UnityRuntime, HOOK_TEXTMESH_SET_TEXT,
 };
 use crate::embed;
 
@@ -1240,7 +1240,7 @@ fn apply_component_font(
     component: *mut c_void,
     hook_id: u64,
 ) {
-    if hook_id == HOOK_UI_TEXT_SET_TEXT {
+    if is_ui_text_hook(hook_id) {
         if st.os_font.is_null() {
             return;
         }
@@ -1400,7 +1400,7 @@ fn scale_component_font(
             }
             st.scaled.insert(key, next.to_bits());
         }
-    } else if hook_id == HOOK_UI_TEXT_SET_TEXT || hook_id == HOOK_TEXTMESH_SET_TEXT {
+    } else if is_ui_text_hook(hook_id) || hook_id == HOOK_TEXTMESH_SET_TEXT {
         let cur = unsafe { *(val_ptr as *const i32) };
         if cur > 0 {
             let cur_bits = cur as u32;
@@ -1459,7 +1459,7 @@ fn ensure_text_layout(
                 m_set_max_chars: rt.find_method_in_hierarchy(comp_cls, "set_maxVisibleCharacters", 1),
                 ..Default::default()
             }
-        } else if hook_id == HOOK_UI_TEXT_SET_TEXT {
+        } else if is_ui_text_hook(hook_id) {
             LayoutMethods {
                 resolved: true,
                 m_get_v_overflow: rt.find_method_in_hierarchy(comp_cls, "get_verticalOverflow", 0),
@@ -1515,7 +1515,7 @@ fn ensure_text_layout(
                 }
             }
         }
-    } else if hook_id == HOOK_UI_TEXT_SET_TEXT && relax_multiline {
+    } else if is_ui_text_hook(hook_id) && relax_multiline {
         if let Some(cur_v) = read_i32_prop(rt, component, methods.m_get_v_overflow) {
             // VerticalWrapMode: 0=Truncate, 1=Overflow.
             if cur_v == 0 && !methods.m_set_v_overflow.is_null() {

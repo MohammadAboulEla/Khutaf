@@ -52,8 +52,14 @@ export const MESSAGES = {
     qhHotkeyHint: "يمكنك ضغط {key} أثناء اللعب لفتح هذه النافذة أو إغلاقها فوراً.",
     qhClose: "إغلاق",
     qhShowAppTip: "إغلاق النافذة وإظهار البرنامج بالكامل",
+    qhRefreshTip: "تحديث قائمة القنوات",
     sortCheckedTop: "المفعّل أولاً",
     sortCheckedTopTip: "نقل القنوات المفعّلة إلى أعلى القائمة",
+    verboseHooksLabel: "قنوات إضافية (القوائم والنصوص الثابتة)",
+    verboseHooksTip: "التقاط النصوص الثابتة في القوائم والإعدادات عند فتحها (قد يزيد عدد القنوات)",
+    qhShowAllActive: "إظهار كل القنوات المفعّلة",
+    qhShowAllActiveTip: "إظهار القنوات المفعّلة والمحفوظة لهذه اللعبة حتى التي لم تظهر بعد في هذه الجلسة",
+    qhSavedBadge: "محفوظة",
 
     // Quick Play (Simple Mode)
     qpTitle: "التشغيل السريع للترجمة",
@@ -453,8 +459,14 @@ export const MESSAGES = {
     qhHotkeyHint: "Press {key} anytime in-game to toggle this popup.",
     qhClose: "Close",
     qhShowAppTip: "Close picker and show full app",
+    qhRefreshTip: "Refresh hooks list",
     sortCheckedTop: "Checked First",
     sortCheckedTopTip: "Move currently checked hooks to the top",
+    verboseHooksLabel: "Verbose hooks (static UI & menus)",
+    verboseHooksTip: "Also capture static menu/settings labels when panels open (more hooks)",
+    qhShowAllActive: "Show all active hooks",
+    qhShowAllActiveTip: "Also list saved active hooks for this game that haven't fired yet in this session",
+    qhSavedBadge: "Saved",
 
     // Quick Play (Simple Mode)
     qpTitle: "Quick Play Translation",

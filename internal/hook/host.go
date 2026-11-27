@@ -325,6 +325,7 @@ func (h *Host) SettingsEx(pid uint32, s EmbedSettings) {
 		StripTypewriter: s.StripTypewriterTags,
 		NonBlocking:     s.NonBlocking,
 		PendingText:     s.PendingText,
+		VerboseHooks:    s.VerboseHooks,
 	}
 	ps.mu.Lock()
 	ps.lastSettings = &ws

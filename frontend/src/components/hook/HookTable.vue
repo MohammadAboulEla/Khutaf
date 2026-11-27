@@ -3,6 +3,7 @@ import { shallowRef, computed, watch } from "vue";
 import Icon from "../Icon.vue";
 import Tooltip from "../Tooltip.vue";
 import { useI18n } from "../../composables/useI18n.js";
+import { useSession } from "../../composables/useSession.js";
 import { formatHookLabel } from "../../utils/hookLabels.js";
 import { usePinnedHookSort } from "../../composables/usePinnedHookSort.js";
 
@@ -14,7 +15,16 @@ const props = defineProps({
 
 const emit = defineEmits(["toggle-embed"]);
 const { t, lang } = useI18n();
+const { config, saveConfig } = useSession();
 const { snapshotPinned, sortPinned, needsSort } = usePinnedHookSort(() => props.hooks);
+
+async function toggleVerboseHooks(val) {
+  if (!config.value) return;
+  await saveConfig({
+    ...config.value,
+    embed: { ...config.value.embed, verboseHooks: Boolean(val) },
+  });
+}
 
 watch(
   () => props.active,
@@ -58,6 +68,14 @@ const filteredHooks = computed(() => {
       <label class="chk">
         <input v-model="embedOnly" type="checkbox" />
         <span>{{ t("htEmbedOnly", { shown: filteredHooks.length, total: props.hooks.length }) }}</span>
+      </label>
+      <label class="chk" :title="t('verboseHooksTip')">
+        <input
+          type="checkbox"
+          :checked="Boolean(config?.embed?.verboseHooks)"
+          @change="toggleVerboseHooks($event.target.checked)"
+        />
+        <span>{{ t("verboseHooksLabel") }}</span>
       </label>
       <Tooltip :text="t('sortCheckedTopTip')">
         <button

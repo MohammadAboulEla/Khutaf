@@ -86,6 +86,7 @@ const form = reactive({
   stripTypewriterTags: true,
   nonBlocking: true,
   pendingText: "",
+  verboseHooks: false,
 });
 
 watch(
@@ -113,6 +114,7 @@ const isDirty = computed(() => {
     (Number(form.maxLineLength) || 40) !== Number(saved.maxLineLength) ||
     Boolean(form.stripTypewriterTags) !== Boolean(saved.stripTypewriterTags) ||
     Boolean(form.nonBlocking) !== Boolean(saved.nonBlocking) ||
+    Boolean(form.verboseHooks) !== Boolean(saved.verboseHooks) ||
     form.pendingText.trim() !== (saved.pendingText || "").trim()
   );
 });
@@ -140,6 +142,7 @@ function onSave() {
       stripTypewriterTags: form.stripTypewriterTags,
       nonBlocking: form.nonBlocking,
       pendingText: form.pendingText.trim(),
+      verboseHooks: Boolean(form.verboseHooks),
     },
   });
 }
@@ -326,6 +329,10 @@ function onSave() {
             <label class="chk">
               <input v-model="form.nonBlocking" type="checkbox" />
               <span>{{ t("embNonBlocking") }}</span>
+            </label>
+            <label class="chk" :title="t('verboseHooksTip')">
+              <input v-model="form.verboseHooks" type="checkbox" />
+              <span>{{ t("verboseHooksLabel") }}</span>
             </label>
           </div>
 

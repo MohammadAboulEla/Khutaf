@@ -30,6 +30,8 @@ pub const HOOK_UIE_TEXTELEMENT_SET_TEXT: u64 = 8;
 pub const HOOK_UIE_TEXTFIELD_SET_VALUE: u64 = 9;
 pub const HOOK_GUITEXT_SET_TEXT: u64 = 10;
 pub const HOOK_NGUILABEL_SET_TEXT: u64 = 11;
+pub const HOOK_TMP_STATIC_UI: u64 = 12;
+pub const HOOK_UI_TEXT_STATIC_UI: u64 = 13;
 
 pub(crate) fn is_tmp_hook(hook_id: u64) -> bool {
     matches!(
@@ -39,7 +41,12 @@ pub(crate) fn is_tmp_hook(hook_id: u64) -> bool {
             | HOOK_TEXTMESHPRO_SET_TEXT
             | HOOK_TEXTMESHPRO_UGUI_SET_TEXT
             | HOOK_TEXTMESHPRO_UGUI_SETTEXT
+            | HOOK_TMP_STATIC_UI
     )
+}
+
+pub(crate) fn is_ui_text_hook(hook_id: u64) -> bool {
+    matches!(hook_id, HOOK_UI_TEXT_SET_TEXT | HOOK_UI_TEXT_STATIC_UI)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -701,6 +708,66 @@ pub(crate) fn on_frame_tick(rt: &dyn UnityRuntime) {
     }
     if embed::has_async_work() {
         flush_async_updates(rt);
+    }
+}
+
+fn read_component_text(rt: &dyn UnityRuntime, comp: *mut c_void, comp_cls: *mut c_void, hook_id: u64) -> *mut c_void {
+    let field_name = if is_ui_text_hook(hook_id) { "m_Text" } else { "m_text" };
+    let f_text = rt.find_field_in_hierarchy(comp_cls, field_name);
+    if !f_text.is_null() {
+        let mut ptr: *mut c_void = std::ptr::null_mut();
+        rt.field_get_value(comp, f_text, &mut ptr as *mut *mut c_void as *mut c_void);
+        if !ptr.is_null() {
+            return ptr;
+        }
+    }
+    let m_get = rt.find_method_in_hierarchy(comp_cls, "get_text", 0);
+    rt.invoke(m_get, comp, &mut []).unwrap_or(std::ptr::null_mut())
+}
+
+/// Captures static/prefab text from `OnEnable` when `verbose_hooks` is enabled.
+pub(crate) fn handle_static_ui_on_enable(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64) {
+    if component.is_null() || !embed::verbose_hooks_enabled() {
+        return;
+    }
+    let comp_cls = rt.object_get_class(component);
+    if comp_cls.is_null() {
+        return;
+    }
+    let text_ptr = read_component_text(rt, component, comp_cls, hook_id);
+    if text_ptr.is_null() {
+        return;
+    }
+    let raw = rt.string_to_rust(text_ptr);
+    if raw.trim().is_empty() {
+        return;
+    }
+    if !embed::clear_text_enabled() && !embed::has_translatable_letters(&raw) {
+        return;
+    }
+    let cleaned: Cow<'_, str> = if is_tmp_hook(hook_id) {
+        clean_tmp_tags(&raw)
+    } else {
+        Cow::Borrowed(raw.as_str())
+    };
+    if let embed::ProcessOutcome::Replace { text: replaced, apply_font } =
+        embed::process_unity(hook_id, || 0, 0, component as usize, &cleaned, &raw, || rt.gchandle_pin(component))
+    {
+        let m_set = {
+            let mut cache = ASYNC_UNITY_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+            resolve_setter_method(rt, &mut cache, comp_cls, hook_id)
+        };
+        if m_set.is_null() {
+            return;
+        }
+        if apply_font {
+            embed::remember_output(&replaced);
+            font::on_text(rt, component, hook_id, &replaced);
+        }
+        let new_str = rt.string_new(&replaced);
+        if !new_str.is_null() {
+            let _ = rt.invoke(m_set, component, &mut [new_str]);
+        }
     }
 }
 

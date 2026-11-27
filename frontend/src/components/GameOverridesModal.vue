@@ -34,6 +34,7 @@ const embedForm = reactive({
   stripTypewriterTags: true,
   nonBlocking: true,
   pendingText: "",
+  verboseHooks: false,
 });
 
 const translatorForm = reactive({
@@ -100,6 +101,7 @@ async function onSave() {
         stripTypewriterTags: Boolean(embedForm.stripTypewriterTags),
         nonBlocking: Boolean(embedForm.nonBlocking),
         pendingText: (embedForm.pendingText || "").trim(),
+        verboseHooks: Boolean(embedForm.verboseHooks),
       };
   const fb = translatorForm.fallbackProvider === translatorForm.active ? "" : translatorForm.fallbackProvider;
   const to = useGlobalTranslator.value
@@ -201,6 +203,10 @@ async function onSave() {
                   <label class="chk">
                     <input v-model="embedForm.nonBlocking" type="checkbox" />
                     <span>{{ t("embNonBlocking") }}</span>
+                  </label>
+                  <label class="chk" :title="t('verboseHooksTip')">
+                    <input v-model="embedForm.verboseHooks" type="checkbox" />
+                    <span>{{ t("verboseHooksLabel") }}</span>
                   </label>
                 </div>
               </div>

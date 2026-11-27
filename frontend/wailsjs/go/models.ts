@@ -296,6 +296,7 @@ export namespace config {
 	    stripTypewriterTags: boolean;
 	    nonBlocking: boolean;
 	    pendingText: string;
+	    verboseHooks: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new EmbedSettings(source);
@@ -316,6 +317,7 @@ export namespace config {
 	        this.stripTypewriterTags = source["stripTypewriterTags"];
 	        this.nonBlocking = source["nonBlocking"];
 	        this.pendingText = source["pendingText"];
+	        this.verboseHooks = source["verboseHooks"];
 	    }
 	}
 	export class Config {
@@ -363,6 +365,7 @@ export namespace config {
 	    hookName: string;
 	    ctx: number;
 	    ctx2: number;
+	    sample?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new EmbedHook(source);
@@ -374,6 +377,7 @@ export namespace config {
 	        this.hookName = source["hookName"];
 	        this.ctx = source["ctx"];
 	        this.ctx2 = source["ctx2"];
+	        this.sample = source["sample"];
 	    }
 	}
 	

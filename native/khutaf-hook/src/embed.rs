@@ -146,6 +146,7 @@ static DISPLAY_MODE: AtomicU32 = AtomicU32::new(0);
 static STRIP_TYPEWRITER: AtomicBool = AtomicBool::new(false);
 static CLEAR_TEXT: AtomicBool = AtomicBool::new(false);
 static NON_BLOCKING: AtomicBool = AtomicBool::new(false);
+static VERBOSE_HOOKS: AtomicBool = AtomicBool::new(false);
 static FRAME_TICK_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HAS_ASYNC_WORK: AtomicBool = AtomicBool::new(false);
 static HAS_ASYNC_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
@@ -204,6 +205,7 @@ pub fn set_settings(s: Settings) {
     STRIP_TYPEWRITER.store(s.strip_typewriter_tags, Ordering::Relaxed);
     CLEAR_TEXT.store(s.clear_text, Ordering::Relaxed);
     NON_BLOCKING.store(s.non_blocking, Ordering::Relaxed);
+    VERBOSE_HOOKS.store(s.verbose_hooks, Ordering::Relaxed);
     *SETTINGS.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(s);
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
@@ -212,6 +214,10 @@ pub fn set_settings(s: Settings) {
 
 pub fn settings() -> Arc<Settings> {
     Arc::clone(&SETTINGS.read().unwrap_or_else(|p| p.into_inner()))
+}
+
+pub(crate) fn verbose_hooks_enabled() -> bool {
+    VERBOSE_HOOKS.load(Ordering::Relaxed)
 }
 
 pub(crate) fn current_display_mode() -> u32 {
@@ -1398,5 +1404,15 @@ mod tests {
         set_frame_tick_active(false);
         set_settings(Settings::default());
         reset_for_session();
+    }
+
+    #[test]
+    fn verbose_hooks_flag_tracks_settings() {
+        let _guard = test_guard();
+        set_settings(Settings::default());
+        assert!(!verbose_hooks_enabled());
+        set_settings(Settings { verbose_hooks: true, ..Default::default() });
+        assert!(verbose_hooks_enabled());
+        set_settings(Settings::default());
     }
 }
