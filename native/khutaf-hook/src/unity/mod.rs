@@ -32,6 +32,7 @@ pub const HOOK_GUITEXT_SET_TEXT: u64 = 10;
 pub const HOOK_NGUILABEL_SET_TEXT: u64 = 11;
 pub const HOOK_TMP_STATIC_UI: u64 = 12;
 pub const HOOK_UI_TEXT_STATIC_UI: u64 = 13;
+pub const HOOK_FEBUCCI_TEXTANIMATOR_SET_TEXT: u64 = 14;
 
 pub(crate) fn is_tmp_hook(hook_id: u64) -> bool {
     matches!(
@@ -43,6 +44,10 @@ pub(crate) fn is_tmp_hook(hook_id: u64) -> bool {
             | HOOK_TEXTMESHPRO_UGUI_SETTEXT
             | HOOK_TMP_STATIC_UI
     )
+}
+
+pub(crate) fn is_tmp_like_tags(hook_id: u64) -> bool {
+    is_tmp_hook(hook_id) || hook_id == HOOK_FEBUCCI_TEXTANIMATOR_SET_TEXT
 }
 
 pub(crate) fn is_ui_text_hook(hook_id: u64) -> bool {
@@ -561,6 +566,11 @@ struct AsyncUnityCache {
     t_unity_obj: *mut c_void,
     f_cached_ptr: *mut c_void,
     m_op_implicit: *mut c_void,
+    layout_meta_resolved: bool,
+    t_graphic: *mut c_void,
+    m_graphic_get_rt: *mut c_void,
+    m_graphic_set_layout_dirty: *mut c_void,
+    m_force_rebuild_layout: *mut c_void,
     setters: HashMap<(usize, u64), *mut c_void>,
 }
 
@@ -572,6 +582,11 @@ static ASYNC_UNITY_CACHE: LazyLock<Mutex<AsyncUnityCache>> = LazyLock::new(|| {
         t_unity_obj: std::ptr::null_mut(),
         f_cached_ptr: std::ptr::null_mut(),
         m_op_implicit: std::ptr::null_mut(),
+        layout_meta_resolved: false,
+        t_graphic: std::ptr::null_mut(),
+        m_graphic_get_rt: std::ptr::null_mut(),
+        m_graphic_set_layout_dirty: std::ptr::null_mut(),
+        m_force_rebuild_layout: std::ptr::null_mut(),
         setters: HashMap::new(),
     })
 });
@@ -650,7 +665,7 @@ fn resolve_setter_method(
         "set_text"
     };
     let mut m = rt.find_method_in_hierarchy(comp_cls, primary, 1);
-    if m.is_null() && is_tmp_hook(hook_id) {
+    if m.is_null() && (is_tmp_hook(hook_id) || hook_id == HOOK_FEBUCCI_TEXTANIMATOR_SET_TEXT) {
         let mut cur = comp_cls;
         while !cur.is_null() {
             m = rt.find_method_param0(cur, "SetText", 1, "String");
@@ -667,6 +682,62 @@ fn resolve_setter_method(
         cache.setters.insert(key, m);
     }
     m
+}
+
+pub(crate) fn resolve_font_target(
+    rt: &dyn UnityRuntime,
+    comp: *mut c_void,
+    hook_id: u64,
+) -> (*mut c_void, u64) {
+    if hook_id != HOOK_FEBUCCI_TEXTANIMATOR_SET_TEXT || comp.is_null() {
+        return (comp, hook_id);
+    }
+    let comp_cls = rt.object_get_class(comp);
+    if comp_cls.is_null() {
+        return (std::ptr::null_mut(), hook_id);
+    }
+    let m_get = rt.find_method_in_hierarchy(comp_cls, "get_tmproText", 0);
+    if let Some(tmpro) = rt.invoke(m_get, comp, &mut []) {
+        if !tmpro.is_null() {
+            return (tmpro, HOOK_TMP_SET_TEXT);
+        }
+    }
+    (std::ptr::null_mut(), hook_id)
+}
+
+fn rebuild_component_layout(
+    rt: &dyn UnityRuntime,
+    cache: &mut AsyncUnityCache,
+    comp: *mut c_void,
+    comp_cls: *mut c_void,
+) {
+    if !cache.layout_meta_resolved {
+        cache.layout_meta_resolved = true;
+        let t_graphic = rt.find_class("UnityEngine.UI", "UnityEngine.UI", "Graphic");
+        cache.t_graphic = t_graphic;
+        if !t_graphic.is_null() {
+            cache.m_graphic_get_rt = rt.find_method_in_hierarchy(t_graphic, "get_rectTransform", 0);
+            cache.m_graphic_set_layout_dirty = rt.find_method_in_hierarchy(t_graphic, "SetLayoutDirty", 0);
+        }
+        let t_rebuilder = rt.find_class("UnityEngine.UI", "UnityEngine.UI", "LayoutRebuilder");
+        if !t_rebuilder.is_null() {
+            cache.m_force_rebuild_layout =
+                rt.find_method_param0(t_rebuilder, "ForceRebuildLayoutImmediate", 1, "RectTransform");
+        }
+    }
+    if cache.t_graphic.is_null() || !rt.class_is_assignable_from(cache.t_graphic, comp_cls) {
+        return;
+    }
+    if !cache.m_graphic_set_layout_dirty.is_null() {
+        let _ = rt.invoke(cache.m_graphic_set_layout_dirty, comp, &mut []);
+    }
+    if !cache.m_graphic_get_rt.is_null() && !cache.m_force_rebuild_layout.is_null() {
+        if let Some(rect_tr) = rt.invoke(cache.m_graphic_get_rt, comp, &mut []) {
+            if !rect_tr.is_null() {
+                let _ = rt.invoke(cache.m_force_rebuild_layout, std::ptr::null_mut(), &mut [rect_tr]);
+            }
+        }
+    }
 }
 
 pub(crate) fn flush_async_updates(rt: &dyn UnityRuntime) {
@@ -691,11 +762,76 @@ pub(crate) fn flush_async_updates(rt: &dyn UnityRuntime) {
         }
         if u.apply_font {
             embed::remember_output(&u.text);
-            font::on_text(rt, comp, u.hook_id, &u.text);
+            let (font_target, font_hook_id) = resolve_font_target(rt, comp, u.hook_id);
+            if !font_target.is_null() {
+                font::on_text(rt, font_target, font_hook_id, &u.text);
+            }
         }
         let new_str = rt.string_new(&u.text);
         if !new_str.is_null() {
             let _ = rt.invoke(m_set, comp, &mut [new_str]);
+            rebuild_component_layout(rt, &mut cache, comp, comp_cls);
+        }
+    }
+}
+
+fn scan_active_static_ui(rt: &dyn UnityRuntime) {
+    let t_obj = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Object");
+    if t_obj.is_null() {
+        return;
+    }
+    let m_find_old = rt.find_method_param0(t_obj, "FindObjectsOfType", 1, "Type");
+    let m_find_new = if m_find_old.is_null() {
+        rt.find_method_param0(t_obj, "FindObjectsByType", 2, "Type")
+    } else {
+        std::ptr::null_mut()
+    };
+    if m_find_old.is_null() && m_find_new.is_null() {
+        return;
+    }
+    let t_behaviour = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Behaviour");
+    let m_is_active = if t_behaviour.is_null() {
+        std::ptr::null_mut()
+    } else {
+        rt.find_method(t_behaviour, "get_isActiveAndEnabled", 0)
+    };
+
+    let targets = [
+        ("Unity.TextMeshPro", "TMPro", "TMP_Text", HOOK_TMP_STATIC_UI),
+        ("UnityEngine.UI", "UnityEngine.UI", "Text", HOOK_UI_TEXT_STATIC_UI),
+    ];
+    for (asm, ns, cls_name, hook_id) in targets {
+        let k = rt.find_class(asm, ns, cls_name);
+        if k.is_null() {
+            continue;
+        }
+        let type_obj = rt.class_get_type_object(k);
+        if type_obj.is_null() {
+            continue;
+        }
+        let arr = if !m_find_old.is_null() {
+            rt.invoke(m_find_old, std::ptr::null_mut(), &mut [type_obj])
+        } else {
+            let mut sort_mode: i32 = 0; // FindObjectsSortMode.None
+            rt.invoke(
+                m_find_new,
+                std::ptr::null_mut(),
+                &mut [type_obj, &mut sort_mode as *mut i32 as *mut c_void],
+            )
+        };
+        let Some(arr) = arr else { continue };
+        for comp in rt.array_elements(arr).into_iter().take(256) {
+            if comp.is_null() {
+                continue;
+            }
+            if !m_is_active.is_null() {
+                let Some(boxed) = rt.invoke(m_is_active, comp, &mut []) else { continue };
+                let ptr = rt.unbox(boxed) as *const u8;
+                if ptr.is_null() || unsafe { *ptr } == 0 {
+                    continue;
+                }
+            }
+            handle_static_ui_on_enable(rt, comp, hook_id);
         }
     }
 }
@@ -705,6 +841,9 @@ pub(crate) fn on_frame_tick(rt: &dyn UnityRuntime) {
         && FRAME_COUNTER.fetch_add(1, Ordering::Relaxed).is_multiple_of(60)
     {
         embed::reap_expired_async();
+    }
+    if embed::take_verbose_scan_pending() && embed::verbose_hooks_enabled() {
+        scan_active_static_ui(rt);
     }
     if embed::has_async_work() {
         flush_async_updates(rt);

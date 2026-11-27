@@ -147,6 +147,7 @@ static STRIP_TYPEWRITER: AtomicBool = AtomicBool::new(false);
 static CLEAR_TEXT: AtomicBool = AtomicBool::new(false);
 static NON_BLOCKING: AtomicBool = AtomicBool::new(false);
 static VERBOSE_HOOKS: AtomicBool = AtomicBool::new(false);
+static VERBOSE_SCAN_PENDING: AtomicBool = AtomicBool::new(false);
 static FRAME_TICK_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HAS_ASYNC_WORK: AtomicBool = AtomicBool::new(false);
 static HAS_ASYNC_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
@@ -205,7 +206,12 @@ pub fn set_settings(s: Settings) {
     STRIP_TYPEWRITER.store(s.strip_typewriter_tags, Ordering::Relaxed);
     CLEAR_TEXT.store(s.clear_text, Ordering::Relaxed);
     NON_BLOCKING.store(s.non_blocking, Ordering::Relaxed);
-    VERBOSE_HOOKS.store(s.verbose_hooks, Ordering::Relaxed);
+    let prev_verbose = VERBOSE_HOOKS.swap(s.verbose_hooks, Ordering::Relaxed);
+    if s.verbose_hooks && !prev_verbose {
+        VERBOSE_SCAN_PENDING.store(true, Ordering::Release);
+    } else if !s.verbose_hooks {
+        VERBOSE_SCAN_PENDING.store(false, Ordering::Release);
+    }
     *SETTINGS.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(s);
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
@@ -218,6 +224,14 @@ pub fn settings() -> Arc<Settings> {
 
 pub(crate) fn verbose_hooks_enabled() -> bool {
     VERBOSE_HOOKS.load(Ordering::Relaxed)
+}
+
+pub(crate) fn has_verbose_scan_pending() -> bool {
+    VERBOSE_SCAN_PENDING.load(Ordering::Acquire)
+}
+
+pub(crate) fn take_verbose_scan_pending() -> bool {
+    VERBOSE_SCAN_PENDING.swap(false, Ordering::AcqRel)
 }
 
 pub(crate) fn current_display_mode() -> u32 {
@@ -474,7 +488,7 @@ fn send_text_dedup(hook_id: u64, ctx: u64, ctx2: u64, text: &str) {
     {
         let mut last = LAST_SENT_TEXT.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((prev, prev_at)) = last.get(&(hook_id, ctx, ctx2)) {
-            if prev == text || now.duration_since(*prev_at) < TEXT_RATE_LIMIT {
+            if prev == text || ((ctx != 0 || ctx2 != 0) && now.duration_since(*prev_at) < TEXT_RATE_LIMIT) {
                 return;
             }
         }
@@ -1411,8 +1425,15 @@ mod tests {
         let _guard = test_guard();
         set_settings(Settings::default());
         assert!(!verbose_hooks_enabled());
+        assert!(!has_verbose_scan_pending());
         set_settings(Settings { verbose_hooks: true, ..Default::default() });
         assert!(verbose_hooks_enabled());
+        assert!(has_verbose_scan_pending());
+        assert!(take_verbose_scan_pending());
+        assert!(!has_verbose_scan_pending());
+        // Updating other settings while verbose_hooks remains true must not re-trigger the scan.
+        set_settings(Settings { verbose_hooks: true, wait_ms: 1500, ..Default::default() });
+        assert!(!has_verbose_scan_pending());
         set_settings(Settings::default());
     }
 }

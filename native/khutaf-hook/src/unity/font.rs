@@ -32,6 +32,13 @@ struct LayoutMethods {
     m_set_max_chars: *mut c_void,
     m_get_v_overflow: *mut c_void,
     m_set_v_overflow: *mut c_void,
+    m_get_rect_transform: *mut c_void,
+    m_get_rect: *mut c_void,
+    m_get_font_size: *mut c_void,
+    m_get_wrap_mode: *mut c_void,
+    m_set_wrap_mode: *mut c_void,
+    m_get_word_wrap: *mut c_void,
+    m_set_word_wrap: *mut c_void,
 }
 
 struct FontState {
@@ -1429,6 +1436,52 @@ fn read_i32_prop(rt: &dyn UnityRuntime, component: *mut c_void, getter: *mut c_v
     Some(unsafe { *(ptr as *const i32) })
 }
 
+fn read_f32_prop(rt: &dyn UnityRuntime, component: *mut c_void, getter: *mut c_void) -> Option<f32> {
+    if getter.is_null() {
+        return None;
+    }
+    let boxed = rt.invoke(getter, component, &mut [])?;
+    let ptr = rt.unbox(boxed);
+    if ptr.is_null() {
+        return None;
+    }
+    Some(unsafe { *(ptr as *const f32) })
+}
+
+fn read_u8_prop(rt: &dyn UnityRuntime, component: *mut c_void, getter: *mut c_void) -> Option<u8> {
+    if getter.is_null() {
+        return None;
+    }
+    let boxed = rt.invoke(getter, component, &mut [])?;
+    let ptr = rt.unbox(boxed);
+    if ptr.is_null() {
+        return None;
+    }
+    Some(unsafe { *(ptr as *const u8) })
+}
+
+fn read_rect_width(
+    rt: &dyn UnityRuntime,
+    component: *mut c_void,
+    m_get_rt: *mut c_void,
+    m_get_rect: *mut c_void,
+) -> Option<f32> {
+    if m_get_rt.is_null() || m_get_rect.is_null() {
+        return None;
+    }
+    let rt_obj = rt.invoke(m_get_rt, component, &mut [])?;
+    if rt_obj.is_null() {
+        return None;
+    }
+    let boxed = rt.invoke(m_get_rect, rt_obj, &mut [])?;
+    let ptr = rt.unbox(boxed);
+    if ptr.is_null() {
+        return None;
+    }
+    let rect = unsafe { *(ptr as *const [f32; 4]) };
+    Some(rect[2].abs())
+}
+
 fn ensure_text_layout(
     rt: &dyn UnityRuntime,
     st: &mut FontState,
@@ -1449,6 +1502,12 @@ fn ensure_text_layout(
         cached
     } else {
         let resolved = if is_tmp_hook(hook_id) {
+            let rt_cls = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "RectTransform");
+            let m_get_rect = if rt_cls.is_null() {
+                std::ptr::null_mut()
+            } else {
+                rt.find_method_in_hierarchy(rt_cls, "get_rect", 0)
+            };
             LayoutMethods {
                 resolved: true,
                 m_get_overflow: rt.find_method_in_hierarchy(comp_cls, "get_overflowMode", 0),
@@ -1457,6 +1516,13 @@ fn ensure_text_layout(
                 m_set_max_lines: rt.find_method_in_hierarchy(comp_cls, "set_maxVisibleLines", 1),
                 m_get_max_chars: rt.find_method_in_hierarchy(comp_cls, "get_maxVisibleCharacters", 0),
                 m_set_max_chars: rt.find_method_in_hierarchy(comp_cls, "set_maxVisibleCharacters", 1),
+                m_get_rect_transform: rt.find_method_in_hierarchy(comp_cls, "get_rectTransform", 0),
+                m_get_rect,
+                m_get_font_size: rt.find_method_in_hierarchy(comp_cls, "get_fontSize", 0),
+                m_get_wrap_mode: rt.find_method_in_hierarchy(comp_cls, "get_textWrappingMode", 0),
+                m_set_wrap_mode: rt.find_method_in_hierarchy(comp_cls, "set_textWrappingMode", 1),
+                m_get_word_wrap: rt.find_method_in_hierarchy(comp_cls, "get_enableWordWrapping", 0),
+                m_set_word_wrap: rt.find_method_in_hierarchy(comp_cls, "set_enableWordWrapping", 1),
                 ..Default::default()
             }
         } else if is_ui_text_hook(hook_id) {
@@ -1489,6 +1555,35 @@ fn ensure_text_layout(
                     component,
                     &mut [&mut unlimited as *mut i32 as *mut c_void],
                 );
+            }
+        }
+        // Avoid 1-2 glyph per line wrapping when a speech bubble has not expanded its RectTransform yet.
+        if visible_chars >= 6 {
+            if let (Some(rect_w), Some(font_sz)) = (
+                read_rect_width(rt, component, methods.m_get_rect_transform, methods.m_get_rect),
+                read_f32_prop(rt, component, methods.m_get_font_size),
+            ) {
+                if rect_w > 0.5 && font_sz > 0.0 && rect_w < font_sz * 2.5 {
+                    if !methods.m_set_wrap_mode.is_null() {
+                        if matches!(read_i32_prop(rt, component, methods.m_get_wrap_mode), Some(1 | 2)) {
+                            let mut no_wrap: i32 = 0;
+                            let _ = rt.invoke(
+                                methods.m_set_wrap_mode,
+                                component,
+                                &mut [&mut no_wrap as *mut i32 as *mut c_void],
+                            );
+                        }
+                    } else if !methods.m_set_word_wrap.is_null()
+                        && read_u8_prop(rt, component, methods.m_get_word_wrap) == Some(1)
+                    {
+                        let mut no_wrap: u8 = 0;
+                        let _ = rt.invoke(
+                            methods.m_set_word_wrap,
+                            component,
+                            &mut [&mut no_wrap as *mut u8 as *mut c_void],
+                        );
+                    }
+                }
             }
         }
         if relax_multiline {

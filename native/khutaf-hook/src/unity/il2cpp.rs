@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use khutaf_proto::level;
 
 use super::{
-    caller_rel_ctx, clean_tmp_tags, cstr_to_string, font, is_tmp_hook, module_handle, proc_addr,
-    UnityRuntime, HOOK_GUITEXT_SET_TEXT, HOOK_NGUILABEL_SET_TEXT, HOOK_TEXTMESHPRO_SET_TEXT,
+    caller_rel_ctx, clean_tmp_tags, cstr_to_string, font, is_tmp_like_tags, module_handle,
+    proc_addr, resolve_font_target, UnityRuntime, HOOK_FEBUCCI_TEXTANIMATOR_SET_TEXT,
+    HOOK_GUITEXT_SET_TEXT, HOOK_NGUILABEL_SET_TEXT, HOOK_TEXTMESHPRO_SET_TEXT,
     HOOK_TEXTMESHPRO_UGUI_SETTEXT, HOOK_TEXTMESHPRO_UGUI_SET_TEXT, HOOK_TEXTMESH_SET_TEXT,
     HOOK_TMP_SETTEXT, HOOK_TMP_SET_TEXT, HOOK_TMP_STATIC_UI, HOOK_UIE_TEXTELEMENT_SET_TEXT,
     HOOK_UIE_TEXTFIELD_SET_VALUE, HOOK_UI_TEXT_SET_TEXT, HOOK_UI_TEXT_STATIC_UI,
@@ -78,6 +79,9 @@ static ORIG_TMP_SET_MAX_VISIBLE_CHARS: AtomicPtr<c_void> = AtomicPtr::new(std::p
 static ORIG_TMP_UGUI_ON_ENABLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_TMP_3D_ON_ENABLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ORIG_UI_TEXT_ON_ENABLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_FEBUCCI_SET_TEXT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_FEBUCCI_SETTEXT_1: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static ORIG_FEBUCCI_SETTEXT_2: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 impl Il2CppApi {
     pub(crate) fn get() -> Option<&'static Il2CppApi> {
@@ -581,6 +585,27 @@ pub fn install() -> usize {
         installed += 1;
     }
 
+    let k_febucci = api.find_class("Febucci.TextAnimator.Runtime", "Febucci.UI", "TextAnimator");
+    if !k_febucci.is_null() {
+        let mut febucci_hooked = false;
+        let m2 = api.find_method_typed(k_febucci, "SetText", &["String", "Boolean"]);
+        if hook_il2cpp(m2, detour_febucci_settext_2 as *mut c_void, &ORIG_FEBUCCI_SETTEXT_2, &mut seen) {
+            febucci_hooked = true;
+        }
+        let m1 = api.find_method_typed(k_febucci, "SetText", &["String"]);
+        if hook_il2cpp(m1, detour_febucci_settext_1 as *mut c_void, &ORIG_FEBUCCI_SETTEXT_1, &mut seen) {
+            febucci_hooked = true;
+        }
+        let m_prop = api.find_method(k_febucci, "set_text", 1);
+        if hook_il2cpp(m_prop, detour_febucci_set_text as *mut c_void, &ORIG_FEBUCCI_SET_TEXT, &mut seen) {
+            febucci_hooked = true;
+        }
+        if febucci_hooked {
+            emit_hook(HOOK_FEBUCCI_TEXTANIMATOR_SET_TEXT, "UNITY:TextAnimator.SetText", "TextAnimator::SetText");
+            installed += 1;
+        }
+    }
+
     installed
 }
 
@@ -686,7 +711,7 @@ fn handle_il2cpp_text(api: &Il2CppApi, this: *mut c_void, text: *mut c_void, hoo
         return text;
     }
     let raw = String::from_utf16_lossy(units);
-    let cleaned: Cow<'_, str> = if is_tmp_hook(hook_id) {
+    let cleaned: Cow<'_, str> = if is_tmp_like_tags(hook_id) {
         clean_tmp_tags(&raw)
     } else {
         Cow::Borrowed(&raw)
@@ -694,7 +719,10 @@ fn handle_il2cpp_text(api: &Il2CppApi, this: *mut c_void, text: *mut c_void, hoo
     match embed::process_unity(hook_id, caller_rel_ctx, 0, this as usize, &cleaned, &raw, || api.gchandle_pin(this)) {
         embed::ProcessOutcome::Replace { text: replaced, apply_font } => {
             if apply_font {
-                font::on_text(api, this, hook_id, &replaced);
+                let (font_target, font_hook_id) = resolve_font_target(api, this, hook_id);
+                if !font_target.is_null() {
+                    font::on_text(api, font_target, font_hook_id, &replaced);
+                }
             }
             let new_str = api.string_new(&replaced);
             if new_str.is_null() { text } else { new_str }
@@ -705,7 +733,7 @@ fn handle_il2cpp_text(api: &Il2CppApi, this: *mut c_void, text: *mut c_void, hoo
 
 unsafe extern "C" fn detour_canvas_will_render(method: *const c_void) {
     let orig: unsafe extern "C" fn(*const c_void) = load_fn(&ORIG_CANVAS_WILL_RENDER);
-    if embed::has_async_work() || embed::has_async_in_flight() {
+    if embed::has_async_work() || embed::has_async_in_flight() || embed::has_verbose_scan_pending() {
         if let Some(_guard) = hooks::Enter::try_new() {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if let Some(api) = Il2CppApi::get() {
@@ -719,7 +747,7 @@ unsafe extern "C" fn detour_canvas_will_render(method: *const c_void) {
 
 unsafe extern "C" fn detour_camera_pre_cull(cam: *mut c_void, method: *const c_void) {
     let orig: unsafe extern "C" fn(*mut c_void, *const c_void) = load_fn(&ORIG_CAMERA_PRE_CULL);
-    if embed::has_async_work() || embed::has_async_in_flight() {
+    if embed::has_async_work() || embed::has_async_in_flight() || embed::has_verbose_scan_pending() {
         if let Some(_guard) = hooks::Enter::try_new() {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if let Some(api) = Il2CppApi::get() {
@@ -839,3 +867,6 @@ il2cpp_on_enable_detour!(detour_tmp_3d_on_enable, ORIG_TMP_3D_ON_ENABLE, HOOK_TM
 il2cpp_on_enable_detour!(detour_ui_text_on_enable, ORIG_UI_TEXT_ON_ENABLE, HOOK_UI_TEXT_STATIC_UI);
 il2cpp_detour_1!(detour_guitext_set_text, ORIG_GUITEXT_SET_TEXT, HOOK_GUITEXT_SET_TEXT);
 il2cpp_detour_1!(detour_nguilabel_set_text, ORIG_NGUILABEL_SET_TEXT, HOOK_NGUILABEL_SET_TEXT);
+il2cpp_detour_1!(detour_febucci_set_text, ORIG_FEBUCCI_SET_TEXT, HOOK_FEBUCCI_TEXTANIMATOR_SET_TEXT);
+il2cpp_detour_1!(detour_febucci_settext_1, ORIG_FEBUCCI_SETTEXT_1, HOOK_FEBUCCI_TEXTANIMATOR_SET_TEXT);
+il2cpp_detour_2!(detour_febucci_settext_2, ORIG_FEBUCCI_SETTEXT_2, HOOK_FEBUCCI_TEXTANIMATOR_SET_TEXT);

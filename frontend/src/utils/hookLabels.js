@@ -21,6 +21,8 @@ export function formatHookLabel(h, idx = -1, lang = "en") {
     base = isAr ? "نصوص NGUI (UILabel)" : "Unity NGUI Label";
   } else if (src.includes("naninovel")) {
     base = isAr ? "حوارات Naninovel" : "Naninovel Dialogue";
+  } else if (src.includes("textanimator")) {
+    base = isAr ? "حوارات TextAnimator (Febucci)" : "Febucci TextAnimator";
   } else if (src.includes("unity")) {
     base = isAr ? "قناة نصوص Unity" : "Unity Text Hook";
   }
