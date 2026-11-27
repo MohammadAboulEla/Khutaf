@@ -60,6 +60,12 @@ export const MESSAGES = {
     qhShowAllActive: "إظهار كل القنوات المفعّلة",
     qhShowAllActiveTip: "إظهار القنوات المفعّلة والمحفوظة لهذه اللعبة حتى التي لم تظهر بعد في هذه الجلسة",
     qhSavedBadge: "محفوظة",
+    qhQuickAttach: "ربط سريع",
+    qhAttaching: "جاري الربط...",
+    qhDetachTip: "فصل اللعبة الحالية",
+    qhRunningGames: "الألعاب المفتوحة الجاهزة للربط",
+    qhNoRunningGames: "لم يتم العثور على لعبة Unity مفتوحة حالياً. شغّل اللعبة ثم اضغط تحديث.",
+    qhRevealSaved: "عرض {count} قناة محفوظة مفعّلة",
 
     // Quick Play (Simple Mode)
     qpTitle: "التشغيل السريع للترجمة",
@@ -467,6 +473,12 @@ export const MESSAGES = {
     qhShowAllActive: "Show all active hooks",
     qhShowAllActiveTip: "Also list saved active hooks for this game that haven't fired yet in this session",
     qhSavedBadge: "Saved",
+    qhQuickAttach: "Quick Attach",
+    qhAttaching: "Attaching...",
+    qhDetachTip: "Disconnect current game",
+    qhRunningGames: "Running Games",
+    qhNoRunningGames: "No supported Unity game is running right now. Launch a game and click Refresh.",
+    qhRevealSaved: "Show {count} saved active hook(s)",
 
     // Quick Play (Simple Mode)
     qpTitle: "Quick Play Translation",
