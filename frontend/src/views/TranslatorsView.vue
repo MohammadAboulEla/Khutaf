@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, shallowRef, watch } from "vue";
+import Icon from "../components/Icon.vue";
 import TranslatorBenchmark from "../components/TranslatorBenchmark.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
@@ -68,8 +69,21 @@ const form = reactive({
   llamaExtraArgs: "",
 });
 
+function providerDisplayName(id) {
+  if (!id || id === "none") return t("trDisabled");
+  if (id === "offline_llm") return "Offline LLM (GGUF / llama.cpp)";
+  if (id === "llm") return "OpenAI-Compatible LLM";
+  return ALL_PROVIDERS.find((p) => p.id === id)?.label || id;
+}
+
 const isTraditional = computed(() =>
   TRADITIONAL_PROVIDERS.some((p) => p.id === form.active),
+);
+const activeLabel = computed(() => providerDisplayName(form.active));
+const fallbackLabel = computed(() =>
+  form.fallbackProvider && form.fallbackProvider !== form.active
+    ? providerDisplayName(form.fallbackProvider)
+    : "",
 );
 
 const testInput = shallowRef("[Test] Welcome, Hero! If you can read this in Arabic, your translator is working.");
@@ -88,46 +102,104 @@ async function refreshLlamaStatus() {
   if (st) llamaStatus.value = st;
 }
 
+function normalizeTranslator(tr) {
+  const src = tr || {};
+  const active = src.active || "bing";
+  const fb = src.fallbackProvider === active ? "" : src.fallbackProvider || "";
+  const llm = src.llm || {};
+  const off = src.offlineLlm || {};
+  const lc = src.llamaCpp || {};
+  return {
+    active,
+    fallbackProvider: fb,
+    bing: {
+      sourceLang: (src.bing?.sourceLang || "auto-detect").trim() || "auto-detect",
+      targetLang: (src.bing?.targetLang || "ar").trim() || "ar",
+    },
+    traditional: {
+      sourceLang: (src.traditional?.sourceLang || "auto").trim() || "auto",
+      targetLang: (src.traditional?.targetLang || "ar").trim() || "ar",
+    },
+    llm: {
+      baseUrl: (llm.baseUrl || "").trim(),
+      apiKey: (llm.apiKey || "").trim(),
+      model: (llm.model || "").trim(),
+      temperature: Number(llm.temperature) || 0.2,
+      sourceLang: (llm.sourceLang || "English").trim() || "English",
+      targetLang: (llm.targetLang || "Arabic").trim() || "Arabic",
+      systemPrompt: llm.systemPrompt || "",
+    },
+    offlineLlm: {
+      baseUrl: (off.baseUrl || "http://127.0.0.1:8080/v1").trim() || "http://127.0.0.1:8080/v1",
+      model: (off.model || "local-model").trim() || "local-model",
+      template: off.template || "auto",
+      sourceLang: (off.sourceLang || "English").trim() || "English",
+      targetLang: (off.targetLang || "Arabic").trim() || "Arabic",
+      temperature: Number(off.temperature) || 0.1,
+    },
+    llamaCpp: {
+      binaryPath: (lc.binaryPath || "").trim(),
+      modelPath: (lc.modelPath || "").trim(),
+      port: Number(lc.port) || 8080,
+      gpuLayers: Number(lc.gpuLayers) ?? 99,
+      ctxSize: Number(lc.ctxSize) || 4096,
+      autoStart: Boolean(lc.autoStart),
+      extraArgs: (lc.extraArgs || "").trim(),
+    },
+  };
+}
+
+function applyConfigToForm(cfg) {
+  if (!cfg?.translator) return;
+  form.active = cfg.translator.active || "bing";
+  form.fallbackProvider = cfg.translator.fallbackProvider || "";
+  form.bingSourceLang = cfg.translator.bing?.sourceLang || "auto-detect";
+  form.bingTargetLang = cfg.translator.bing?.targetLang || "ar";
+  form.tradSourceLang = cfg.translator.traditional?.sourceLang || "auto";
+  form.tradTargetLang = cfg.translator.traditional?.targetLang || "ar";
+  Object.assign(form, cfg.translator.llm);
+  const off = cfg.translator.offlineLlm;
+  if (off) {
+    form.offBaseUrl = off.baseUrl || "http://127.0.0.1:8080/v1";
+    form.offModel = off.model || "local-model";
+    form.offTemplate = off.template || "auto";
+    form.offSourceLang = off.sourceLang || "English";
+    form.offTargetLang = off.targetLang || "Arabic";
+    form.offTemperature = off.temperature ?? 0.1;
+  }
+  const lc = cfg.translator.llamaCpp;
+  if (lc) {
+    form.llamaBinaryPath = lc.binaryPath || "";
+    form.llamaModelPath = lc.modelPath || "";
+    form.llamaPort = lc.port || 8080;
+    form.llamaGpuLayers = lc.gpuLayers ?? 99;
+    form.llamaCtxSize = lc.ctxSize || 4096;
+    form.llamaAutoStart = Boolean(lc.autoStart);
+    form.llamaExtraArgs = lc.extraArgs || "";
+  }
+}
+
+function onKeyDown(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    if (isDirty.value) onSave();
+  }
+}
+
 onMounted(() => {
+  window.addEventListener("keydown", onKeyDown);
   refreshLlamaStatus();
   llamaTimer = setInterval(refreshLlamaStatus, 3000);
 });
 
 onUnmounted(() => {
+  window.removeEventListener("keydown", onKeyDown);
   clearInterval(llamaTimer);
 });
 
 watch(
   config,
-  (cfg) => {
-    if (!cfg) return;
-    form.active = cfg.translator.active || "bing";
-    form.fallbackProvider = cfg.translator.fallbackProvider || "";
-    form.bingSourceLang = cfg.translator.bing?.sourceLang || "auto-detect";
-    form.bingTargetLang = cfg.translator.bing?.targetLang || "ar";
-    form.tradSourceLang = cfg.translator.traditional?.sourceLang || "auto";
-    form.tradTargetLang = cfg.translator.traditional?.targetLang || "ar";
-    Object.assign(form, cfg.translator.llm);
-    const off = cfg.translator.offlineLlm;
-    if (off) {
-      form.offBaseUrl = off.baseUrl || "http://127.0.0.1:8080/v1";
-      form.offModel = off.model || "local-model";
-      form.offTemplate = off.template || "auto";
-      form.offSourceLang = off.sourceLang || "English";
-      form.offTargetLang = off.targetLang || "Arabic";
-      form.offTemperature = off.temperature ?? 0.1;
-    }
-    const lc = cfg.translator.llamaCpp;
-    if (lc) {
-      form.llamaBinaryPath = lc.binaryPath || "";
-      form.llamaModelPath = lc.modelPath || "";
-      form.llamaPort = lc.port || 8080;
-      form.llamaGpuLayers = lc.gpuLayers ?? 99;
-      form.llamaCtxSize = lc.ctxSize || 4096;
-      form.llamaAutoStart = Boolean(lc.autoStart);
-      form.llamaExtraArgs = lc.extraArgs || "";
-    }
-  },
+  (cfg) => applyConfigToForm(cfg),
   { immediate: true },
 );
 
@@ -176,6 +248,18 @@ function buildTranslatorConfig() {
       extraArgs: form.llamaExtraArgs.trim(),
     },
   };
+}
+
+const isDirty = computed(() => {
+  if (!config.value?.translator) return false;
+  return (
+    JSON.stringify(buildTranslatorConfig()) !==
+    JSON.stringify(normalizeTranslator(config.value.translator))
+  );
+});
+
+function onDiscard() {
+  applyConfigToForm(config.value);
 }
 
 async function onSave() {
@@ -262,56 +346,62 @@ async function onStopLlama() {
 
 <template>
   <div class="page">
-    <div class="card">
-      <div class="head">
-        <h2 class="h2">{{ t("trTitle") }}</h2>
-        <select v-model="form.active" class="select">
-          <optgroup :label="t('trCatTraditional')">
-            <option v-for="p in TRADITIONAL_PROVIDERS" :key="p.id" :value="p.id">
+    <section class="card">
+      <div class="card-head">
+        <div class="title-wrap">
+          <Icon name="Globe" :size="15" class="title-ico" />
+          <h2 class="h2">{{ t("trTitle") }}</h2>
+        </div>
+
+        <div class="summary-pill" :class="{ muted: form.active === 'none' }">
+          <span class="dot" />
+          <span class="sum-main">{{ activeLabel }}</span>
+          <template v-if="fallbackLabel && form.active !== 'none'">
+            <span class="sum-sep">·</span>
+            <span class="sum-fb">{{ fallbackLabel }}</span>
+          </template>
+        </div>
+      </div>
+
+      <div class="pair-grid">
+        <label class="pair-box">
+          <span class="pair-title">{{ t("wizS3PrimaryLbl") }}</span>
+          <select v-model="form.active" class="select">
+            <optgroup :label="t('trCatTraditional')">
+              <option v-for="p in TRADITIONAL_PROVIDERS" :key="p.id" :value="p.id">
+                {{ p.label }}
+              </option>
+            </optgroup>
+            <optgroup :label="t('trCatLLM')">
+              <option value="offline_llm">Local Offline Translation Model (GGUF / llama.cpp)</option>
+              <option value="llm">OpenAI-Compatible LLM (Cloud / Ollama / llama.cpp)</option>
+            </optgroup>
+            <option value="none">{{ t("trDisabled") }}</option>
+          </select>
+          <span class="pair-desc">{{ t("trPrimaryDesc") }}</span>
+        </label>
+
+        <label class="pair-box">
+          <span class="pair-title">{{ t("trFallbackTitle") }}</span>
+          <select v-model="form.fallbackProvider" class="select">
+            <option value="">{{ t("trFallbackNone") }}</option>
+            <option
+              v-for="p in ALL_PROVIDERS.filter((x) => x.id !== form.active)"
+              :key="p.id"
+              :value="p.id"
+            >
               {{ p.label }}
             </option>
-          </optgroup>
-          <optgroup :label="t('trCatLLM')">
-            <option value="offline_llm">Local Offline Translation Model (GGUF / llama.cpp)</option>
-            <option value="llm">OpenAI-Compatible LLM (Cloud / Ollama / llama.cpp)</option>
-          </optgroup>
-          <option value="none">{{ t("trDisabled") }}</option>
-        </select>
+          </select>
+          <span class="pair-desc">{{ t("trFallbackDesc") }}</span>
+        </label>
       </div>
 
-      <div class="fallback-row">
-        <div class="fallback-meta">
-          <span class="lbl">{{ t("trFallbackTitle") }}</span>
-          <span class="fallback-desc">{{ t("trFallbackDesc") }}</span>
-        </div>
-        <select v-model="form.fallbackProvider" class="select">
-          <option value="">{{ t("trFallbackNone") }}</option>
-          <option
-            v-for="p in ALL_PROVIDERS.filter((x) => x.id !== form.active)"
-            :key="p.id"
-            :value="p.id"
-          >
-            {{ p.label }}
-          </option>
-        </select>
-      </div>
-
-      <template v-if="isTraditional">
-        <div class="presets">
-          <span class="lbl">{{ t("trTradListLbl") }}</span>
-          <button
-            v-for="p in TRADITIONAL_PROVIDERS"
-            :key="p.id"
-            type="button"
-            class="chip"
-            :class="{ active: form.active === p.id }"
-            @click="form.active = p.id"
-          >
-            {{ p.label }}
-          </button>
-        </div>
-
-        <div v-if="!isSimple || form.active === 'bing'" class="grid">
+      <div
+        v-if="(isTraditional && (!isSimple || form.active === 'bing')) || form.active === 'offline_llm' || form.active === 'llm'"
+        class="sub-panel"
+      >
+        <div v-if="isTraditional" class="grid">
           <template v-if="form.active === 'bing'">
             <label class="field">
               <span class="lbl">{{ t("trSourceLangCode") }}</span>
@@ -333,10 +423,8 @@ async function onStopLlama() {
             </label>
           </template>
         </div>
-      </template>
 
-      <template v-else-if="form.active === 'offline_llm'">
-        <div class="grid">
+        <div v-else-if="form.active === 'offline_llm'" class="grid">
           <label class="field">
             <span class="lbl">{{ t("trPromptTemplate") }}</span>
             <select v-model="form.offTemplate" class="select">
@@ -369,97 +457,136 @@ async function onStopLlama() {
             </label>
           </div>
         </div>
-      </template>
 
-      <template v-else-if="form.active === 'llm'">
-        <div class="presets">
-          <span class="lbl">{{ t("trQuickPresets") }}</span>
-          <button
-            v-for="p in PRESETS"
-            :key="p.name"
-            type="button"
-            class="chip"
-            @click="applyPreset(p)"
-          >
-            {{ p.name }}
-          </button>
-        </div>
-
-        <div class="grid">
-          <label class="field">
-            <span class="lbl">{{ t("trBaseUrl") }}</span>
-            <input v-model="form.baseUrl" class="input mono" placeholder="https://api.openai.com/v1" />
-          </label>
-
-          <label class="field">
-            <span class="lbl">{{ t("trModelName") }}</span>
-            <input v-model="form.model" class="input mono" placeholder="gpt-4o-mini" />
-          </label>
-
-          <label class="field">
-            <span class="lbl">{{ t("trApiKey") }}</span>
-            <input v-model="form.apiKey" type="password" class="input mono" placeholder="sk-…" />
-          </label>
-
-          <div class="inline3">
-            <label class="field">
-              <span class="lbl">{{ t("trSourceLang") }}</span>
-              <input v-model="form.sourceLang" class="input" />
-            </label>
-            <label class="field">
-              <span class="lbl">{{ t("trTargetLang") }}</span>
-              <input v-model="form.targetLang" class="input" />
-            </label>
-            <label class="field">
-              <span class="lbl">{{ t("trTemp") }}</span>
-              <input v-model.number="form.temperature" type="number" step="0.05" min="0" max="2" class="input" />
-            </label>
+        <template v-else-if="form.active === 'llm'">
+          <div class="chip-strip">
+            <span class="lbl strip-lbl">{{ t("trQuickPresets") }}</span>
+            <button
+              v-for="p in PRESETS"
+              :key="p.name"
+              type="button"
+              class="pill-chip"
+              @click="applyPreset(p)"
+            >
+              {{ p.name }}
+            </button>
           </div>
-        </div>
 
-        <label class="field">
-          <span class="lbl">{{ t("trSystemPrompt") }}</span>
-          <textarea v-model="form.systemPrompt" rows="3" class="textarea" />
-        </label>
-      </template>
+          <div class="grid">
+            <label class="field">
+              <span class="lbl">{{ t("trBaseUrl") }}</span>
+              <input v-model="form.baseUrl" class="input mono" placeholder="https://api.openai.com/v1" />
+            </label>
+
+            <label class="field">
+              <span class="lbl">{{ t("trModelName") }}</span>
+              <input v-model="form.model" class="input mono" placeholder="gpt-4o-mini" />
+            </label>
+
+            <label class="field">
+              <span class="lbl">{{ t("trApiKey") }}</span>
+              <input v-model="form.apiKey" type="password" class="input mono" placeholder="sk-…" />
+            </label>
+
+            <div class="inline3">
+              <label class="field">
+                <span class="lbl">{{ t("trSourceLang") }}</span>
+                <input v-model="form.sourceLang" class="input" />
+              </label>
+              <label class="field">
+                <span class="lbl">{{ t("trTargetLang") }}</span>
+                <input v-model="form.targetLang" class="input" />
+              </label>
+              <label class="field">
+                <span class="lbl">{{ t("trTemp") }}</span>
+                <input v-model.number="form.temperature" type="number" step="0.05" min="0" max="2" class="input" />
+              </label>
+            </div>
+          </div>
+
+          <label class="field">
+            <span class="lbl">{{ t("trSystemPrompt") }}</span>
+            <textarea v-model="form.systemPrompt" rows="3" class="textarea" />
+          </label>
+        </template>
+      </div>
 
       <div class="test-box">
-        <div class="test-row">
+        <div class="test-strip">
           <input v-model="testInput" class="input flex1" dir="auto" />
           <button class="btn" type="button" :disabled="testing" @click="onTest">
-            {{ testing ? t("trTesting") : t("trTestBtn") }}
-          </button>
-          <button class="btn primary" type="button" @click="onSave">
-            {{ saveState === "saved" ? t("trSavedBtn") : t("trSaveBtn") }}
+            <Icon name="Play" :size="11" />
+            <span>{{ testing ? t("trTesting") : t("trTestBtn") }}</span>
           </button>
         </div>
         <div v-if="testErr" class="err">{{ testErr }}</div>
         <div v-if="testResult" class="res">
-          <div><strong>{{ t("trOutLogical") }}</strong> <span class="ar" dir="rtl">{{ testResult.translated }}</span></div>
-          <div><strong>{{ t("trOutShaped") }}</strong> <span class="ar">{{ testResult.shaped }}</span> ({{ testResult.elapsedMs }} ms)</div>
+          <div class="res-row">
+            <strong>{{ t("trOutLogical") }}</strong>
+            <span class="ar" dir="rtl">{{ testResult.translated }}</span>
+            <span class="ms-pill" dir="ltr">{{ testResult.elapsedMs }} ms</span>
+          </div>
+          <div class="res-row">
+            <strong>{{ t("trOutShaped") }}</strong>
+            <span class="ar">{{ testResult.shaped }}</span>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="card">
-      <TranslatorBenchmark
-        :translator-config="buildTranslatorConfig()"
-        :active-provider="form.active"
-        :fallback-provider="form.fallbackProvider"
-        @select-provider="onSelectBenchmarkProvider"
-        @select-fallback="onSelectFallbackProvider"
-      />
-    </div>
+      <div class="save-bar" :class="{ dirty: isDirty }">
+        <div v-if="isDirty" class="unsaved-msg">
+          <span class="unsaved-dot" />
+          <span>{{ t("embUnsavedHint") }}</span>
+        </div>
+        <div v-else class="saved-hint">
+          {{ saveState === "saved" ? t("trSavedBtn") : "" }}
+        </div>
+        <div class="save-bar-btns">
+          <button v-if="isDirty" class="btn" type="button" @click="onDiscard">
+            {{ t("embDiscardChanges") }}
+          </button>
+          <button class="btn primary" :class="{ 'dirty-btn': isDirty }" type="button" @click="onSave">
+            {{ saveState === "saving" ? t("embSaving") : saveState === "saved" ? t("trSavedBtn") : t("trSaveBtn") }}
+          </button>
+        </div>
+      </div>
+    </section>
 
-    <details class="card llama-details" :open="!isSimple || form.active === 'offline_llm'">
-      <summary class="llama-summary">{{ t("trAdvancedSection") }}</summary>
-      <div class="llama-body">
+    <details class="card collapsible-card">
+      <summary class="section-summary">
+        <span class="summary-left">
+          <Icon name="Chevron" :size="13" class="chev" />
+          <Icon name="Zap" :size="13" class="sum-ico" />
+          <span>{{ t("benchTitle") }}</span>
+        </span>
+      </summary>
+      <div class="collapsible-body">
+        <TranslatorBenchmark
+          :hide-title="true"
+          :translator-config="buildTranslatorConfig()"
+          :active-provider="form.active"
+          :fallback-provider="form.fallbackProvider"
+          @select-provider="onSelectBenchmarkProvider"
+          @select-fallback="onSelectFallbackProvider"
+        />
+      </div>
+    </details>
+
+    <details class="card collapsible-card" :open="!isSimple || form.active === 'offline_llm'">
+      <summary class="section-summary">
+        <span class="summary-left">
+          <Icon name="Chevron" :size="13" class="chev" />
+          <span>{{ t("trAdvancedSection") }}</span>
+        </span>
+        <span class="status-pill" :class="{ ready: llamaStatus.ready, running: llamaStatus.running && !llamaStatus.ready }">
+          {{ llamaStatus.ready ? `Ready · PID ${llamaStatus.pid}` : llamaStatus.running ? "Starting…" : "Stopped" }}
+        </span>
+      </summary>
+
+      <div class="collapsible-body llama-body">
         <div class="head">
           <div class="head-left">
             <h2 class="h2">Local `llama.cpp` Server Runner</h2>
-            <span class="status-pill" :class="{ ready: llamaStatus.ready, running: llamaStatus.running && !llamaStatus.ready }">
-              {{ llamaStatus.ready ? `Ready · PID ${llamaStatus.pid}` : llamaStatus.running ? "Starting…" : "Stopped" }}
-            </span>
           </div>
           <div class="btn-row">
             <button class="btn" type="button" @click="showLlamaLogs = !showLlamaLogs">
@@ -526,103 +653,162 @@ async function onStopLlama() {
 
 <style scoped>
 .page {
-  padding: 16px;
+  padding: 14px;
   overflow: auto;
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 .card {
   width: 100%;
-  padding: 16px 18px;
+  padding: 13px 16px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-.llama-summary {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--fg-muted);
-  cursor: pointer;
-}
-.llama-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding-top: 8px;
-}
-.head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.fallback-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  background: var(--paper);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-}
-.fallback-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 220px;
-}
-.fallback-desc {
-  font-size: 11px;
-  color: var(--fg-muted);
-}
-.head-left {
-  display: flex;
-  align-items: center;
   gap: 10px;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.title-ico {
+  color: var(--accent);
 }
 .h2 {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
 }
-.presets {
+.summary-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--paper));
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.summary-pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.55);
+}
+.summary-pill.muted {
+  border-color: var(--border);
+  background: var(--paper);
+  color: var(--fg-muted);
+}
+.summary-pill.muted .dot {
+  background: var(--fg-muted);
+  box-shadow: none;
+}
+.sum-sep {
+  opacity: 0.5;
+}
+.sum-fb {
+  color: var(--fg-muted);
+  font-weight: 500;
+}
+
+.pair-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+.pair-box {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 11px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.pair-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.pair-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+
+.chip-strip {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
-.chip {
-  padding: 3px 8px;
+.strip-lbl {
+  margin-inline-end: 2px;
+}
+.pill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
   background: var(--paper);
-  color: var(--fg);
+  color: var(--fg-muted);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 999px;
   font: inherit;
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 500;
   cursor: pointer;
+  transition: border-color 0.14s, background 0.14s, color 0.14s;
 }
-.chip:hover,
-.chip.active {
+.pill-chip:hover {
+  color: var(--fg);
+  border-color: color-mix(in oklab, var(--fg) 25%, var(--border));
+}
+.pill-chip.active {
   border-color: var(--accent);
-}
-.chip.active {
-  background: color-mix(in oklab, var(--accent) 18%, transparent);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--paper));
+  color: var(--fg);
   font-weight: 600;
+}
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  opacity: 0.4;
+}
+.pill-chip.active .chip-dot {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.sub-panel {
+  padding: 12px;
+  background: color-mix(in oklab, var(--paper) 65%, var(--bg-elev));
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 10px;
 }
 .inline3 {
   display: grid;
@@ -640,22 +826,26 @@ async function onStopLlama() {
 }
 .input,
 .select {
-  height: 30px;
+  width: 100%;
+  height: 32px;
   padding: 0 10px;
   background: var(--paper);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 6px;
   font: inherit;
   font-size: 12px;
   min-width: 0;
 }
+.pair-box .select {
+  background: var(--bg-elev);
+}
 .textarea {
-  padding: 8px;
+  padding: 8px 10px;
   background: var(--paper);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 6px;
   font: inherit;
   font-size: 12px;
   resize: vertical;
@@ -663,14 +853,15 @@ async function onStopLlama() {
 .mono {
   font-family: var(--mono);
 }
+
 .test-box {
   padding-top: 8px;
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
-.test-row,
+.test-strip,
 .browse-row,
 .btn-row {
   display: flex;
@@ -679,17 +870,27 @@ async function onStopLlama() {
 }
 .flex1 {
   flex: 1;
+  min-width: 0;
 }
 .btn {
-  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
   padding: 0 12px;
   background: var(--paper);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 6px;
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--fg) 25%, var(--border));
 }
 .btn:disabled {
   opacity: 0.45;
@@ -699,15 +900,116 @@ async function onStopLlama() {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+  font-weight: 600;
 }
 .btn.danger {
   background: #dc2626;
   border-color: #dc2626;
   color: #fff;
 }
+
+.save-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0 0;
+  border-radius: 7px;
+  background: transparent;
+  border: 1px solid transparent;
+}
+.save-bar.dirty {
+  padding: 8px 10px;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--paper));
+}
+.unsaved-msg {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--fg);
+}
+.unsaved-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.saved-hint {
+  font-size: 12px;
+  color: #4ade80;
+  font-weight: 500;
+}
+.save-bar-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+.btn.dirty-btn {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.collapsible-card {
+  padding: 0;
+  gap: 0;
+}
+.section-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  cursor: pointer;
+  user-select: none;
+}
+.section-summary::-webkit-details-marker {
+  display: none;
+}
+.summary-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.sum-ico {
+  color: var(--accent);
+}
+.chev {
+  color: var(--fg-muted);
+  transition: transform 0.16s ease;
+}
+.collapsible-card[open] .chev {
+  transform: rotate(90deg);
+}
+.collapsible-body {
+  padding: 10px 14px 13px;
+  border-top: 1px solid var(--border);
+}
+.llama-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .status-pill {
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
   font-family: var(--mono);
   font-size: 11px;
   background: color-mix(in oklab, var(--fg) 10%, transparent);
@@ -734,7 +1036,7 @@ async function onStopLlama() {
   padding: 10px;
   background: var(--paper);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 6px;
   font-family: var(--mono);
   font-size: 11px;
   max-height: 180px;
@@ -747,14 +1049,30 @@ async function onStopLlama() {
   font-size: 12px;
 }
 .res {
-  padding: 8px 10px;
+  padding: 7px 10px;
   background: var(--paper);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 6px;
   font-size: 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
+}
+.res-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ms-pill {
+  margin-inline-start: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
 }
 .ar {
   font-family: var(--arabic);

@@ -8,6 +8,7 @@ import { useI18n } from "../composables/useI18n.js";
 const props = defineProps({
   translatorConfig: { type: Object, default: null },
   compact: { type: Boolean, default: false },
+  hideTitle: { type: Boolean, default: false },
   activeProvider: { type: String, default: "" },
   fallbackProvider: { type: String, default: "" },
 });
@@ -151,47 +152,47 @@ function speedLabel(tier) {
 <template>
   <div class="bench-wrap" :class="{ compact: props.compact }">
     <div v-if="!props.compact" class="bench-head">
-      <div>
-        <h2 class="h2">{{ t("benchTitle") }}</h2>
+      <div class="bench-title-col">
+        <h2 v-if="!props.hideTitle" class="h2">{{ t("benchTitle") }}</h2>
         <p class="sub">{{ t("benchSubtitle") }}</p>
+      </div>
+      <div class="seg">
+        <button
+          type="button"
+          class="seg-btn"
+          :class="{ active: mode === 'single' }"
+          @click="mode = 'single'"
+        >
+          {{ t("benchModeSingle") }}
+        </button>
+        <button
+          type="button"
+          class="seg-btn"
+          :class="{ active: mode === 'pack' }"
+          @click="mode = 'pack'"
+        >
+          {{ t("benchModePack") }}
+        </button>
       </div>
     </div>
 
     <div class="controls">
-      <div v-if="!props.compact" class="seg-row">
-        <div class="seg">
-          <button
-            type="button"
-            class="seg-btn"
-            :class="{ active: mode === 'single' }"
-            @click="mode = 'single'"
-          >
-            {{ t("benchModeSingle") }}
-          </button>
-          <button
-            type="button"
-            class="seg-btn"
-            :class="{ active: mode === 'pack' }"
-            @click="mode = 'pack'"
-          >
-            {{ t("benchModePack") }}
-          </button>
-        </div>
-
-        <div class="scopes">
-          <label class="chk">
-            <input v-model="includeTraditional" type="checkbox" />
-            <span>{{ t("benchScopeTrad") }}</span>
-          </label>
-          <label class="chk">
-            <input v-model="includeLlm" type="checkbox" />
-            <span>{{ t("benchScopeLLM") }}</span>
-          </label>
-          <label class="chk">
-            <input v-model="includeOfflineLlm" type="checkbox" />
-            <span>{{ t("benchScopeOffline") }}</span>
-          </label>
-        </div>
+      <div v-if="!props.compact" class="scopes">
+        <label class="scope-pill" :class="{ on: includeTraditional }">
+          <input v-model="includeTraditional" type="checkbox" class="sr-only" />
+          <span class="pill-dot" />
+          <span>{{ t("benchScopeTrad") }}</span>
+        </label>
+        <label class="scope-pill" :class="{ on: includeLlm }">
+          <input v-model="includeLlm" type="checkbox" class="sr-only" />
+          <span class="pill-dot" />
+          <span>{{ t("benchScopeLLM") }}</span>
+        </label>
+        <label class="scope-pill" :class="{ on: includeOfflineLlm }">
+          <input v-model="includeOfflineLlm" type="checkbox" class="sr-only" />
+          <span class="pill-dot" />
+          <span>{{ t("benchScopeOffline") }}</span>
+        </label>
       </div>
 
       <div class="run-row">
@@ -256,7 +257,8 @@ function speedLabel(tier) {
     </div>
 
     <div v-if="!sortedItems.length && !benchmarkRunning" class="empty">
-      {{ t("benchEmpty") }}
+      <Icon name="Zap" :size="16" class="empty-ico" />
+      <span>{{ t("benchEmpty") }}</span>
     </div>
 
     <div v-else-if="sortedItems.length" class="table-scroll">
@@ -381,7 +383,18 @@ function speedLabel(tier) {
 .bench-wrap {
   display: flex;
   flex-direction: column;
+  gap: 11px;
+}
+.bench-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+.bench-title-col {
+  flex: 1;
+  min-width: 220px;
 }
 .bench-head .h2 {
   margin: 0 0 4px;
@@ -398,18 +411,18 @@ function speedLabel(tier) {
   flex-direction: column;
   gap: 10px;
 }
-.seg-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 .seg {
   display: inline-flex;
   background: var(--paper);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 6px;
   padding: 2px;
   gap: 2px;
 }
@@ -431,8 +444,43 @@ function speedLabel(tier) {
 .scopes {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 7px;
   flex-wrap: wrap;
+}
+.scope-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--paper);
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.14s, background 0.14s, color 0.14s;
+}
+.scope-pill:hover {
+  color: var(--fg);
+}
+.scope-pill.on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--paper));
+  color: var(--fg);
+}
+.pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  opacity: 0.45;
+}
+.scope-pill.on .pill-dot {
+  background: var(--accent);
+  opacity: 1;
 }
 .chk {
   display: inline-flex;
@@ -550,13 +598,22 @@ function speedLabel(tier) {
   flex-wrap: wrap;
 }
 .empty {
-  padding: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
   text-align: center;
   color: var(--fg-muted);
   font-size: 12px;
   background: var(--paper);
   border: 1px dashed var(--border);
-  border-radius: 6px;
+  border-radius: 7px;
+}
+.empty-ico {
+  color: var(--accent);
+  opacity: 0.75;
+  flex: none;
 }
 .table-scroll {
   overflow-x: auto;

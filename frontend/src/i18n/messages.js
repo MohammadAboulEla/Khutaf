@@ -158,6 +158,7 @@ export const MESSAGES = {
 
     // Translators View
     trTitle: "مزوّد الترجمة النشط",
+    trPrimaryDesc: "المترجم الأساسي المستخدم لترجمة نصوص اللعبة؛ اختر مترجماً مجانياً أو ذكاءً اصطناعياً سحابياً أو محلياً.",
     trFallbackTitle: "المزوّد الاحتياطي التلقائي",
     trFallbackDesc: "عند فشل المزوّد الأساسي أو تعرضه لتقييد (HTTP 429) أو انتهاء المهلة أثناء اللعب، ينتقل البرنامج لهذا المزوّد تلقائياً.",
     trFallbackNone: "بدون احتياطي (معطّل)",
@@ -183,7 +184,7 @@ export const MESSAGES = {
     trSavedBtn: "تم الحفظ ✓",
     trOutLogical: "الترجمة العربية (منطقية):",
     trOutShaped: "الشكل المحقون في اللعبة:",
-    trAdvancedSection: "إعدادات متقدمة للذكاء الاصطناعي والخادم المحلي (llama.cpp)",
+    trAdvancedSection: "إعدادات متقدمة للذكاء الاصطناعي والخادم المحلي",
 
     // Embed Settings View
     embBundlesTitle: "حزمة خطوط Unity العربية",
@@ -571,6 +572,7 @@ export const MESSAGES = {
 
     // Translators View
     trTitle: "Translation Provider",
+    trPrimaryDesc: "Primary service used for in-game translation — choose a free web translator, cloud LLM, or local model.",
     trFallbackTitle: "Auto-Fallback Provider",
     trFallbackDesc: "Automatically retries with this provider if the primary fails, hits HTTP 429 rate limits, or times out during gameplay.",
     trFallbackNone: "None (Disabled)",
@@ -596,7 +598,7 @@ export const MESSAGES = {
     trSavedBtn: "Saved ✓",
     trOutLogical: "Arabic (Logical):",
     trOutShaped: "Shaped (Visual):",
-    trAdvancedSection: "Advanced AI & Local `llama.cpp` Server Settings",
+    trAdvancedSection: "Advanced AI & Local Server Settings",
 
     // Embed Settings View
     embBundlesTitle: "Unity TMP Font AssetBundles",
