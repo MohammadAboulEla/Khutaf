@@ -50,8 +50,8 @@ struct FontState {
     m_tmp_set_font: *mut c_void,
     size_methods: HashMap<usize, (*mut c_void, *mut c_void)>,
     layout_methods: HashMap<usize, LayoutMethods>,
-    bundle_handles: Vec<u32>,
-    os_handles: Vec<u32>,
+    bundle_handles: Vec<usize>,
+    os_handles: Vec<usize>,
     scaled: HashMap<usize, u32>,
     fallback_attached: HashSet<usize>,
 }
@@ -92,7 +92,7 @@ pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text
     if !st.initialized || st.loaded_dir != dir || st.loaded_family != family {
         reload_fonts(rt, &mut st, dir, family, component, hook_id);
     } else if st.dyn_font.is_null()
-        && !st.os_font.is_null()
+        && (!st.os_font.is_null() || !family.is_empty() || !dir.is_empty())
         && is_tmp_hook(hook_id)
         && !component.is_null()
         && st.tried_donors.len() < MAX_TRIED_DONORS
@@ -101,7 +101,9 @@ pub fn on_text(rt: &dyn UnityRuntime, component: *mut c_void, hook_id: u64, text
         if let Some(donor) = read_component_tmp_font(rt, component) {
             if st.tried_donors.insert(donor as usize) {
                 let t_retry = std::time::Instant::now();
-                let dyn_tmp = create_tmp_font_asset(rt, st.os_font, donor, "retry");
+                let font_paths = resolve_font_paths(family);
+                let dyn_tmp =
+                    create_tmp_font_asset(rt, st.os_font, donor, "retry", family, &font_paths);
                 if !dyn_tmp.is_null() {
                     let h = rt.gchandle_pin(dyn_tmp);
                     if h != 0 {
@@ -373,7 +375,7 @@ fn unload_bundle(rt: &dyn UnityRuntime, ab: *mut c_void) {
 fn load_bundle_font(
     rt: &dyn UnityRuntime,
     dir: &str,
-    handles: &mut Vec<u32>,
+    handles: &mut Vec<usize>,
 ) -> (*mut c_void, *mut c_void) {
     let ver = unity_version(rt);
     let path = Path::new(dir).join(pick_bundle(&ver));
@@ -407,6 +409,21 @@ fn load_bundle_font(
         if let Some(res) = rt.invoke(m_load, std::ptr::null_mut(), &mut [path_managed]) {
             ab = res;
         }
+        if ab.is_null() {
+            let m_load3 = rt.find_method_param0(t_ab, "LoadFromFile", 3, "String");
+            if !m_load3.is_null() {
+                let mut crc: u32 = 0;
+                let mut offset: u64 = 0;
+                let mut args = [
+                    path_managed,
+                    &mut crc as *mut u32 as *mut c_void,
+                    &mut offset as *mut u64 as *mut c_void,
+                ];
+                if let Some(res) = rt.invoke(m_load3, std::ptr::null_mut(), &mut args) {
+                    ab = res;
+                }
+            }
+        }
     }
     if ab.is_null() {
         let icall = rt.resolve_icall("UnityEngine.AssetBundle::LoadFromFile_Internal");
@@ -417,6 +434,13 @@ fn load_bundle_font(
         }
     }
     if ab.is_null() {
+        crate::telemetry(
+            "UNITY_FONT",
+            "font::load_bundle_font",
+            0,
+            "warn",
+            &format!("AssetBundle load failed | unity={ver}"),
+        );
         return (std::ptr::null_mut(), std::ptr::null_mut());
     }
     let h_ab = rt.gchandle_pin(ab);
@@ -430,6 +454,15 @@ fn load_bundle_font(
         let m_all = rt.find_method(t_ab, "LoadAllAssets", 0);
         if let Some(res) = rt.invoke(m_all, ab, &mut []) {
             arr = res;
+        }
+        if arr.is_null() {
+            let m_all_ty = rt.find_method_param0(t_ab, "LoadAllAssets", 1, "Type");
+            let type_obj = rt.class_get_type_object(t_fa);
+            if !m_all_ty.is_null() && !type_obj.is_null() {
+                if let Some(res) = rt.invoke(m_all_ty, ab, &mut [type_obj]) {
+                    arr = res;
+                }
+            }
         }
     }
     if arr.is_null() {
@@ -456,6 +489,13 @@ fn load_bundle_font(
             return (ab, elem);
         }
     }
+    crate::telemetry(
+        "UNITY_FONT",
+        "font::load_bundle_font",
+        0,
+        "warn",
+        &format!("TMP_FontAsset missing in bundle | unity={ver}"),
+    );
     unload_bundle(rt, ab);
     (std::ptr::null_mut(), std::ptr::null_mut())
 }
@@ -621,99 +661,99 @@ fn load_os_fonts(
     rt: &dyn UnityRuntime,
     family: &str,
     donor_font: *mut c_void,
-    handles: &mut Vec<u32>,
+    handles: &mut Vec<usize>,
 ) -> (*mut c_void, *mut c_void) {
+    let font_paths = resolve_font_paths(family);
     let t_font = rt.find_class("UnityEngine.TextRenderingModule", "UnityEngine", "Font");
-    if t_font.is_null() {
-        return (std::ptr::null_mut(), std::ptr::null_mut());
-    }
-
-    let names: Vec<&str> = if family.is_empty() {
-        vec!["Tahoma", "Arial", "Segoe UI"]
-    } else {
-        vec![family, "Tahoma", "Arial", "Segoe UI"]
-    };
-    let names_arr = rt.string_array_new(&names);
 
     let mut os_font = std::ptr::null_mut();
     let mut os_src = "none";
 
-    if !names_arr.is_null() {
-        let m_dyn_arr = rt.find_method_param0(t_font, "CreateDynamicFontFromOSFont", 2, "String[]");
-        if !m_dyn_arr.is_null() {
-            let mut size: i32 = 32;
-            let mut args = [names_arr, &mut size as *mut i32 as *mut c_void];
-            if let Some(res) = rt.invoke(m_dyn_arr, std::ptr::null_mut(), &mut args) {
-                if is_unity_obj_valid(rt, res) {
-                    os_font = res;
-                    os_src = "managed_arr";
-                }
-            }
-        }
-    }
+    if !t_font.is_null() {
+        let names: Vec<&str> = if family.is_empty() {
+            vec!["Tahoma", "Arial", "Segoe UI"]
+        } else {
+            vec![family, "Tahoma", "Arial", "Segoe UI"]
+        };
+        let names_arr = rt.string_array_new(&names);
 
-    if os_font.is_null() {
-        let m_dyn_str = rt.find_method_param0(t_font, "CreateDynamicFontFromOSFont", 2, "String");
-        if !m_dyn_str.is_null() {
-            let s = rt.string_new(names[0]);
-            if !s.is_null() {
+        if !names_arr.is_null() {
+            let m_dyn_arr = rt.find_method_param0(t_font, "CreateDynamicFontFromOSFont", 2, "String[]");
+            if !m_dyn_arr.is_null() {
                 let mut size: i32 = 32;
-                let mut args = [s, &mut size as *mut i32 as *mut c_void];
-                if let Some(res) = rt.invoke(m_dyn_str, std::ptr::null_mut(), &mut args) {
+                let mut args = [names_arr, &mut size as *mut i32 as *mut c_void];
+                if let Some(res) = rt.invoke(m_dyn_arr, std::ptr::null_mut(), &mut args) {
                     if is_unity_obj_valid(rt, res) {
                         os_font = res;
-                        os_src = "managed_str";
+                        os_src = "managed_arr";
                     }
                 }
             }
         }
-    }
 
-    if os_font.is_null() && !names_arr.is_null() {
-        let icall = rt.resolve_icall("UnityEngine.Font::Internal_CreateDynamicFont");
-        if !icall.is_null() {
-            let obj = rt.object_new(t_font);
-            if !obj.is_null() {
-                let f: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) =
-                    unsafe { std::mem::transmute_copy(&icall) };
-                unsafe { f(obj, names_arr, 32) };
-                if is_unity_obj_valid(rt, obj) {
+        if os_font.is_null() {
+            let m_dyn_str = rt.find_method_param0(t_font, "CreateDynamicFontFromOSFont", 2, "String");
+            if !m_dyn_str.is_null() {
+                let s = rt.string_new(names[0]);
+                if !s.is_null() {
+                    let mut size: i32 = 32;
+                    let mut args = [s, &mut size as *mut i32 as *mut c_void];
+                    if let Some(res) = rt.invoke(m_dyn_str, std::ptr::null_mut(), &mut args) {
+                        if is_unity_obj_valid(rt, res) {
+                            os_font = res;
+                            os_src = "managed_str";
+                        }
+                    }
+                }
+            }
+        }
+
+        if os_font.is_null() && !names_arr.is_null() {
+            let icall = rt.resolve_icall("UnityEngine.Font::Internal_CreateDynamicFont");
+            if !icall.is_null() {
+                let obj = rt.object_new(t_font);
+                if !obj.is_null() {
+                    let f: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) =
+                        unsafe { std::mem::transmute_copy(&icall) };
+                    unsafe { f(obj, names_arr, 32) };
+                    if is_unity_obj_valid(rt, obj) {
+                        os_font = obj;
+                        os_src = "icall_dyn";
+                    }
+                }
+            }
+        }
+
+        if os_font.is_null() {
+            for ttf in &font_paths {
+                let obj = create_font_from_ttf_path(rt, t_font, ttf);
+                if !obj.is_null() {
                     os_font = obj;
-                    os_src = "icall_dyn";
+                    os_src = "icall_path";
+                    break;
                 }
             }
         }
     }
 
-    let font_paths = resolve_font_paths(family);
-    if os_font.is_null() {
-        for ttf in &font_paths {
-            let obj = create_font_from_ttf_path(rt, t_font, ttf);
-            if !obj.is_null() {
-                os_font = obj;
-                os_src = "icall_path";
-                break;
-            }
+    if !os_font.is_null() {
+        let h_os = rt.gchandle_pin(os_font);
+        if h_os != 0 {
+            handles.push(h_os);
         }
+        dont_destroy(rt, os_font);
     }
 
-    if os_font.is_null() {
-        return (std::ptr::null_mut(), std::ptr::null_mut());
-    }
-    let h_os = rt.gchandle_pin(os_font);
-    if h_os != 0 {
-        handles.push(h_os);
-    }
-    dont_destroy(rt, os_font);
-
-    let mut dyn_tmp = create_tmp_font_asset(rt, os_font, donor_font, os_src);
-    if dyn_tmp.is_null() && os_src != "icall_path" {
+    let mut dyn_tmp =
+        create_tmp_font_asset(rt, os_font, donor_font, os_src, family, &font_paths);
+    if dyn_tmp.is_null() && !t_font.is_null() && os_src != "icall_path" {
         for ttf in &font_paths {
             let path_font = create_font_from_ttf_path(rt, t_font, ttf);
             if path_font.is_null() {
                 continue;
             }
-            let candidate = create_tmp_font_asset(rt, path_font, donor_font, "icall_path");
+            let candidate =
+                create_tmp_font_asset(rt, path_font, donor_font, "icall_path", "", &[]);
             if !candidate.is_null() {
                 let h_path = rt.gchandle_pin(path_font);
                 if h_path != 0 {
@@ -871,11 +911,24 @@ fn ensure_mobile_sdf_shader(rt: &dyn UnityRuntime, t_fa: *mut c_void, donor_font
     source
 }
 
+fn enable_multi_atlas(rt: &dyn UnityRuntime, t_fa: *mut c_void, fa: *mut c_void) {
+    if fa.is_null() || t_fa.is_null() {
+        return;
+    }
+    let m_set = rt.find_method_in_hierarchy(t_fa, "set_isMultiAtlasTexturesEnabled", 1);
+    if !m_set.is_null() {
+        let mut enabled: u8 = 1;
+        let _ = rt.invoke(m_set, fa, &mut [&mut enabled as *mut u8 as *mut c_void]);
+    }
+}
+
 fn create_tmp_font_asset(
     rt: &dyn UnityRuntime,
     os_font: *mut c_void,
     donor_font: *mut c_void,
     os_src: &str,
+    family: &str,
+    font_paths: &[String],
 ) -> *mut c_void {
     let t_fa = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_FontAsset");
     if t_fa.is_null() {
@@ -886,9 +939,9 @@ fn create_tmp_font_asset(
 
     let m1 = rt.find_method_param0(t_fa, "CreateFontAsset", 1, "Font");
     let has_m1 = !m1.is_null();
-    if has_m1 {
+    if has_m1 && !os_font.is_null() {
         if let Some(fa) = rt.invoke(m1, std::ptr::null_mut(), &mut [os_font]) {
-            if !fa.is_null() {
+            if is_unity_obj_valid(rt, fa) {
                 return fa;
             }
         }
@@ -906,7 +959,7 @@ fn create_tmp_font_asset(
 
     let m9 = rt.find_method_param0(t_fa, "CreateFontAsset", 9, "Font");
     let has_m9 = !m9.is_null();
-    if has_m9 {
+    if has_m9 && !os_font.is_null() {
         let mut args = [
             os_font,
             &mut face_index as *mut i32 as *mut c_void,
@@ -919,7 +972,7 @@ fn create_tmp_font_asset(
             &mut multi_atlas as *mut u8 as *mut c_void,
         ];
         if let Some(fa) = rt.invoke(m9, std::ptr::null_mut(), &mut args) {
-            if !fa.is_null() {
+            if is_unity_obj_valid(rt, fa) {
                 return fa;
             }
         }
@@ -927,7 +980,7 @@ fn create_tmp_font_asset(
 
     let m8 = rt.find_method_param0(t_fa, "CreateFontAsset", 8, "Font");
     let has_m8 = !m8.is_null();
-    if has_m8 {
+    if has_m8 && !os_font.is_null() {
         let mut args = [
             os_font,
             &mut sampling as *mut i32 as *mut c_void,
@@ -939,7 +992,7 @@ fn create_tmp_font_asset(
             &mut multi_atlas as *mut u8 as *mut c_void,
         ];
         if let Some(fa) = rt.invoke(m8, std::ptr::null_mut(), &mut args) {
-            if !fa.is_null() {
+            if is_unity_obj_valid(rt, fa) {
                 return fa;
             }
         }
@@ -947,7 +1000,7 @@ fn create_tmp_font_asset(
 
     let m7 = rt.find_method_param0(t_fa, "CreateFontAsset", 7, "Font");
     let has_m7 = !m7.is_null();
-    if has_m7 {
+    if has_m7 && !os_font.is_null() {
         let mut args = [
             os_font,
             &mut sampling as *mut i32 as *mut c_void,
@@ -958,14 +1011,75 @@ fn create_tmp_font_asset(
             &mut pop_mode as *mut i32 as *mut c_void,
         ];
         if let Some(fa) = rt.invoke(m7, std::ptr::null_mut(), &mut args) {
-            if !fa.is_null() {
+            if is_unity_obj_valid(rt, fa) {
                 return fa;
             }
         }
     }
 
-    let has_str7 = !rt.find_method_param0(t_fa, "CreateFontAsset", 7, "String").is_null();
-    let has_str3 = !rt.find_method_param0(t_fa, "CreateFontAsset", 3, "String").is_null();
+    // Unity 6 / TMP 3.2+: CreateFontAsset(string fontFilePath, int faceIndex, int samplingPointSize, ...)
+    let m_str7 = rt.find_method_param0(t_fa, "CreateFontAsset", 7, "String");
+    let has_str7 = !m_str7.is_null();
+    if has_str7 {
+        for ttf in font_paths {
+            let path_str = rt.string_new(ttf);
+            if path_str.is_null() {
+                continue;
+            }
+            let mut args = [
+                path_str,
+                &mut face_index as *mut i32 as *mut c_void,
+                &mut sampling as *mut i32 as *mut c_void,
+                &mut padding as *mut i32 as *mut c_void,
+                &mut render_mode as *mut i32 as *mut c_void,
+                &mut width as *mut i32 as *mut c_void,
+                &mut height as *mut i32 as *mut c_void,
+            ];
+            if let Some(fa) = rt.invoke(m_str7, std::ptr::null_mut(), &mut args) {
+                if is_unity_obj_valid(rt, fa) {
+                    enable_multi_atlas(rt, t_fa, fa);
+                    return fa;
+                }
+            }
+        }
+    }
+
+    // Unity 6 / TMP 3.2+: CreateFontAsset(string familyName, string styleName, int pointSize)
+    let m_str3 = rt.find_method_param0(t_fa, "CreateFontAsset", 3, "String");
+    let has_str3 = !m_str3.is_null();
+    if has_str3 {
+        let style_str = rt.string_new("Regular");
+        if !style_str.is_null() {
+            let mut families: Vec<&str> = Vec::with_capacity(4);
+            let fam_trimmed = family.trim();
+            if !fam_trimmed.is_empty() {
+                families.push(fam_trimmed);
+            }
+            for fb in ["Tahoma", "Arial", "Segoe UI"] {
+                if !families.iter().any(|x| x.eq_ignore_ascii_case(fb)) {
+                    families.push(fb);
+                }
+            }
+            for fam in families {
+                let fam_str = rt.string_new(fam);
+                if fam_str.is_null() {
+                    continue;
+                }
+                let mut args = [
+                    fam_str,
+                    style_str,
+                    &mut sampling as *mut i32 as *mut c_void,
+                ];
+                if let Some(fa) = rt.invoke(m_str3, std::ptr::null_mut(), &mut args) {
+                    if is_unity_obj_valid(rt, fa) {
+                        enable_multi_atlas(rt, t_fa, fa);
+                        return fa;
+                    }
+                }
+            }
+        }
+    }
+
     crate::telemetry(
         "UNITY_FONT",
         "font::create_tmp_font_asset",

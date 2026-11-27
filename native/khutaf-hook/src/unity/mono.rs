@@ -494,19 +494,19 @@ impl UnityRuntime for MonoApi {
         out
     }
 
-    fn gchandle_pin(&self, obj: *mut c_void) -> u32 {
+    fn gchandle_pin(&self, obj: *mut c_void) -> usize {
         if let Some(f) = self.gchandle_new {
             if !obj.is_null() {
-                return unsafe { f(obj, 1) };
+                return unsafe { f(obj, 1) } as usize;
             }
         }
         0
     }
 
-    fn gchandle_free(&self, handle: u32) {
+    fn gchandle_free(&self, handle: usize) {
         if handle != 0 {
             if let Some(f) = self.gchandle_free {
-                unsafe { f(handle) };
+                unsafe { f(handle as u32) };
             }
         }
     }

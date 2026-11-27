@@ -515,8 +515,8 @@ pub trait UnityRuntime {
     fn string_to_rust(&self, s: *mut c_void) -> String;
     fn string_array_new(&self, items: &[&str]) -> *mut c_void;
     fn array_elements(&self, arr: *mut c_void) -> Vec<*mut c_void>;
-    fn gchandle_pin(&self, obj: *mut c_void) -> u32;
-    fn gchandle_free(&self, handle: u32);
+    fn gchandle_pin(&self, obj: *mut c_void) -> usize;
+    fn gchandle_free(&self, handle: usize);
     fn object_new(&self, klass: *mut c_void) -> *mut c_void;
     fn field_from_name(&self, klass: *mut c_void, name: &str) -> *mut c_void;
     fn field_get_value(&self, obj: *mut c_void, field: *mut c_void, out: *mut c_void);
@@ -573,7 +573,7 @@ static FRAME_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 struct GcHandleGuard<'a> {
     rt: &'a dyn UnityRuntime,
-    handle: u32,
+    handle: usize,
 }
 
 impl Drop for GcHandleGuard<'_> {

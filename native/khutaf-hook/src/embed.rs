@@ -36,7 +36,7 @@ pub enum ProcessOutcome {
 pub struct ReadyUpdate {
     pub hook_id: u64,
     pub component: usize,
-    pub gc_handle: u32,
+    pub gc_handle: usize,
     pub text: String,
     pub apply_font: bool,
 }
@@ -45,7 +45,7 @@ struct AsyncTarget {
     req_id: u64,
     hook_id: u64,
     component: usize,
-    gc_handle: u32,
+    gc_handle: usize,
     generation: u64,
     orig_text: String,
     raw_orig_text: String,
@@ -60,7 +60,7 @@ struct AsyncState {
     comp_gen: HashMap<usize, u64>,
     in_flight: HashMap<u64, AsyncTarget>,
     ready: VecDeque<ReadyUpdate>,
-    handles_to_free: Vec<u32>,
+    handles_to_free: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -544,7 +544,7 @@ pub fn process_unity(
     component: usize,
     cleaned: &str,
     raw: &str,
-    pin_fn: impl FnOnce() -> u32,
+    pin_fn: impl FnOnce() -> usize,
 ) -> ProcessOutcome {
     if cleaned.trim().is_empty() || is_own_output(cleaned) {
         return ProcessOutcome::KeepOriginal;
@@ -921,7 +921,7 @@ pub fn complete(req_id: u64, text: Option<String>) {
     }
 }
 
-pub(crate) fn take_async_work() -> (Vec<ReadyUpdate>, Vec<u32>) {
+pub(crate) fn take_async_work() -> (Vec<ReadyUpdate>, Vec<usize>) {
     let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
     let updates: Vec<ReadyUpdate> = st.ready.drain(..).collect();
     let frees = std::mem::take(&mut st.handles_to_free);
@@ -1370,6 +1370,32 @@ mod tests {
         assert_eq!(adjust_max_visible_chars(0x7002, 17), 17);
 
         ipc::clear_test_sink();
+        set_settings(Settings::default());
+        reset_for_session();
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn async_embed_preserves_64bit_gc_handle() {
+        let _guard = test_guard();
+        reset_for_session();
+        let rx = ipc::install_test_sink();
+        set_frame_tick_active(true);
+        set_settings(Settings { wait_ms: 1000, non_blocking: true, ..Default::default() });
+        set_enabled(1, 55, 0, true);
+
+        let handle64: usize = 0x0000_0267_D08C_2028;
+        let _ = process_unity(1, || 55, 0, 0x6000, "Hello Unity 6", "Hello Unity 6", || handle64);
+        let req_id = decode_sent_req_id(&rx);
+
+        complete(req_id, Some("مرحبا".into()));
+        let (updates, frees) = take_async_work();
+        assert!(frees.is_empty());
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].gc_handle, handle64);
+
+        ipc::clear_test_sink();
+        set_frame_tick_active(false);
         set_settings(Settings::default());
         reset_for_session();
     }

@@ -43,8 +43,10 @@ pub(crate) struct Il2CppApi {
     string_length: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
     string_new_utf16: unsafe extern "C" fn(*const u16, i32) -> *mut c_void,
     array_new: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
-    gchandle_new: Option<unsafe extern "C" fn(*mut c_void, u8) -> u32>,
-    gchandle_free: Option<unsafe extern "C" fn(u32)>,
+    // Unity 2023.2+ / Unity 6 uses pointer-sized Il2CppGCHandle (void*); older IL2CPP uses uint32_t
+    // zero-extended in RAX and read via ECX on x64.
+    gchandle_new: Option<unsafe extern "C" fn(*mut c_void, u8) -> usize>,
+    gchandle_free: Option<unsafe extern "C" fn(usize)>,
     object_new: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
     class_get_field_from_name: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void>,
     field_get_value: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
@@ -408,7 +410,7 @@ impl UnityRuntime for Il2CppApi {
         (0..len).map(|i| unsafe { *vec_base.add(i) }).collect()
     }
 
-    fn gchandle_pin(&self, obj: *mut c_void) -> u32 {
+    fn gchandle_pin(&self, obj: *mut c_void) -> usize {
         if let Some(f) = self.gchandle_new {
             if !obj.is_null() {
                 return unsafe { f(obj, 1) };
@@ -417,7 +419,7 @@ impl UnityRuntime for Il2CppApi {
         0
     }
 
-    fn gchandle_free(&self, handle: u32) {
+    fn gchandle_free(&self, handle: usize) {
         if handle != 0 {
             if let Some(f) = self.gchandle_free {
                 unsafe { f(handle) };
