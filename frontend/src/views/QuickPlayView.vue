@@ -301,7 +301,7 @@ function isProcessSaved(p) {
         </button>
       </div>
 
-      <details open class="hooks-details">
+      <details class="hooks-details">
         <summary>
           {{ t("qpShowHooks", { count: embeddableHooks.length }) }}
         </summary>
@@ -376,23 +376,27 @@ function isProcessSaved(p) {
         </div>
       </div>
 
-      <div class="feed-title">{{ t("qpLiveFeedTitle") }}</div>
-      <div v-if="!embedFeed.length" class="empty-mini">
-        {{ t("qpLiveFeedEmpty") }}
-      </div>
-      <div v-else class="feed-list">
-        <div
-          v-for="(item, idx) in embedFeed.slice(0, 12)"
-          :key="idx"
-          class="feed-item"
-        >
-          <div class="feed-src" dir="ltr">{{ item.original }}</div>
-          <div v-if="item.translated" class="feed-ar" dir="rtl">
-            {{ item.translated }}
-          </div>
-          <div v-if="item.error" class="feed-err">{{ item.error }}</div>
+      <details class="hooks-details">
+        <summary>
+          {{ t("qpLiveFeedTitle") }} ({{ embedFeed.length }})
+        </summary>
+        <div v-if="!embedFeed.length" class="empty-mini">
+          {{ t("qpLiveFeedEmpty") }}
         </div>
-      </div>
+        <div v-else class="feed-list">
+          <div
+            v-for="(item, idx) in embedFeed.slice(0, 12)"
+            :key="idx"
+            class="feed-item"
+          >
+            <div class="feed-src" dir="ltr">{{ item.original }}</div>
+            <div v-if="item.translated" class="feed-ar" dir="rtl">
+              {{ item.translated }}
+            </div>
+            <div v-if="item.error" class="feed-err">{{ item.error }}</div>
+          </div>
+        </div>
+      </details>
     </section>
   </div>
 </template>
@@ -733,12 +737,8 @@ function isProcessSaved(p) {
   color: #fff;
   font-weight: 600;
 }
-.feed-title {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--fg-muted);
-}
 .empty-mini {
+  margin-top: 8px;
   padding: 12px;
   text-align: center;
   font-size: 12px;
@@ -747,6 +747,7 @@ function isProcessSaved(p) {
   border-radius: 5px;
 }
 .feed-list {
+  margin-top: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
