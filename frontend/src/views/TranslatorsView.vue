@@ -526,10 +526,6 @@ async function onStopLlama() {
             <span class="ar" dir="rtl">{{ testResult.translated }}</span>
             <span class="ms-pill" dir="ltr">{{ testResult.elapsedMs }} ms</span>
           </div>
-          <div class="res-row">
-            <strong>{{ t("trOutShaped") }}</strong>
-            <span class="ar">{{ testResult.shaped }}</span>
-          </div>
         </div>
       </div>
 
@@ -576,6 +572,7 @@ async function onStopLlama() {
       <summary class="section-summary">
         <span class="summary-left">
           <Icon name="Chevron" :size="13" class="chev" />
+          <Icon name="Cog" :size="13" class="sum-ico" />
           <span>{{ t("trAdvancedSection") }}</span>
         </span>
         <span class="status-pill" :class="{ ready: llamaStatus.ready, running: llamaStatus.running && !llamaStatus.ready }">
