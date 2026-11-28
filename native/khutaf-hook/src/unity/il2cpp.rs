@@ -779,7 +779,20 @@ unsafe extern "C" fn detour_camera_pre_cull(cam: *mut c_void, method: *const c_v
 unsafe extern "C" fn detour_tmp_set_max_visible_chars(this: *mut c_void, value: i32, method: *const c_void) {
     let orig: unsafe extern "C" fn(*mut c_void, i32, *const c_void) = load_fn(&ORIG_TMP_SET_MAX_VISIBLE_CHARS);
     let adjusted = if let Some(_guard) = hooks::Enter::try_new() {
-        embed::adjust_max_visible_chars(this as usize, value)
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match embed::handle_max_visible_chars(this as usize, value) {
+                embed::MaxVisibleAction::SetValue(v) => v,
+                embed::MaxVisibleAction::SetTextAndValue { text, max_visible } => {
+                    if let Some(api) = Il2CppApi::get() {
+                        super::apply_tmp_max_visible_text(api, this, &text);
+                    }
+                    max_visible
+                }
+            }
+        })) {
+            Ok(v) => v,
+            Err(_) => value,
+        }
     } else {
         value
     };

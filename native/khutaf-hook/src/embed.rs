@@ -152,8 +152,23 @@ static ENABLED: LazyLock<Mutex<HashSet<(u64, u64, u64)>>> = LazyLock::new(Defaul
 static ENABLED_GEN: AtomicU64 = AtomicU64::new(1);
 static ENABLED_HOOK_MASK: AtomicU64 = AtomicU64::new(0);
 static ENABLED_HIGH_HOOKS: AtomicBool = AtomicBool::new(false);
+struct ComponentBudget {
+    orig_len: i32,
+    out_len: i32,
+    arabic_base_len: i32,
+    full_text: String,
+    has_arabic: bool,
+    masked_active: bool,
+    last_revealed: i32,
+}
+
+pub(crate) enum MaxVisibleAction {
+    SetValue(i32),
+    SetTextAndValue { text: String, max_visible: i32 },
+}
+
 static COMPONENT_CTX: LazyLock<Mutex<HashMap<(u64, usize), ComponentEntry>>> = LazyLock::new(Default::default);
-static COMPONENT_CHAR_BUDGET: LazyLock<Mutex<HashMap<usize, (i32, i32)>>> = LazyLock::new(Default::default);
+static COMPONENT_CHAR_BUDGET: LazyLock<Mutex<HashMap<usize, ComponentBudget>>> = LazyLock::new(Default::default);
 static RECENT_TRANSLATIONS: LazyLock<Mutex<RecentCache>> = LazyLock::new(Default::default);
 static OWN_OUTPUTS: LazyLock<Mutex<OwnOutputs>> = LazyLock::new(Default::default);
 static HAS_OWN_OUTPUTS: AtomicBool = AtomicBool::new(false);
@@ -289,6 +304,150 @@ pub(crate) fn clear_component_text_len(component: usize) {
     COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner()).remove(&component);
 }
 
+fn is_arabic_diacritic(c: char) -> bool {
+    matches!(c as u32, 0x064B..=0x065F | 0x0670 | 0x06D6..=0x06ED)
+}
+
+fn has_shaped_arabic_str(s: &str) -> bool {
+    s.chars().any(is_shaped_arabic_char)
+}
+
+fn line_visible_base_count(line: &str) -> usize {
+    let mut n = 0usize;
+    let mut in_tag = false;
+    let bytes = line.as_bytes();
+    for (idx, ch) in line.char_indices() {
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+            }
+            continue;
+        }
+        if ch == '<' && bytes[idx + 1..].contains(&b'>') {
+            in_tag = true;
+            continue;
+        }
+        if ch != '\r' && !is_arabic_diacritic(ch) {
+            n += 1;
+        }
+    }
+    n
+}
+
+fn byte_offset_after_visible(line: &str, count: usize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let mut seen = 0usize;
+    let mut in_tag = false;
+    let bytes = line.as_bytes();
+    let mut split = line.len();
+    for (idx, ch) in line.char_indices() {
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+            }
+            continue;
+        }
+        if ch == '<' && bytes[idx + 1..].contains(&b'>') {
+            in_tag = true;
+            continue;
+        }
+        if ch == '\r' {
+            continue;
+        }
+        if is_arabic_diacritic(ch) {
+            if seen == count {
+                split = idx + ch.len_utf8();
+            }
+            continue;
+        }
+        if seen == count {
+            return split;
+        }
+        seen += 1;
+        if seen == count {
+            split = idx + ch.len_utf8();
+        }
+    }
+    split
+}
+
+/// Wraps `segment` in TMP `<alpha=#00>...<alpha=#FF>` while re-applying `<alpha=#00>`
+/// after any `<color...>` or `</color>` tags inside the hidden span so colored runs stay hidden
+/// and remain open for the visible portion that follows.
+fn append_masked_hidden(segment: &str, out: &mut String) {
+    if segment.is_empty() {
+        return;
+    }
+    out.push_str("<alpha=#00>");
+    let bytes = segment.as_bytes();
+    let mut i = 0usize;
+    let mut copy_from = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            if let Some(rel_end) = bytes[i + 1..].iter().position(|&b| b == b'>') {
+                let end = i + 1 + rel_end;
+                let tag = &segment[i + 1..end];
+                let tag_low = tag.trim_start();
+                let resets_alpha = tag_low.len() >= 5
+                    && (tag_low[..5].eq_ignore_ascii_case("color")
+                        || (tag_low.len() >= 6 && tag_low[..6].eq_ignore_ascii_case("/color"))
+                        || tag_low[..5].eq_ignore_ascii_case("alpha")
+                        || (tag_low.len() >= 6 && tag_low[..6].eq_ignore_ascii_case("/alpha")));
+                if resets_alpha {
+                    out.push_str(&segment[copy_from..=end]);
+                    out.push_str("<alpha=#00>");
+                    copy_from = end + 1;
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    if copy_from < segment.len() {
+        out.push_str(&segment[copy_from..]);
+    }
+    out.push_str("<alpha=#FF>");
+}
+
+/// Builds a TMP rich-text string that reveals `reveal_chars` visible base characters
+/// top-to-bottom across lines, masking Arabic lines from right-to-left (hiding the
+/// unrevealed left prefix with `<alpha=#00>`) and LTR lines left-to-right.
+pub(crate) fn build_rtl_typewriter_text(full_text: &str, reveal_chars: usize) -> String {
+    let mut out = String::with_capacity(full_text.len() + 64);
+    let mut remaining = reveal_chars;
+    for (idx, line) in full_text.split('\n').enumerate() {
+        if idx > 0 {
+            out.push('\n');
+        }
+        let line_clean = line.strip_suffix('\r').unwrap_or(line);
+        let vis = line_visible_base_count(line_clean);
+        if remaining >= vis {
+            out.push_str(line_clean);
+            remaining -= vis;
+            continue;
+        }
+        if remaining == 0 {
+            append_masked_hidden(line_clean, &mut out);
+            continue;
+        }
+        if has_shaped_arabic_str(line_clean) {
+            let hide_count = vis - remaining;
+            let split = byte_offset_after_visible(line_clean, hide_count);
+            append_masked_hidden(&line_clean[..split], &mut out);
+            out.push_str(&line_clean[split..]);
+        } else {
+            let split = byte_offset_after_visible(line_clean, remaining);
+            out.push_str(&line_clean[..split]);
+            append_masked_hidden(&line_clean[split..], &mut out);
+        }
+        remaining = 0;
+    }
+    out
+}
+
 pub(crate) fn record_component_text_len(
     component: usize,
     orig: &str,
@@ -300,29 +459,101 @@ pub(crate) fn record_component_text_len(
     }
     let orig_len = visible_char_count(orig).min(i32::MAX as usize) as i32;
     let out_len = visible_char_count(out).min(i32::MAX as usize) as i32;
+    let out_base_len = out
+        .split('\n')
+        .map(|l| line_visible_base_count(l.strip_suffix('\r').unwrap_or(l)))
+        .sum::<usize>()
+        .min(i32::MAX as usize) as i32;
+    let has_arabic = has_shaped_arabic_str(out);
     let trigger_len = if showed_placeholder { 1 } else { orig_len };
     let mut map = COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner());
-    if out_len > trigger_len && trigger_len > 0 {
+    if (has_arabic && out_base_len > 0 && orig_len > 0) || (out_len > trigger_len && trigger_len > 0) {
         if map.len() >= MAX_COMPONENT_CTX && !map.contains_key(&component) {
             map.clear();
         }
-        map.insert(component, (trigger_len, out_len));
+        map.insert(
+            component,
+            ComponentBudget {
+                orig_len: trigger_len.max(1),
+                out_len,
+                arabic_base_len: out_base_len,
+                full_text: if has_arabic { out.to_owned() } else { String::new() },
+                has_arabic,
+                masked_active: false,
+                last_revealed: -1,
+            },
+        );
     } else {
         map.remove(&component);
     }
 }
 
-pub(crate) fn adjust_max_visible_chars(component: usize, requested: i32) -> i32 {
-    if component == 0 || requested <= 0 {
-        return requested;
+pub(crate) fn handle_max_visible_chars(component: usize, requested: i32) -> MaxVisibleAction {
+    if component == 0 {
+        return MaxVisibleAction::SetValue(requested);
     }
-    let map = COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(&(orig_len, out_len)) = map.get(&component) {
-        if requested >= orig_len && requested < out_len {
-            return 99_999;
+    let mut map = COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(budget) = map.get_mut(&component) else {
+        return MaxVisibleAction::SetValue(requested);
+    };
+
+    if requested <= 0 {
+        budget.last_revealed = 0;
+        return MaxVisibleAction::SetValue(requested);
+    }
+
+    if !budget.has_arabic {
+        if requested >= budget.orig_len && requested < budget.out_len {
+            return MaxVisibleAction::SetValue(99_999);
         }
+        return MaxVisibleAction::SetValue(requested);
     }
-    requested
+
+    // Typing finished (or game explicitly set unlimited): restore clean unmasked Arabic once.
+    if requested >= budget.orig_len {
+        budget.last_revealed = budget.arabic_base_len;
+        if budget.masked_active {
+            budget.masked_active = false;
+            return MaxVisibleAction::SetTextAndValue {
+                text: budget.full_text.clone(),
+                max_visible: 99_999,
+            };
+        }
+        return MaxVisibleAction::SetValue(99_999);
+    }
+
+    // Proportional progress so Arabic finishes smoothly with the game's original pacing.
+    let arabic_k = (((requested as i64) * (budget.arabic_base_len as i64) + (budget.orig_len as i64 - 1))
+        / (budget.orig_len as i64))
+        .clamp(1, budget.arabic_base_len as i64) as i32;
+
+    if arabic_k >= budget.arabic_base_len {
+        budget.last_revealed = budget.arabic_base_len;
+        if budget.masked_active {
+            budget.masked_active = false;
+            return MaxVisibleAction::SetTextAndValue {
+                text: budget.full_text.clone(),
+                max_visible: 99_999,
+            };
+        }
+        return MaxVisibleAction::SetValue(99_999);
+    }
+
+    if budget.masked_active && budget.last_revealed == arabic_k {
+        return MaxVisibleAction::SetValue(99_999);
+    }
+
+    budget.last_revealed = arabic_k;
+    budget.masked_active = true;
+    let masked = build_rtl_typewriter_text(&budget.full_text, arabic_k as usize);
+    MaxVisibleAction::SetTextAndValue { text: masked, max_visible: 99_999 }
+}
+
+#[cfg(test)]
+fn adjust_max_visible_chars(component: usize, requested: i32) -> i32 {
+    match handle_max_visible_chars(component, requested) {
+        MaxVisibleAction::SetValue(v) | MaxVisibleAction::SetTextAndValue { max_visible: v, .. } => v,
+    }
 }
 
 pub(crate) fn strip_typewriter_tags() -> bool {
@@ -833,6 +1064,7 @@ pub fn process_unity(
         return ProcessOutcome::KeepOriginal;
     }
     if !enabled || display_mode == 3 || cleaned.chars().count() <= 1 {
+        clear_component_text_len(component);
         if has_translatable_letters(cleaned) {
             send_text_dedup(hook_id, ctx, ctx2, cleaned);
         }
@@ -1461,6 +1693,76 @@ mod tests {
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].text, "مرحبا بالعالم");
         assert_eq!(updates[0].gc_handle, 42);
+        reset_for_session();
+    }
+
+    #[test]
+    fn rtl_typewriter_masks_single_multiline_and_colored_arabic_right_to_left() {
+        // Single-line shaped Arabic (5 glyphs, visually reversed: index 0 is left end).
+        let single = "\u{FE8E}\u{FE92}\u{FEA4}\u{FEAE}\u{FEE3}"; // ﺎﺒﺣﺮﻣ
+        assert_eq!(
+            build_rtl_typewriter_text(single, 1),
+            "<alpha=#00>\u{FE8E}\u{FE92}\u{FEA4}\u{FEAE}<alpha=#FF>\u{FEE3}"
+        );
+        assert_eq!(build_rtl_typewriter_text(single, 5), single);
+
+        // Multi-line: Line 0 finishes RTL before Line 1 starts RTL.
+        let multi = "\u{FE8E}\u{FE92}\u{FEE3}\n\u{FEE2}\u{FEDF}\u{FE8E}\u{FECB}";
+        assert_eq!(
+            build_rtl_typewriter_text(multi, 2),
+            "<alpha=#00>\u{FE8E}<alpha=#FF>\u{FE92}\u{FEE3}\n<alpha=#00>\u{FEE2}\u{FEDF}\u{FE8E}\u{FECB}<alpha=#FF>"
+        );
+        assert_eq!(
+            build_rtl_typewriter_text(multi, 5),
+            "\u{FE8E}\u{FE92}\u{FEE3}\n<alpha=#00>\u{FEE2}\u{FEDF}<alpha=#FF>\u{FE8E}\u{FECB}"
+        );
+
+        // Rich-text <color> tag spanning across the hidden/visible boundary keeps color intact.
+        let colored = "\u{FE90} <color=red>\u{FE8E}\u{FE92}\u{FEE3}</color>";
+        assert_eq!(
+            build_rtl_typewriter_text(colored, 2),
+            "<alpha=#00>\u{FE90} <color=red><alpha=#00>\u{FE8E}<alpha=#FF>\u{FE92}\u{FEE3}</color>"
+        );
+
+        // Bilingual line: English top line reveals LTR, Arabic bottom line reveals RTL.
+        let bilingual = "Hi!\n\u{FE8E}\u{FE92}\u{FEE3}";
+        assert_eq!(
+            build_rtl_typewriter_text(bilingual, 2),
+            "Hi<alpha=#00>!<alpha=#FF>\n<alpha=#00>\u{FE8E}\u{FE92}\u{FEE3}<alpha=#FF>"
+        );
+        assert_eq!(
+            build_rtl_typewriter_text(bilingual, 4),
+            "Hi!\n<alpha=#00>\u{FE8E}\u{FE92}<alpha=#FF>\u{FEE3}"
+        );
+    }
+
+    #[test]
+    fn handle_max_visible_chars_reveals_rtl_and_restores_clean_text_on_finish() {
+        let _guard = test_guard();
+        reset_for_session();
+        let ar = "\u{FE8E}\u{FE92}\u{FEA4}\u{FEAE}\u{FEE3}";
+        record_component_text_len(0x5000, "Hello", ar, false);
+
+        assert!(matches!(handle_max_visible_chars(0x5000, 0), MaxVisibleAction::SetValue(0)));
+        match handle_max_visible_chars(0x5000, 2) {
+            MaxVisibleAction::SetTextAndValue { text, max_visible } => {
+                assert_eq!(max_visible, 99_999);
+                assert_eq!(text, "<alpha=#00>\u{FE8E}\u{FE92}\u{FEA4}<alpha=#FF>\u{FEAE}\u{FEE3}");
+            }
+            _ => panic!("expected masked RTL text update"),
+        }
+        // Same step again avoids redundant set_text.
+        assert!(matches!(handle_max_visible_chars(0x5000, 2), MaxVisibleAction::SetValue(99_999)));
+
+        // Reaching orig_len restores clean unmasked text once.
+        match handle_max_visible_chars(0x5000, 5) {
+            MaxVisibleAction::SetTextAndValue { text, max_visible } => {
+                assert_eq!(max_visible, 99_999);
+                assert_eq!(text, ar);
+            }
+            _ => panic!("expected clean restore on completion"),
+        }
+        assert!(matches!(handle_max_visible_chars(0x5000, 5), MaxVisibleAction::SetValue(99_999)));
         reset_for_session();
     }
 

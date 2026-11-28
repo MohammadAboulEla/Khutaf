@@ -865,6 +865,29 @@ fn resolve_setter_method(
     m
 }
 
+/// Writes masked/restored RTL typewriter text directly to a `TMP_Text` component
+/// (invoked under `hooks::Enter` so our `set_text` detour passes straight through).
+pub(crate) fn apply_tmp_max_visible_text(rt: &dyn UnityRuntime, comp: *mut c_void, text: &str) {
+    if comp.is_null() {
+        return;
+    }
+    let comp_cls = rt.object_get_class(comp);
+    if comp_cls.is_null() {
+        return;
+    }
+    let m_set = {
+        let mut cache = ASYNC_UNITY_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+        resolve_setter_method(rt, &mut cache, comp_cls, HOOK_TMP_SET_TEXT)
+    };
+    if m_set.is_null() {
+        return;
+    }
+    let new_str = rt.string_new(text);
+    if !new_str.is_null() {
+        let _ = rt.invoke(m_set, comp, &mut [new_str]);
+    }
+}
+
 pub(crate) fn resolve_font_target(
     rt: &dyn UnityRuntime,
     comp: *mut c_void,
