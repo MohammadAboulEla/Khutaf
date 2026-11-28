@@ -154,3 +154,27 @@ export async function setGameAutoAttach(exePath, enabled) {
     setError(e);
   }
 }
+
+export async function exportGameProfile(exePath) {
+  clearError();
+  try {
+    return await callApp("ExportGameProfile", exePath);
+  } catch (e) {
+    setError(e);
+    throw e;
+  }
+}
+
+export async function importGameProfile(exePath) {
+  clearError();
+  try {
+    const res = await callApp("ImportGameProfile", exePath);
+    if (res && (res.title || res.hooksAdded || res.mutedAdded || res.glossaryAdded || res.rulesAdded || res.embedOverrideApplied)) {
+      await refreshSavedGames();
+    }
+    return res;
+  } catch (e) {
+    setError(e);
+    throw e;
+  }
+}

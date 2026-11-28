@@ -22,17 +22,25 @@ func (s *Session) SetEmbed(key string, enabled bool) error {
 	if s.host == nil {
 		return errors.New("hook host unavailable")
 	}
+	nowMs := currentUnixMs()
 	s.mu.Lock()
 	h, ok := s.hooks[key]
 	path := s.gamePath
 	sample := ""
+	objPath := ""
+	var view HookView
 	if ok {
 		if enabled {
 			s.embedding[key] = true
+			delete(s.muted, key)
 			sample = truncateSample(s.lastOutput[key], 120)
 		} else {
 			delete(s.embedding, key)
 		}
+		if hi := s.hookStats[key]; hi != nil {
+			objPath = hi.objectPath
+		}
+		view = s.buildHookViewLocked(h, nowMs)
 	}
 	s.mu.Unlock()
 	if !ok {
@@ -54,7 +62,15 @@ func (s *Session) SetEmbed(key string, enabled bool) error {
 				Ctx:      h.Ctx,
 				Ctx2:     h.Ctx2,
 				Sample:   sample,
+				Path:     objPath,
 			})
+			keptMuted := g.MutedHooks[:0]
+			for _, m := range g.MutedHooks {
+				if !(m.HookCode == h.HookCode && m.Ctx == h.Ctx && m.Ctx2 == h.Ctx2) {
+					keptMuted = append(keptMuted, m)
+				}
+			}
+			g.MutedHooks = keptMuted
 		}
 		if g.Title == "" {
 			g.Title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -62,7 +78,7 @@ func (s *Session) SetEmbed(key string, enabled bool) error {
 	}); err != nil {
 		return err
 	}
-	s.post(EventHookNew, HookView{HookInfo: h, Embedding: enabled})
+	s.post(EventHookNew, view)
 	return nil
 }
 
@@ -246,8 +262,10 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 	preText := r.pre.Apply(text)
 	provName := s.translator.Active()
 	var glossaryPrompt string
+	var dialoguePrompt string
 	if isLLMProvider(provName) {
 		glossaryPrompt = r.glossary.PromptContext(preText)
+		dialoguePrompt = s.buildDialogueContextPrompt(tp.Key())
 	} else {
 		preText = r.glossary.Apply(preText)
 	}
@@ -274,6 +292,9 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 		if glossaryPrompt != "" {
 			ctx = translator.WithGlossaryPrompt(ctx, glossaryPrompt)
 		}
+		if dialoguePrompt != "" {
+			ctx = translator.WithDialogueContext(ctx, dialoguePrompt)
+		}
 		trans, cached, err = s.translator.TranslateValidated(ctx, preText, func(raw string) error {
 			if !pipeline.PlaceholdersPreserved(preText, r.post.Apply(raw)) {
 				return errors.New("translation dropped [..]/{..} placeholders")
@@ -296,6 +317,9 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 		postUs = time.Since(t2).Microseconds()
 
 		if err == nil {
+			if !debugging || s.debugRealTrans.Load() {
+				s.recordDialogueTurn(tp.Key(), preText, trans)
+			}
 			t3 := time.Now()
 			shaped = s.ShapeForEmbed(trans)
 			shapeUs = time.Since(t3).Microseconds()
@@ -365,5 +389,84 @@ func (s *Session) handleEmbed(text string, tp hook.ThreadParam) {
 			TotalUs:     totalDur.Microseconds(),
 			Error:       line.Error,
 		})
+	}
+}
+
+const (
+	maxDialogueContextTurns = 5
+	speakerFreshWindow      = 10 * time.Second
+)
+
+func (s *Session) isDialogueContextHook(key string) bool {
+	s.mu.Lock()
+	hi := s.hookStats[key]
+	var cat HookCategory
+	if hi != nil {
+		cat = hi.category
+	}
+	s.mu.Unlock()
+	return cat == "" || cat == HookCatDialogue || cat == HookCatUnknown
+}
+
+func (s *Session) buildDialogueContextPrompt(hookKey string) string {
+	if !s.isDialogueContextHook(hookKey) {
+		return ""
+	}
+	s.dialogueCtxMu.Lock()
+	defer s.dialogueCtxMu.Unlock()
+
+	var speaker string
+	if s.lastSpeaker != "" && time.Since(s.lastSpeakerAt) <= speakerFreshWindow {
+		speaker = s.lastSpeaker
+	}
+	if len(s.dialogueCtx) == 0 && speaker == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Recent story dialogue for context ONLY (keep speaker gender, pronouns, and tone consistent; do NOT re-translate or repeat these lines):")
+	for _, turn := range s.dialogueCtx {
+		b.WriteByte('\n')
+		if turn.speaker != "" {
+			b.WriteString("[")
+			b.WriteString(turn.speaker)
+			b.WriteString("] ")
+		}
+		b.WriteString(turn.original)
+		b.WriteString(" => ")
+		b.WriteString(turn.translated)
+	}
+	if speaker != "" {
+		b.WriteString("\nCurrent speaker: ")
+		b.WriteString(speaker)
+	}
+	return b.String()
+}
+
+func (s *Session) recordDialogueTurn(hookKey, original, translated string) {
+	orig := strings.TrimSpace(original)
+	tr := strings.TrimSpace(translated)
+	if orig == "" || tr == "" || visibleRuneCount(orig) < 10 {
+		return
+	}
+	if !s.isDialogueContextHook(hookKey) {
+		return
+	}
+	s.dialogueCtxMu.Lock()
+	defer s.dialogueCtxMu.Unlock()
+	var speaker string
+	if s.lastSpeaker != "" && time.Since(s.lastSpeakerAt) <= speakerFreshWindow {
+		speaker = s.lastSpeaker
+	}
+	if n := len(s.dialogueCtx); n > 0 && s.dialogueCtx[n-1].original == orig {
+		s.dialogueCtx[n-1].translated = tr
+		return
+	}
+	s.dialogueCtx = append(s.dialogueCtx, dialogueTurn{
+		speaker:    speaker,
+		original:   truncateSample(orig, 180),
+		translated: truncateSample(tr, 180),
+	})
+	if len(s.dialogueCtx) > maxDialogueContextTurns {
+		s.dialogueCtx = s.dialogueCtx[len(s.dialogueCtx)-maxDialogueContextTurns:]
 	}
 }

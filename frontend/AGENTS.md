@@ -6,7 +6,7 @@ The UI is strictly a Windows desktop Wails v2 (WebView2) interface built with Vu
 
 - `App.vue` — Top-level shell, tab routing, modal orchestration (`AboutModal`, `UpdateModal`, `FontDownloadModal`, `OnboardingWizard`, `TroubleshooterModal`, `QuickHooksModal`), and window close/tray handling.
 - `views/` — 8 main tabs: `QuickPlayView.vue`, `HookConsoleView.vue`, `GamesView.vue`, `EmbedSettingsView.vue`, `HotkeysView.vue`, `TranslatorsView.vue`, `TextPipelineView.vue`, `DebugView.vue`.
-- `components/` — Reusable modals/panels plus `components/hook/` (`HookTable.vue`, `ArabicInspector.vue`, `ProcessBar.vue`).
+- `components/` — Reusable modals/panels plus `components/hook/` (`HookBrowser.vue`, `HookTable.vue`, `ArabicInspector.vue`, `ProcessBar.vue`).
 - `shell/` — Layout chrome (`ShellLayout.vue`, `ShellHeader.vue`, `ShellSidebar.vue`, `ShellMain.vue`, `ShellFooter.vue`).
 - `composables/`:
   - `useSession.js` — Coordinator composable composing domain modules and initializing Wails event listeners (`init()`).
@@ -26,6 +26,7 @@ The UI is strictly a Windows desktop Wails v2 (WebView2) interface built with Vu
    High-frequency streams (`hook:output`, `embed:line`, `log`, `debug:trace`) are batched on a `32 ms` timer (`scheduleFlush`).
 3. **Bilingual Parity (`i18n/ar.js`, `i18n/en.js`):** Every new UI key must be added to both `ar.js` and `en.js` with matching `{placeholders}` (enforced by `messages.test.js`). Check `simple` vs `advanced` visibility (`useUiMode.js`) when adding controls.
 4. **Provider Registry Sync:** `src/utils/providers.js` (`TRADITIONAL_PROVIDERS`, `ALL_PROVIDERS`) must match Go's `translator.BuildProvider` (`internal/translator/manager.go`) and `traditional.New` (`internal/translator/traditional/common.go`).
+5. **Custom Tooltips Only (`Tooltip.vue`):** Every tooltip in the UI MUST use the reusable `<Tooltip>` component (`frontend/src/components/Tooltip.vue`). Never use native HTML `title` or `:title` attributes on elements.
 
 ## Verification
 

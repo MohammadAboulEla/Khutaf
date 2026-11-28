@@ -1,7 +1,7 @@
 <script setup>
-import { shallowRef, onUnmounted } from "vue";
+import { ref, shallowRef, onUnmounted } from "vue";
 import ProcessBar from "../components/hook/ProcessBar.vue";
-import HookTable from "../components/hook/HookTable.vue";
+import HookBrowser from "../components/hook/HookBrowser.vue";
 import ArabicInspector from "../components/hook/ArabicInspector.vue";
 import { useSession } from "../composables/useSession.js";
 
@@ -12,16 +12,19 @@ defineProps({
 const {
   status,
   processes,
-  hooks,
-  hookOutputs,
   embedFeed,
   refreshProcesses,
   attach,
   detach,
-  setEmbed,
   previewArabic,
   testTranslate,
 } = useSession();
+
+const inspectorRef = ref(null);
+
+function onInspectText(text) {
+  inspectorRef.value?.inspectText?.(text);
+}
 
 const STORAGE_KEY = "khutaf:inspectorHeight";
 const saved = Number(localStorage.getItem(STORAGE_KEY));
@@ -70,12 +73,11 @@ onUnmounted(() => {
       @detach="detach"
     />
 
-    <HookTable
+    <HookBrowser
       class="hooks-pane"
-      :hooks="hooks"
-      :outputs="hookOutputs"
+      variant="advanced"
       :active="active"
-      @toggle-embed="setEmbed"
+      @inspect-text="onInspectText"
     />
 
     <div
@@ -86,6 +88,7 @@ onUnmounted(() => {
     </div>
 
     <ArabicInspector
+      ref="inspectorRef"
       class="inspector-pane"
       :style="{ height: inspectorHeight + 'px' }"
       :feed="embedFeed"

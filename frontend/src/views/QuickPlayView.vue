@@ -1,10 +1,10 @@
 <script setup>
 import { computed, shallowRef } from "vue";
 import Icon from "../components/Icon.vue";
+import Tooltip from "../components/Tooltip.vue";
+import HookBrowser from "../components/hook/HookBrowser.vue";
 import { useSession } from "../composables/useSession.js";
 import { useI18n } from "../composables/useI18n.js";
-import { usePinnedHookSort } from "../composables/usePinnedHookSort.js";
-import { formatHookLabel } from "../utils/hookLabels.js";
 
 const emit = defineEmits([
   "open-translators",
@@ -16,7 +16,6 @@ const {
   status,
   processes,
   hooks,
-  hookOutputs,
   embedFeed,
   savedGames,
   config,
@@ -26,18 +25,34 @@ const {
   attach,
   quickAttach,
   detach,
-  setEmbed,
+  addGlossaryTerm,
   openFontDownloadPrompt,
   saveConfig,
 } = useSession();
 
-const { t, lang } = useI18n();
-const { snapshotPinned, sortPinned, needsSort } = usePinnedHookSort(
-  () => hooks.value,
-);
+const { t } = useI18n();
 
 const showAllProcs = shallowRef(false);
 const refreshing = shallowRef(false);
+const savedFeedIdx = shallowRef(-1);
+
+async function onAddFeedGlossary(item, idx) {
+  if (!item?.original || !item?.translated) return;
+  try {
+    await addGlossaryTerm(
+      item.original.replace(/<[^>]+>/g, "").trim(),
+      item.translated.trim(),
+      false,
+      Boolean(status.value.attached),
+    );
+    savedFeedIdx.value = idx;
+    setTimeout(() => {
+      if (savedFeedIdx.value === idx) savedFeedIdx.value = -1;
+    }, 1500);
+  } catch {
+    // Error banner handles failure.
+  }
+}
 
 const savedByPath = computed(() => {
   const m = new Map();
@@ -54,8 +69,8 @@ const visibleProcesses = computed(() => {
   return list.filter((p) => !isProcessAttached(p));
 });
 
-const embeddableHooks = computed(() =>
-  sortPinned(hooks.value.filter((h) => h.embeddable)),
+const embeddableCount = computed(
+  () => hooks.value.filter((h) => h.embeddable && !h.muted).length,
 );
 
 const activeDisplayMode = computed(() => config.value?.embed?.displayMode ?? 0);
@@ -288,61 +303,10 @@ function isProcessSaved(p) {
           <h3 class="h3">{{ t("qpStep2Title") }}</h3>
           <p class="sub">{{ t("qpStep2Hint") }}</p>
         </div>
-        <button
-          class="btn small sort-btn"
-          :class="{ dirty: needsSort }"
-          type="button"
-          :title="t('sortCheckedTopTip')"
-          :disabled="!embeddableHooks.length"
-          @click="snapshotPinned"
-        >
-          <Icon name="ArrowUpDown" :size="12" />
-          <span>{{ t("sortCheckedTop") }}</span>
-        </button>
+        <span class="badge">{{ t("qpShowHooks", { count: embeddableCount }) }}</span>
       </div>
 
-      <details class="hooks-details">
-        <summary>
-          {{ t("qpShowHooks", { count: embeddableHooks.length }) }}
-        </summary>
-        <div v-if="config" class="verbose-row">
-          <label class="chk" :title="t('verboseHooksTip')">
-            <input
-              type="checkbox"
-              :checked="Boolean(config?.embed?.verboseHooks)"
-              @change="saveConfig({ ...config, embed: { ...config.embed, verboseHooks: $event.target.checked } })"
-            />
-            <span>{{ t("verboseHooksLabel") }}</span>
-          </label>
-        </div>
-        <div v-if="!embeddableHooks.length" class="sub pad-top">
-          {{ t("qpNoHooksYet") }}
-        </div>
-        <div v-else class="hooks-list">
-          <label
-            v-for="(h, idx) in embeddableHooks"
-            :key="h.key"
-            class="hook-row"
-            :class="{ active: h.embedding }"
-          >
-            <input
-              type="checkbox"
-              :checked="h.embedding"
-              @change="setEmbed(h.key, $event.target.checked)"
-            />
-            <div class="hook-info">
-              <div
-                class="hook-sample"
-                :class="{ empty: !hookOutputs[h.key] }"
-                dir="auto"
-              >
-                {{ hookOutputs[h.key] || "—" }}
-              </div>
-              <div class="hook-name">{{ formatHookLabel(h, idx, lang) }}</div>
-            </div>
-          </label>
-        </div>
-      </details>
+      <HookBrowser variant="simple" :active="status.attached" max-height="320px" />
     </section>
 
     <section v-if="status.attached" class="card">
@@ -389,7 +353,21 @@ function isProcessSaved(p) {
             :key="idx"
             class="feed-item"
           >
-            <div class="feed-src" dir="ltr">{{ item.original }}</div>
+            <div class="feed-head">
+              <div class="feed-src" dir="ltr">{{ item.original }}</div>
+              <Tooltip
+                v-if="item.original && item.translated && !item.error"
+                :text="t('hbAddGlossaryTip')"
+              >
+                <button
+                  class="feed-gloss-btn"
+                  type="button"
+                  @click="onAddFeedGlossary(item, idx)"
+                >
+                  <Icon :name="savedFeedIdx === idx ? 'Check' : 'BookOpen'" :size="11" />
+                </button>
+              </Tooltip>
+            </div>
             <div v-if="item.translated" class="feed-ar" dir="rtl">
               {{ item.translated }}
             </div>
@@ -760,9 +738,33 @@ function isProcessSaved(p) {
   border: 1px solid var(--border);
   border-radius: 5px;
 }
+.feed-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
 .feed-src {
+  flex: 1;
+  min-width: 0;
   font-size: 11.5px;
   color: var(--fg-muted);
+}
+.feed-gloss-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  flex: none;
+}
+.feed-gloss-btn:hover {
+  background: color-mix(in oklab, var(--fg) 10%, transparent);
+  color: var(--accent);
 }
 .feed-ar {
   font-family: var(--arabic);

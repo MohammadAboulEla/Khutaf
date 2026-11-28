@@ -73,11 +73,11 @@ func (o *OfflineLLM) Translate(ctx context.Context, text string) (string, error)
 	if model == "" {
 		model = "local-model"
 	}
-	msgs := o.buildMessages(text, GlossaryPromptFromContext(ctx))
+	msgs := o.buildMessages(text, GlossaryPromptFromContext(ctx), DialogueContextFromContext(ctx))
 	return doChatCompletion(ctx, o.client, baseURL, "", model, o.cfg.Temperature, msgs)
 }
 
-func (o *OfflineLLM) buildMessages(text, glossaryPrompt string) []chatMessage {
+func (o *OfflineLLM) buildMessages(text, glossaryPrompt, dialoguePrompt string) []chatMessage {
 	src := strings.TrimSpace(o.cfg.SourceLang)
 	if src == "" {
 		src = "English"
@@ -87,13 +87,22 @@ func (o *OfflineLLM) buildMessages(text, glossaryPrompt string) []chatMessage {
 		tgt = "Arabic"
 	}
 
+	var refParts []string
+	if glossaryPrompt != "" {
+		refParts = append(refParts, glossaryPrompt)
+	}
+	if dialoguePrompt != "" {
+		refParts = append(refParts, dialoguePrompt)
+	}
+	refBlock := strings.Join(refParts, "\n\n")
+
 	switch o.resolvedTemplate() {
 	case "hymt2":
 		var content string
-		if glossaryPrompt != "" {
+		if refBlock != "" {
 			content = fmt.Sprintf(
-				"Reference the following translations:\n%s\n\nTranslate the following text into %s. Note that you must ONLY output the translated result without any additional explanation:\n\n%s",
-				glossaryPrompt, tgt, text,
+				"Reference the following context and glossary:\n%s\n\nTranslate the following text into %s. Note that you must ONLY output the translated result without any additional explanation:\n\n%s",
+				refBlock, tgt, text,
 			)
 		} else {
 			content = fmt.Sprintf(
@@ -108,8 +117,8 @@ func (o *OfflineLLM) buildMessages(text, glossaryPrompt string) []chatMessage {
 			"You are a professional %s to %s translator. Your goal is to accurately convey the meaning and nuances of the original %s text while adhering to %s grammar, vocabulary, and cultural sensitivities. Produce only the %s translation, without any additional explanations or commentary.",
 			src, tgt, src, tgt, tgt,
 		)
-		if glossaryPrompt != "" {
-			content += "\n\n" + glossaryPrompt
+		if refBlock != "" {
+			content += "\n\n" + refBlock
 		}
 		content += fmt.Sprintf("\n\nPlease translate the following %s text into %s:\n\n%s", src, tgt, text)
 		return []chatMessage{{Role: "user", Content: content}}
@@ -119,8 +128,8 @@ func (o *OfflineLLM) buildMessages(text, glossaryPrompt string) []chatMessage {
 			"Translate the following %s game dialogue into %s. Keep all tags (<...>, [...], {...}) and placeholders unchanged. Output only the %s translation.",
 			src, tgt, tgt,
 		)
-		if glossaryPrompt != "" {
-			sys += "\n\n" + glossaryPrompt
+		if refBlock != "" {
+			sys += "\n\n" + refBlock
 		}
 		return []chatMessage{
 			{Role: "system", Content: sys},
@@ -132,8 +141,8 @@ func (o *OfflineLLM) buildMessages(text, glossaryPrompt string) []chatMessage {
 			"You are a video game localizer. Translate from %s into natural %s. Keep every tag (<...>, [...], {...}) and placeholder exact. Output only the translation.",
 			src, tgt,
 		)
-		if glossaryPrompt != "" {
-			sys += "\n\n" + glossaryPrompt
+		if refBlock != "" {
+			sys += "\n\n" + refBlock
 		}
 		return []chatMessage{
 			{Role: "system", Content: sys},

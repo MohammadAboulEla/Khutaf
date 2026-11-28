@@ -382,6 +382,80 @@ func (a *App) SmartAutoEmbed() (session.SmartAutoEmbedResult, error) {
 	return a.session.SmartAutoEmbed()
 }
 
+// ApplyHookPreset applies a one-click hook selection preset ("dialogue", "dialogue_ui", "disable_all").
+func (a *App) ApplyHookPreset(preset string) (session.HookPresetResult, error) {
+	return a.session.ApplyHookPreset(preset)
+}
+
+// RestoreEmbedHooks restores a previously snapshotted set of enabled hook keys (undo).
+func (a *App) RestoreEmbedHooks(keys []string) (session.HookPresetResult, error) {
+	return a.session.RestoreEmbedHooks(keys)
+}
+
+// SetHookMuted mutes or unmutes a live hook and persists it in the game profile.
+func (a *App) SetHookMuted(key string, muted bool) error {
+	return a.session.SetHookMuted(key, muted)
+}
+
+// AddGlossaryTerm adds or updates a glossary term for the current game or globally.
+func (a *App) AddGlossaryTerm(source, target string, caseSensitive, scopeGame bool) error {
+	return a.session.AddGlossaryTerm(source, target, caseSensitive, scopeGame)
+}
+
+// CycleDisplayMode cycles between display modes (0..3) and returns the new mode.
+func (a *App) CycleDisplayMode() (int, error) {
+	mode, err := a.session.CycleDisplayMode()
+	return int(mode), err
+}
+
+// AdjustFontScale adjusts relative font scale by delta and returns the new scale.
+func (a *App) AdjustFontScale(delta float64) (float64, error) {
+	scale, err := a.session.AdjustFontScale(delta)
+	return float64(scale), err
+}
+
+// ExportGameProfile opens a Save dialog and writes a sanitized shareable .khutaf.json profile.
+func (a *App) ExportGameProfile(exePath string) (string, error) {
+	raw, filename, err := a.session.ExportGameProfileData(exePath, AppVersion)
+	if err != nil {
+		return "", err
+	}
+	dst, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Export Game Profile",
+		DefaultFilename: filename,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Khutaf Game Profile (*.khutaf.json)", Pattern: "*.khutaf.json"},
+			{DisplayName: "JSON Files (*.json)", Pattern: "*.json"},
+		},
+	})
+	if err != nil || dst == "" {
+		return "", err
+	}
+	if err := os.WriteFile(dst, raw, 0o644); err != nil {
+		return "", err
+	}
+	return dst, nil
+}
+
+// ImportGameProfile opens a File picker and merges a .khutaf.json profile into targetExePath.
+func (a *App) ImportGameProfile(targetExePath string) (session.ImportProfileResult, error) {
+	src, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Import Game Profile",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Khutaf Game Profile (*.khutaf.json)", Pattern: "*.khutaf.json"},
+			{DisplayName: "JSON Files (*.json)", Pattern: "*.json"},
+		},
+	})
+	if err != nil || src == "" {
+		return session.ImportProfileResult{}, err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return session.ImportProfileResult{}, err
+	}
+	return a.session.ImportGameProfileData(targetExePath, data)
+}
+
 // IsAdmin reports whether Khutaf is currently running with administrator privileges.
 func (a *App) IsAdmin() bool {
 	return hook.IsAdmin()

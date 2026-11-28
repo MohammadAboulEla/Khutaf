@@ -26,6 +26,21 @@ const TELEMETRY_RATE_LIMIT: Duration = Duration::from_secs(1);
 const MAX_LATE_PENDING: usize = 32;
 const MAX_ASYNC_IN_FLIGHT: usize = 64;
 const ASYNC_TTL: Duration = Duration::from_secs(16);
+const TYPEWRITER_DEBOUNCE: Duration = Duration::from_millis(180);
+const TYPEWRITER_WINDOW: Duration = Duration::from_millis(600);
+const MAX_DEBOUNCE_ENTRIES: usize = 64;
+const MAX_REAPPLY_TARGETS: usize = 64;
+
+struct DebounceEntry {
+    hook_id: u64,
+    ctx: u64,
+    ctx2: u64,
+    component: usize,
+    gc_handle: usize,
+    text: String,
+    raw_text: String,
+    last_updated: Instant,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ProcessOutcome {
@@ -151,7 +166,13 @@ static VERBOSE_SCAN_PENDING: AtomicBool = AtomicBool::new(false);
 static FRAME_TICK_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HAS_ASYNC_WORK: AtomicBool = AtomicBool::new(false);
 static HAS_ASYNC_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+static HAS_DEBOUNCE_WORK: AtomicBool = AtomicBool::new(false);
+static HAS_REAPPLY_PENDING: AtomicBool = AtomicBool::new(false);
 static ASYNC: LazyLock<Mutex<AsyncState>> = LazyLock::new(Default::default);
+static DEBOUNCE: LazyLock<Mutex<HashMap<(u64, usize), DebounceEntry>>> = LazyLock::new(Default::default);
+type LastComponentTextMap = HashMap<(u64, usize), (String, Instant)>;
+static LAST_COMPONENT_TEXT: LazyLock<Mutex<LastComponentTextMap>> = LazyLock::new(Default::default);
+static PENDING_REAPPLY: LazyLock<Mutex<Vec<(u64, u64, u64)>>> = LazyLock::new(Default::default);
 type LastSentMap = HashMap<(u64, u64, u64), (String, Instant)>;
 
 static LAST_SENT_TEXT: LazyLock<Mutex<LastSentMap>> = LazyLock::new(Default::default);
@@ -216,6 +237,7 @@ pub fn set_settings(s: Settings) {
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    LAST_COMPONENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
 pub fn settings() -> Arc<Settings> {
@@ -323,6 +345,229 @@ pub(crate) fn has_async_in_flight() -> bool {
     HAS_ASYNC_IN_FLIGHT.load(Ordering::Acquire)
 }
 
+pub(crate) fn has_debounce_work() -> bool {
+    HAS_DEBOUNCE_WORK.load(Ordering::Acquire)
+}
+
+pub(crate) fn has_reapply_pending() -> bool {
+    HAS_REAPPLY_PENDING.load(Ordering::Acquire)
+}
+
+pub(crate) fn take_reapply_targets() -> Vec<(u64, u64, u64)> {
+    let mut pending = PENDING_REAPPLY.lock().unwrap_or_else(|p| p.into_inner());
+    let out = std::mem::take(&mut *pending);
+    HAS_REAPPLY_PENDING.store(false, Ordering::Release);
+    out
+}
+
+pub(crate) fn lookup_cached_ctx(hook_id: u64, component: usize) -> Option<u64> {
+    if component == 0 {
+        return None;
+    }
+    COMPONENT_CTX
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&(hook_id, component))
+        .map(|e| e.ctx)
+}
+
+pub(crate) fn find_reapply_hook_for_component(
+    component: usize,
+    targets: &[(u64, u64, u64)],
+) -> Option<(u64, u64, u64)> {
+    if component == 0 || targets.is_empty() {
+        return None;
+    }
+    let map = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
+    for &(hid, tctx, tctx2) in targets {
+        if let Some(entry) = map.get(&(hid, component)) {
+            if tctx == 0 || entry.ctx == tctx {
+                return Some((hid, entry.ctx, tctx2));
+            }
+        }
+    }
+    None
+}
+
+/// Detects incremental typewriter-style text growth where `next` extends `prev`
+/// by a small number of characters.
+pub(crate) fn is_incremental_extension(prev: &str, next: &str) -> bool {
+    if prev.is_empty() || next.len() <= prev.len() || !next.starts_with(prev) {
+        return false;
+    }
+    let added = next[prev.len()..].chars().count();
+    (1..=16).contains(&added)
+}
+
+fn free_gc_handle_later(gc_handle: usize) {
+    if gc_handle == 0 {
+        return;
+    }
+    let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+    st.handles_to_free.push(gc_handle);
+    sync_async_flags(&st);
+}
+
+fn cancel_component_in_flight(hook_id: u64, component: usize) {
+    let mut stale: Option<(u64, String)> = None;
+    {
+        let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+        let old_rid = st
+            .in_flight
+            .iter()
+            .find(|(_, t)| t.hook_id == hook_id && t.component == component)
+            .map(|(&rid, _)| rid);
+        if let Some(rid) = old_rid {
+            if let Some(old) = st.in_flight.remove(&rid) {
+                if old.gc_handle != 0 {
+                    st.handles_to_free.push(old.gc_handle);
+                }
+                stale = Some((old.req_id, old.orig_text));
+            }
+        }
+        st.next_gen = st.next_gen.wrapping_add(1).max(1);
+        let gen_id = st.next_gen;
+        st.comp_gen.insert(component, gen_id);
+        sync_async_flags(&st);
+    }
+    if let Some((rid, orig)) = stale {
+        push_late_pending(rid, orig);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enqueue_async_embed(
+    hook_id: u64,
+    ctx: u64,
+    ctx2: u64,
+    component: usize,
+    gc_handle: usize,
+    cleaned: &str,
+    raw: &str,
+    cfg: &Settings,
+) -> ProcessOutcome {
+    if gc_handle == 0 {
+        return ProcessOutcome::KeepOriginal;
+    }
+    clear_component_text_len(component);
+    let req_id = NEXT_REQ.fetch_add(1, Ordering::Relaxed);
+    let showed_placeholder = !cfg.pending_text.is_empty();
+    {
+        let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+        st.next_gen = st.next_gen.wrapping_add(1).max(1);
+        let gen_id = st.next_gen;
+        st.comp_gen.insert(component, gen_id);
+        st.in_flight.insert(
+            req_id,
+            AsyncTarget {
+                req_id,
+                hook_id,
+                component,
+                gc_handle,
+                generation: gen_id,
+                orig_text: cleaned.to_owned(),
+                raw_orig_text: raw.to_owned(),
+                pending_text: cfg.pending_text.clone(),
+                showed_placeholder,
+                created_at: Instant::now(),
+            },
+        );
+        sync_async_flags(&st);
+    }
+    if !ipc::send(&Msg::EmbedRequest {
+        req_id,
+        hook_id,
+        ctx,
+        ctx2,
+        text: cleaned.to_owned(),
+    }) {
+        let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(removed) = st.in_flight.remove(&req_id) {
+            if removed.gc_handle != 0 {
+                st.handles_to_free.push(removed.gc_handle);
+            }
+            sync_async_flags(&st);
+        }
+        return ProcessOutcome::KeepOriginal;
+    }
+    if showed_placeholder {
+        ProcessOutcome::Replace {
+            text: cfg.pending_text.clone(),
+            apply_font: !cfg.pending_text.is_ascii(),
+        }
+    } else {
+        ProcessOutcome::KeepOriginal
+    }
+}
+
+/// Flushes incremental typewriter entries whose text has stabilized for `TYPEWRITER_DEBOUNCE`.
+pub(crate) fn flush_ready_debounced() {
+    let now = Instant::now();
+    let ready_entries: Vec<DebounceEntry> = {
+        let mut map = DEBOUNCE.lock().unwrap_or_else(|p| p.into_inner());
+        let keys: Vec<(u64, usize)> = map
+            .iter()
+            .filter_map(|(&k, e)| (now.duration_since(e.last_updated) >= TYPEWRITER_DEBOUNCE).then_some(k))
+            .collect();
+        let mut out = Vec::with_capacity(keys.len());
+        for k in keys {
+            if let Some(e) = map.remove(&k) {
+                out.push(e);
+            }
+        }
+        HAS_DEBOUNCE_WORK.store(!map.is_empty(), Ordering::Release);
+        out
+    };
+    if ready_entries.is_empty() {
+        return;
+    }
+    let cfg = settings();
+    let mode = DISPLAY_MODE.load(Ordering::Relaxed);
+    for entry in ready_entries {
+        if SHUTDOWN.load(Ordering::Relaxed)
+            || mode == 3
+            || !is_enabled(entry.hook_id, entry.ctx, entry.ctx2)
+            || !has_translatable_letters(&entry.text)
+        {
+            free_gc_handle_later(entry.gc_handle);
+            continue;
+        }
+        if let Some(cached) = RECENT_TRANSLATIONS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&entry.text)
+        {
+            if let Some(trans) = cached {
+                if let Some(out) = format_display(mode, &entry.text, &trans) {
+                    record_component_text_len(entry.component, &entry.text, &out, false);
+                    let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
+                    st.ready.push_back(ReadyUpdate {
+                        hook_id: entry.hook_id,
+                        component: entry.component,
+                        gc_handle: entry.gc_handle,
+                        text: out,
+                        apply_font: true,
+                    });
+                    sync_async_flags(&st);
+                    continue;
+                }
+            }
+            free_gc_handle_later(entry.gc_handle);
+            continue;
+        }
+        let _ = enqueue_async_embed(
+            entry.hook_id,
+            entry.ctx,
+            entry.ctx2,
+            entry.component,
+            entry.gc_handle,
+            &entry.text,
+            &entry.raw_text,
+            &cfg,
+        );
+    }
+}
+
 fn sync_async_flags(st: &AsyncState) {
     HAS_ASYNC_WORK.store(!st.ready.is_empty() || !st.handles_to_free.is_empty(), Ordering::Release);
     HAS_ASYNC_IN_FLIGHT.store(!st.in_flight.is_empty(), Ordering::Release);
@@ -345,7 +590,17 @@ pub fn set_enabled(hook_id: u64, ctx: u64, ctx2: u64, on: bool) {
     }
     sync_enabled_summary(&set);
     drop(set);
-    if !on {
+    if on {
+        let mut pending = PENDING_REAPPLY.lock().unwrap_or_else(|p| p.into_inner());
+        let key = (hook_id, ctx, ctx2);
+        if !pending.contains(&key) {
+            if pending.len() >= MAX_REAPPLY_TARGETS {
+                pending.remove(0);
+            }
+            pending.push(key);
+        }
+        HAS_REAPPLY_PENDING.store(true, Ordering::Release);
+    } else {
         let mut comp = COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner());
         comp.retain(|&(hid, _), entry| !(hid == hook_id && (ctx == 0 || entry.ctx == ctx)));
     }
@@ -615,6 +870,80 @@ pub fn process_unity(
     }
 
     if NON_BLOCKING.load(Ordering::Relaxed) && FRAME_TICK_ACTIVE.load(Ordering::Acquire) && component != 0 {
+        let now = Instant::now();
+        let mut evicted_debounce_handle = 0usize;
+        let mut handle_via_debounce = false;
+        {
+            let mut db = DEBOUNCE.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(entry) = db.get_mut(&(hook_id, component)) {
+                if entry.text == cleaned || is_incremental_extension(&entry.text, cleaned) {
+                    entry.text = cleaned.to_owned();
+                    entry.raw_text = raw.to_owned();
+                    entry.last_updated = now;
+                    handle_via_debounce = true;
+                } else if let Some(old) = db.remove(&(hook_id, component)) {
+                    evicted_debounce_handle = old.gc_handle;
+                }
+            }
+            HAS_DEBOUNCE_WORK.store(!db.is_empty(), Ordering::Release);
+        }
+        if evicted_debounce_handle != 0 {
+            free_gc_handle_later(evicted_debounce_handle);
+        }
+        if handle_via_debounce {
+            let mut last_comp = LAST_COMPONENT_TEXT.lock().unwrap_or_else(|p| p.into_inner());
+            last_comp.insert((hook_id, component), (cleaned.to_owned(), now));
+            return ProcessOutcome::KeepOriginal;
+        }
+
+        let is_typing_growth = {
+            let mut last_comp = LAST_COMPONENT_TEXT.lock().unwrap_or_else(|p| p.into_inner());
+            let grew = last_comp
+                .get(&(hook_id, component))
+                .is_some_and(|(prev, prev_at)| {
+                    now.duration_since(*prev_at) <= TYPEWRITER_WINDOW && is_incremental_extension(prev, cleaned)
+                });
+            if last_comp.len() >= MAX_COMPONENT_CTX && !last_comp.contains_key(&(hook_id, component)) {
+                last_comp.clear();
+            }
+            last_comp.insert((hook_id, component), (cleaned.to_owned(), now));
+            grew
+        };
+        if is_typing_growth {
+            cancel_component_in_flight(hook_id, component);
+            let gc_handle = pin_fn();
+            if gc_handle != 0 {
+                let mut db = DEBOUNCE.lock().unwrap_or_else(|p| p.into_inner());
+                let mut evicted = 0usize;
+                if db.len() >= MAX_DEBOUNCE_ENTRIES && !db.contains_key(&(hook_id, component)) {
+                    if let Some(&oldest_k) = db.iter().min_by_key(|(_, e)| e.last_updated).map(|(k, _)| k) {
+                        if let Some(old) = db.remove(&oldest_k) {
+                            evicted = old.gc_handle;
+                        }
+                    }
+                }
+                db.insert(
+                    (hook_id, component),
+                    DebounceEntry {
+                        hook_id,
+                        ctx,
+                        ctx2,
+                        component,
+                        gc_handle,
+                        text: cleaned.to_owned(),
+                        raw_text: raw.to_owned(),
+                        last_updated: now,
+                    },
+                );
+                HAS_DEBOUNCE_WORK.store(true, Ordering::Release);
+                drop(db);
+                if evicted != 0 {
+                    free_gc_handle_later(evicted);
+                }
+            }
+            return ProcessOutcome::KeepOriginal;
+        }
+
         let mut stale_for_late: Option<(u64, String)> = None;
         {
             let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
@@ -669,55 +998,7 @@ pub fn process_unity(
 
         let gc_handle = pin_fn();
         if gc_handle != 0 {
-            clear_component_text_len(component);
-            let req_id = NEXT_REQ.fetch_add(1, Ordering::Relaxed);
-            let showed_placeholder = !cfg.pending_text.is_empty();
-            {
-                let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
-                st.next_gen = st.next_gen.wrapping_add(1).max(1);
-                let gen_id = st.next_gen;
-                st.comp_gen.insert(component, gen_id);
-                st.in_flight.insert(
-                    req_id,
-                    AsyncTarget {
-                        req_id,
-                        hook_id,
-                        component,
-                        gc_handle,
-                        generation: gen_id,
-                        orig_text: cleaned.to_owned(),
-                        raw_orig_text: raw.to_owned(),
-                        pending_text: cfg.pending_text.clone(),
-                        showed_placeholder,
-                        created_at: Instant::now(),
-                    },
-                );
-                sync_async_flags(&st);
-            }
-            if !ipc::send(&Msg::EmbedRequest {
-                req_id,
-                hook_id,
-                ctx,
-                ctx2,
-                text: cleaned.to_owned(),
-            }) {
-                let mut st = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
-                if let Some(removed) = st.in_flight.remove(&req_id) {
-                    if removed.gc_handle != 0 {
-                        st.handles_to_free.push(removed.gc_handle);
-                    }
-                    sync_async_flags(&st);
-                }
-                return ProcessOutcome::KeepOriginal;
-            }
-            return if showed_placeholder {
-                ProcessOutcome::Replace {
-                    text: cfg.pending_text.clone(),
-                    apply_font: !cfg.pending_text.is_ascii(),
-                }
-            } else {
-                ProcessOutcome::KeepOriginal
-            };
+            return enqueue_async_embed(hook_id, ctx, ctx2, component, gc_handle, cleaned, raw, &cfg);
         }
     }
 
@@ -980,8 +1261,18 @@ pub(crate) fn reap_expired_async() {
 }
 
 fn clear_async_state() {
+    let debounce_handles: Vec<usize> = {
+        let mut db = DEBOUNCE.lock().unwrap_or_else(|p| p.into_inner());
+        let handles = db
+            .drain()
+            .filter_map(|(_, e)| (e.gc_handle != 0).then_some(e.gc_handle))
+            .collect();
+        HAS_DEBOUNCE_WORK.store(false, Ordering::Release);
+        handles
+    };
     let mut guard = ASYNC.lock().unwrap_or_else(|p| p.into_inner());
     let st = &mut *guard;
+    st.handles_to_free.extend(debounce_handles);
     for (_, t) in st.in_flight.drain() {
         if t.gc_handle != 0 {
             st.handles_to_free.push(t.gc_handle);
@@ -1003,6 +1294,9 @@ pub fn release_all() {
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    LAST_COMPONENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    PENDING_REAPPLY.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    HAS_REAPPLY_PENDING.store(false, Ordering::Release);
     LAST_SENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
     let _guard = PENDING.lock().unwrap_or_else(|p| p.into_inner());
     PENDING_CV.notify_all();
@@ -1018,6 +1312,9 @@ pub fn reset_for_session() {
     ENABLED_GEN.fetch_add(1, Ordering::AcqRel);
     COMPONENT_CTX.lock().unwrap_or_else(|p| p.into_inner()).clear();
     COMPONENT_CHAR_BUDGET.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    LAST_COMPONENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    PENDING_REAPPLY.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    HAS_REAPPLY_PENDING.store(false, Ordering::Release);
     RECENT_TRANSLATIONS.lock().unwrap_or_else(|p| p.into_inner()).clear();
     LAST_SENT_TEXT.lock().unwrap_or_else(|p| p.into_inner()).clear();
     {
@@ -1112,6 +1409,58 @@ mod tests {
             }, 0, 0xABCD, &line).is_none());
         }
         assert!(calls <= (MAX_DISABLED_REPROBES as usize) + 1, "expected <= 3 calls, got {calls}");
+        reset_for_session();
+    }
+
+    #[test]
+    fn incremental_extension_detects_typewriter_growth() {
+        assert!(is_incremental_extension("He", "Hel"));
+        assert!(is_incremental_extension("Hello", "Hello world!"));
+        assert!(is_incremental_extension("مرح", "مرحبا"));
+        assert!(!is_incremental_extension("", "Hello"));
+        assert!(!is_incremental_extension("Hello", "Hello"));
+        assert!(!is_incremental_extension("Hello", "Goodbye"));
+        assert!(!is_incremental_extension("Hi", "Hi, this is a much longer paragraph appended all at once!"));
+    }
+
+    #[test]
+    fn set_enabled_queues_reapply_and_flushes_debounced_cached_text() {
+        let _guard = test_guard();
+        reset_for_session();
+        set_enabled(1, 0x1234, 0, true);
+        assert!(has_reapply_pending());
+        let targets = take_reapply_targets();
+        assert_eq!(targets, vec![(1, 0x1234, 0)]);
+        assert!(!has_reapply_pending());
+
+        RECENT_TRANSLATIONS
+            .lock()
+            .unwrap()
+            .insert("Hello world".to_owned(), Some("مرحبا بالعالم".to_owned()), None);
+        {
+            let mut db = DEBOUNCE.lock().unwrap();
+            db.insert(
+                (1, 0xBEEF),
+                DebounceEntry {
+                    hook_id: 1,
+                    ctx: 0x1234,
+                    ctx2: 0,
+                    component: 0xBEEF,
+                    gc_handle: 42,
+                    text: "Hello world".to_owned(),
+                    raw_text: "Hello world".to_owned(),
+                    last_updated: Instant::now() - Duration::from_millis(250),
+                },
+            );
+            HAS_DEBOUNCE_WORK.store(true, Ordering::Release);
+        }
+        flush_ready_debounced();
+        assert!(!has_debounce_work());
+        let (updates, frees) = take_async_work();
+        assert!(frees.is_empty());
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].text, "مرحبا بالعالم");
+        assert_eq!(updates[0].gc_handle, 42);
         reset_for_session();
     }
 

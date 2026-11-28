@@ -1,6 +1,9 @@
 <script setup>
 import { shallowRef, watch } from "vue";
+import Icon from "../Icon.vue";
+import Tooltip from "../Tooltip.vue";
 import { useI18n } from "../../composables/useI18n.js";
+import { useSession } from "../../composables/useSession.js";
 
 const props = defineProps({
   feed: { type: Array, required: true },
@@ -9,12 +12,40 @@ const props = defineProps({
 });
 
 const { t } = useI18n();
+const { status, addGlossaryTerm } = useSession();
 
 const tab = shallowRef("feed");
 const sampleText = shallowRef("مرحباً يا Ahmed في عالم <color=red>Khutaf</color> نقاط الصحة الخاصة بك <color=#4ade80>100</color> الحالة ممتازة.");
 const preview = shallowRef({ logical: "", shaped: "", codes: "" });
 const transBusy = shallowRef(false);
 const transError = shallowRef("");
+const glossarySavedIdx = shallowRef(-1);
+
+function inspectText(text) {
+  if (!text) return;
+  sampleText.value = String(text);
+  tab.value = "tester";
+}
+
+async function onQuickAddGlossary(item, idx) {
+  if (!item?.original || !item?.translated) return;
+  try {
+    await addGlossaryTerm(
+      item.original.replace(/<[^>]+>/g, "").trim(),
+      item.translated.trim(),
+      false,
+      Boolean(status.value.attached),
+    );
+    glossarySavedIdx.value = idx;
+    setTimeout(() => {
+      if (glossarySavedIdx.value === idx) glossarySavedIdx.value = -1;
+    }, 1500);
+  } catch {
+    // Error banner handles failure.
+  }
+}
+
+defineExpose({ inspectText });
 
 watch(
   sampleText,
@@ -99,6 +130,19 @@ function parseColorSegments(text) {
           <span>{{ item.elapsedMs }} ms</span>
           <span v-if="item.cached" class="tag">cache</span>
           <span v-if="item.error" class="err-tag">{{ item.error }}</span>
+          <Tooltip
+            v-if="item.original && item.translated && !item.error"
+            class="mini-gloss-tip"
+            :text="t('hbAddGlossaryTip')"
+          >
+            <button
+              class="mini-gloss-btn"
+              type="button"
+              @click="onQuickAddGlossary(item, idx)"
+            >
+              <Icon :name="glossarySavedIdx === idx ? 'Check' : 'BookOpen'" :size="11" />
+            </button>
+          </Tooltip>
         </div>
         <div class="src">{{ item.original }}</div>
         <div v-if="item.translated" class="ar" dir="rtl">{{ item.translated }}</div>
@@ -292,5 +336,23 @@ function parseColorSegments(text) {
 }
 .mono {
   font-family: var(--mono);
+}
+.mini-gloss-tip {
+  margin-inline-start: auto;
+}
+.mini-gloss-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.mini-gloss-btn:hover {
+  background: color-mix(in oklab, var(--fg) 10%, transparent);
+  color: var(--accent);
 }
 </style>

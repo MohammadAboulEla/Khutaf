@@ -805,7 +805,14 @@ fn handle_mono_text(api: &MonoApi, this: *mut c_void, text: *mut c_void, hook_id
     } else {
         Cow::Borrowed(&raw)
     };
-    match embed::process_unity(hook_id, caller_rel_ctx, 0, this as usize, &cleaned, &raw, || api.gchandle_pin(this)) {
+    let outcome =
+        embed::process_unity(hook_id, caller_rel_ctx, 0, this as usize, &cleaned, &raw, || api.gchandle_pin(this));
+    if let Some(ctx) = embed::lookup_cached_ctx(hook_id, this as usize) {
+        if ctx != 0 {
+            super::maybe_emit_component_meta(api, this, hook_id, ctx, 0);
+        }
+    }
+    match outcome {
         embed::ProcessOutcome::Replace { text: replaced, apply_font } => {
             if apply_font {
                 let (font_target, font_hook_id) = resolve_font_target(api, this, hook_id);
@@ -822,7 +829,12 @@ fn handle_mono_text(api: &MonoApi, this: *mut c_void, text: *mut c_void, hook_id
 
 unsafe extern "C" fn detour_canvas_will_render() {
     let orig: unsafe extern "C" fn() = load_fn(&ORIG_CANVAS_WILL_RENDER);
-    if embed::has_async_work() || embed::has_async_in_flight() || embed::has_verbose_scan_pending() {
+    if embed::has_async_work()
+        || embed::has_async_in_flight()
+        || embed::has_debounce_work()
+        || embed::has_reapply_pending()
+        || embed::has_verbose_scan_pending()
+    {
         if let Some(_guard) = hooks::Enter::try_new() {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if let Some(api) = MonoApi::get() {
@@ -836,7 +848,12 @@ unsafe extern "C" fn detour_canvas_will_render() {
 
 unsafe extern "C" fn detour_camera_pre_cull(cam: *mut c_void) {
     let orig: unsafe extern "C" fn(*mut c_void) = load_fn(&ORIG_CAMERA_PRE_CULL);
-    if embed::has_async_work() || embed::has_async_in_flight() || embed::has_verbose_scan_pending() {
+    if embed::has_async_work()
+        || embed::has_async_in_flight()
+        || embed::has_debounce_work()
+        || embed::has_reapply_pending()
+        || embed::has_verbose_scan_pending()
+    {
         if let Some(_guard) = hooks::Enter::try_new() {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if let Some(api) = MonoApi::get() {

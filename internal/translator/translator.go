@@ -16,6 +16,7 @@ type Provider interface {
 }
 
 type glossaryKey struct{}
+type dialogueCtxKey struct{}
 
 // WithGlossaryPrompt attaches matched glossary terms to ctx for LLM providers.
 func WithGlossaryPrompt(ctx context.Context, prompt string) context.Context {
@@ -31,5 +32,22 @@ func GlossaryPromptFromContext(ctx context.Context) string {
 		return ""
 	}
 	v, _ := ctx.Value(glossaryKey{}).(string)
+	return v
+}
+
+// WithDialogueContext attaches recent story dialogue turns (and active speaker) to ctx for LLM providers.
+func WithDialogueContext(ctx context.Context, prompt string) context.Context {
+	if prompt == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, dialogueCtxKey{}, prompt)
+}
+
+// DialogueContextFromContext extracts any attached rolling dialogue context from ctx.
+func DialogueContextFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(dialogueCtxKey{}).(string)
 	return v
 }

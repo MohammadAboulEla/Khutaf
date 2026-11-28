@@ -28,12 +28,23 @@ func (s *Session) SmartAutoEmbed() (SmartAutoEmbedResult, error) {
 		s.mu.Unlock()
 		return SmartAutoEmbedResult{}, errors.New("no game attached")
 	}
+	nowMs := currentUnixMs()
 	hooksList := make([]hook.HookInfo, 0, len(s.hooks))
+	dialogueKeys := make([]string, 0)
 	totalEmbeddable := 0
 	for _, h := range s.hooks {
-		hooksList = append(hooksList, h)
 		if h.Embeddable {
 			totalEmbeddable++
+		}
+		if s.muted[h.Key] {
+			continue
+		}
+		hooksList = append(hooksList, h)
+		if h.Embeddable {
+			v := s.buildHookViewLocked(h, nowMs)
+			if v.Category == HookCatDialogue || v.Category == HookCatSpeaker {
+				dialogueKeys = append(dialogueKeys, h.Key)
+			}
 		}
 	}
 	lastOut := make(map[string]string, len(s.lastOutput))
@@ -48,7 +59,13 @@ func (s *Session) SmartAutoEmbed() (SmartAutoEmbedResult, error) {
 	}
 	s.mu.Unlock()
 
-	selected := selectSmartEmbedHooks(hooksList, lastOut)
+	var selected []string
+	if len(dialogueKeys) > 0 {
+		sort.Strings(dialogueKeys)
+		selected = dialogueKeys
+	} else {
+		selected = selectSmartEmbedHooks(hooksList, lastOut)
+	}
 	enabledNow := 0
 	for _, key := range selected {
 		if already[key] {

@@ -330,10 +330,12 @@ function onSave() {
               <input v-model="form.nonBlocking" type="checkbox" />
               <span>{{ t("embNonBlocking") }}</span>
             </label>
-            <label class="chk" :title="t('verboseHooksTip')">
-              <input v-model="form.verboseHooks" type="checkbox" />
-              <span>{{ t("verboseHooksLabel") }}</span>
-            </label>
+            <Tooltip :text="t('verboseHooksTip')">
+              <label class="chk">
+                <input v-model="form.verboseHooks" type="checkbox" />
+                <span>{{ t("verboseHooksLabel") }}</span>
+              </label>
+            </Tooltip>
           </div>
 
           <div class="field pending-box" :class="{ disabled: !form.nonBlocking }">

@@ -165,12 +165,15 @@ type EmbedHook struct {
 	Ctx      uint64 `json:"ctx"`
 	Ctx2     uint64 `json:"ctx2"`
 	Sample   string `json:"sample,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Label    string `json:"label,omitempty"`
 }
 
 // GameProfile stores per-game state keyed by executable path.
 type GameProfile struct {
 	Title              string              `json:"title"`
 	EmbedHooks         []EmbedHook         `json:"embedHooks"`
+	MutedHooks         []EmbedHook         `json:"mutedHooks,omitempty"`
 	Pipeline           PipelineSettings    `json:"pipeline,omitempty"`
 	EmbedOverride      *EmbedSettings      `json:"embedOverride,omitempty"`
 	TranslatorOverride *TranslatorSettings `json:"translatorOverride,omitempty"`

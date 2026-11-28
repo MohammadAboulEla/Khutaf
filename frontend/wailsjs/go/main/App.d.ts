@@ -8,7 +8,13 @@ import {hook} from '../models';
 import {translator} from '../models';
 import {main} from '../models';
 
+export function AddGlossaryTerm(arg1:string,arg2:string,arg3:boolean,arg4:boolean):Promise<void>;
+
+export function AdjustFontScale(arg1:number):Promise<number>;
+
 export function AppVersion():Promise<string>;
+
+export function ApplyHookPreset(arg1:string):Promise<session.HookPresetResult>;
 
 export function Attach(arg1:number):Promise<void>;
 
@@ -34,6 +40,8 @@ export function ClearTelemetry():Promise<void>;
 
 export function ClearTranslationCache():Promise<number>;
 
+export function CycleDisplayMode():Promise<number>;
+
 export function DeleteCacheEntry(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function DeleteSavedGame(arg1:string):Promise<void>;
@@ -50,6 +58,8 @@ export function EnsureMainWindowGeometry():Promise<void>;
 
 export function ExportDiagnosticBundle():Promise<string>;
 
+export function ExportGameProfile(arg1:string):Promise<string>;
+
 export function GetConfig():Promise<config.Config>;
 
 export function GetTelemetrySnapshot():Promise<session.TelemetrySnapshot>;
@@ -59,6 +69,8 @@ export function GetUpdateStatus():Promise<updater.Status>;
 export function HideToTray():Promise<void>;
 
 export function Hooks():Promise<Array<session.HookView>>;
+
+export function ImportGameProfile(arg1:string):Promise<session.ImportProfileResult>;
 
 export function InstallUpdate(arg1:boolean):Promise<void>;
 
@@ -86,6 +98,8 @@ export function RemoveSavedGameHook(arg1:string,arg2:string,arg3:number,arg4:num
 
 export function RestartAsAdmin():Promise<void>;
 
+export function RestoreEmbedHooks(arg1:Array<string>):Promise<session.HookPresetResult>;
+
 export function SaveCacheEntry(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function SaveConfig(arg1:config.Config):Promise<void>;
@@ -101,6 +115,8 @@ export function SetDebugMode(arg1:boolean,arg2:boolean):Promise<void>;
 export function SetEmbed(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetGameAutoAttach(arg1:string,arg2:boolean):Promise<void>;
+
+export function SetHookMuted(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetHooksPopupOpen(arg1:boolean):Promise<void>;
 

@@ -24,12 +24,53 @@ const {
   saveGamePipeline,
   setGameAutoAttach,
   clearScopeCache,
+  exportGameProfile,
+  importGameProfile,
 } = useSession();
 
 const cacheCleared = shallowRef(false);
 const clearCacheModalOpen = shallowRef(false);
 const clearCacheInitialGame = shallowRef("");
 const expandedHooks = ref({});
+const profileFeedback = ref({});
+
+function setProfileFeedback(exePath, msg) {
+  profileFeedback.value = { ...profileFeedback.value, [exePath]: msg };
+  setTimeout(() => {
+    const next = { ...profileFeedback.value };
+    delete next[exePath];
+    profileFeedback.value = next;
+  }, 3500);
+}
+
+async function onExportProfile(g) {
+  try {
+    const dst = await exportGameProfile(g.exePath);
+    if (dst) {
+      setProfileFeedback(g.exePath, t("gvExportedOk"));
+    }
+  } catch {
+    // Error banner handles failure.
+  }
+}
+
+async function onImportProfile(g) {
+  try {
+    const res = await importGameProfile(g.exePath);
+    if (res && (res.title || res.hooksAdded || res.mutedAdded || res.glossaryAdded || res.rulesAdded || res.embedOverrideApplied)) {
+      setProfileFeedback(
+        g.exePath,
+        t("gvImportedOk", {
+          hooks: res.hooksAdded || 0,
+          glossary: res.glossaryAdded || 0,
+          rules: res.rulesAdded || 0,
+        }),
+      );
+    }
+  } catch {
+    // Error banner handles failure.
+  }
+}
 
 function toggleHooks(exePath) {
   expandedHooks.value[exePath] = !expandedHooks.value[exePath];
@@ -147,6 +188,7 @@ function ruleCount(g) {
             <span class="hlbl toggle-lbl">
               <Icon :name="expandedHooks[g.exePath] ? 'ChevronDown' : 'Chevron'" :size="12" />
               <span>Saved Embed Hooks ({{ g.embedHooks?.length || 0 }})</span>
+              <span v-if="g.mutedHooks?.length" class="ov-pill">{{ t("gvMutedCount", { count: g.mutedHooks.length }) }}</span>
             </span>
             <button
               v-if="g.embedHooks?.length"
@@ -233,15 +275,24 @@ function ruleCount(g) {
               <span>{{ t("gvAutoAttach") }}</span>
             </label>
           </Tooltip>
-          <button
-            class="link-btn"
-            type="button"
-            :disabled="cacheCount === 0"
-            @click="openClearCache(g.exePath)"
-          >
-            {{ t("gvClearGameCache") }}
-          </button>
+          <div class="rules-actions">
+            <button class="link-btn" type="button" @click="onExportProfile(g)">
+              {{ t("gvExportProfile") }}
+            </button>
+            <button class="link-btn accent" type="button" @click="onImportProfile(g)">
+              {{ t("gvImportProfile") }}
+            </button>
+            <button
+              class="link-btn"
+              type="button"
+              :disabled="cacheCount === 0"
+              @click="openClearCache(g.exePath)"
+            >
+              {{ t("gvClearGameCache") }}
+            </button>
+          </div>
         </div>
+        <div v-if="profileFeedback[g.exePath]" class="profile-ok">{{ profileFeedback[g.exePath] }}</div>
       </div>
     </div>
 
@@ -541,5 +592,10 @@ function ruleCount(g) {
 }
 .auto-chk input {
   accent-color: var(--accent);
+}
+.profile-ok {
+  font-size: 11px;
+  color: #4ade80;
+  padding: 2px 4px;
 }
 </style>

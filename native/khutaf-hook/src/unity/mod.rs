@@ -6,7 +6,7 @@ pub mod mono;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void, CString};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
@@ -393,6 +393,167 @@ pub fn detect() -> Engine {
 
 static HOOKS_INSTALLED: AtomicBool = AtomicBool::new(false);
 static INSTALLED_HOOKS: LazyLock<Mutex<Vec<(u64, String, String)>>> = LazyLock::new(Default::default);
+static SEEN_META_KEYS: LazyLock<Mutex<HashSet<(u64, u64, u64)>>> = LazyLock::new(Default::default);
+static SEEN_META_COMPS: LazyLock<Mutex<HashSet<(u64, usize)>>> = LazyLock::new(Default::default);
+
+struct HierarchyMeta {
+    resolved: bool,
+    t_component: *mut c_void,
+    m_comp_get_transform: *mut c_void,
+    m_obj_get_name: *mut c_void,
+    m_transform_get_parent: *mut c_void,
+}
+
+unsafe impl Send for HierarchyMeta {}
+
+static HIERARCHY_META: LazyLock<Mutex<HierarchyMeta>> = LazyLock::new(|| {
+    Mutex::new(HierarchyMeta {
+        resolved: false,
+        t_component: std::ptr::null_mut(),
+        m_comp_get_transform: std::ptr::null_mut(),
+        m_obj_get_name: std::ptr::null_mut(),
+        m_transform_get_parent: std::ptr::null_mut(),
+    })
+});
+
+pub fn reset_for_session() {
+    SEEN_META_KEYS.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    SEEN_META_COMPS.lock().unwrap_or_else(|p| p.into_inner()).clear();
+}
+
+fn ensure_hierarchy_meta(rt: &dyn UnityRuntime, meta: &mut HierarchyMeta) {
+    if meta.resolved {
+        return;
+    }
+    meta.resolved = true;
+    let t_obj = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Object");
+    if !t_obj.is_null() {
+        meta.m_obj_get_name = rt.find_method_in_hierarchy(t_obj, "get_name", 0);
+    }
+    let t_comp = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Component");
+    meta.t_component = t_comp;
+    if !t_comp.is_null() {
+        meta.m_comp_get_transform = rt.find_method_in_hierarchy(t_comp, "get_transform", 0);
+    }
+    let t_tr = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Transform");
+    if !t_tr.is_null() {
+        meta.m_transform_get_parent = rt.find_method_in_hierarchy(t_tr, "get_parent", 0);
+    }
+}
+
+fn sanitize_meta_segment(raw: &str) -> String {
+    raw.chars()
+        .map(|c| match c {
+            '|' | '\r' | '\n' | '\t' => ' ',
+            _ => c,
+        })
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+fn resolve_component_hierarchy(rt: &dyn UnityRuntime, component: *mut c_void) -> Option<String> {
+    if component.is_null() {
+        return None;
+    }
+    let comp_cls = rt.object_get_class(component);
+    if comp_cls.is_null() {
+        return None;
+    }
+    let (t_comp, m_get_tr, m_get_name, m_get_parent) = {
+        let mut meta = HIERARCHY_META.lock().unwrap_or_else(|p| p.into_inner());
+        ensure_hierarchy_meta(rt, &mut meta);
+        (
+            meta.t_component,
+            meta.m_comp_get_transform,
+            meta.m_obj_get_name,
+            meta.m_transform_get_parent,
+        )
+    };
+
+    if !t_comp.is_null() && rt.class_is_assignable_from(t_comp, comp_cls) && !m_get_tr.is_null() && !m_get_name.is_null()
+    {
+        let mut tr = rt.invoke(m_get_tr, component, &mut []).unwrap_or(std::ptr::null_mut());
+        let mut parts: Vec<String> = Vec::with_capacity(4);
+        for _ in 0..4 {
+            if tr.is_null() {
+                break;
+            }
+            if let Some(name_ptr) = rt.invoke(m_get_name, tr, &mut []) {
+                let seg = sanitize_meta_segment(&rt.string_to_rust(name_ptr));
+                if !seg.is_empty() && !seg.eq_ignore_ascii_case("canvas (environment)") {
+                    parts.push(seg);
+                }
+            }
+            if m_get_parent.is_null() {
+                break;
+            }
+            tr = rt.invoke(m_get_parent, tr, &mut []).unwrap_or(std::ptr::null_mut());
+        }
+        if !parts.is_empty() {
+            parts.reverse();
+            let mut path = parts.join("/");
+            if path.chars().count() > 96 {
+                path = path.chars().take(96).collect();
+            }
+            return Some(path);
+        }
+    }
+
+    // Fallback for non-Component UI elements (e.g. UI Toolkit VisualElement.get_name).
+    let m_name = rt.find_method_in_hierarchy(comp_cls, "get_name", 0);
+    if !m_name.is_null() {
+        if let Some(name_ptr) = rt.invoke(m_name, component, &mut []) {
+            let seg = sanitize_meta_segment(&rt.string_to_rust(name_ptr));
+            if !seg.is_empty() {
+                return Some(seg.chars().take(96).collect());
+            }
+        }
+    }
+    None
+}
+
+/// Emits the Unity GameObject hierarchy path once per discovered `(hook_id, ctx, ctx2)`.
+pub(crate) fn maybe_emit_component_meta(
+    rt: &dyn UnityRuntime,
+    component: *mut c_void,
+    hook_id: u64,
+    ctx: u64,
+    ctx2: u64,
+) {
+    if component.is_null() || (ctx == 0 && ctx2 == 0) {
+        return;
+    }
+    let key = (hook_id, ctx, ctx2);
+    {
+        let keys = SEEN_META_KEYS.lock().unwrap_or_else(|p| p.into_inner());
+        if keys.contains(&key) {
+            return;
+        }
+    }
+    let comp_key = (hook_id, component as usize);
+    {
+        let mut comps = SEEN_META_COMPS.lock().unwrap_or_else(|p| p.into_inner());
+        if !comps.insert(comp_key) {
+            return;
+        }
+        if comps.len() >= 4096 {
+            comps.clear();
+        }
+    }
+    if let Some(path) = resolve_component_hierarchy(rt, component) {
+        let should_send = {
+            let mut keys = SEEN_META_KEYS.lock().unwrap_or_else(|p| p.into_inner());
+            if keys.len() >= 2048 {
+                keys.clear();
+            }
+            keys.insert(key)
+        };
+        if should_send {
+            crate::hook_meta(hook_id, ctx, ctx2, &path);
+        }
+    }
+}
 
 pub(crate) fn record_and_emit_hook(hook_id: u64, code: &str, name: &str) {
     {
@@ -775,10 +936,10 @@ pub(crate) fn flush_async_updates(rt: &dyn UnityRuntime) {
     }
 }
 
-fn scan_active_static_ui(rt: &dyn UnityRuntime) {
+fn find_active_components(rt: &dyn UnityRuntime, asm: &str, ns: &str, cls_name: &str) -> Vec<*mut c_void> {
     let t_obj = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Object");
     if t_obj.is_null() {
-        return;
+        return Vec::new();
     }
     let m_find_old = rt.find_method_param0(t_obj, "FindObjectsOfType", 1, "Type");
     let m_find_new = if m_find_old.is_null() {
@@ -787,7 +948,7 @@ fn scan_active_static_ui(rt: &dyn UnityRuntime) {
         std::ptr::null_mut()
     };
     if m_find_old.is_null() && m_find_new.is_null() {
-        return;
+        return Vec::new();
     }
     let t_behaviour = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Behaviour");
     let m_is_active = if t_behaviour.is_null() {
@@ -795,43 +956,142 @@ fn scan_active_static_ui(rt: &dyn UnityRuntime) {
     } else {
         rt.find_method(t_behaviour, "get_isActiveAndEnabled", 0)
     };
+    let k = rt.find_class(asm, ns, cls_name);
+    if k.is_null() {
+        return Vec::new();
+    }
+    let type_obj = rt.class_get_type_object(k);
+    if type_obj.is_null() {
+        return Vec::new();
+    }
+    let arr = if !m_find_old.is_null() {
+        rt.invoke(m_find_old, std::ptr::null_mut(), &mut [type_obj])
+    } else {
+        let mut sort_mode: i32 = 0; // FindObjectsSortMode.None
+        rt.invoke(
+            m_find_new,
+            std::ptr::null_mut(),
+            &mut [type_obj, &mut sort_mode as *mut i32 as *mut c_void],
+        )
+    };
+    let Some(arr) = arr else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for comp in rt.array_elements(arr).into_iter().take(256) {
+        if comp.is_null() {
+            continue;
+        }
+        if !m_is_active.is_null() {
+            let Some(boxed) = rt.invoke(m_is_active, comp, &mut []) else { continue };
+            let ptr = rt.unbox(boxed) as *const u8;
+            if ptr.is_null() || unsafe { *ptr } == 0 {
+                continue;
+            }
+        }
+        out.push(comp);
+    }
+    out
+}
 
+fn scan_active_static_ui(rt: &dyn UnityRuntime) {
     let targets = [
         ("Unity.TextMeshPro", "TMPro", "TMP_Text", HOOK_TMP_STATIC_UI),
         ("UnityEngine.UI", "UnityEngine.UI", "Text", HOOK_UI_TEXT_STATIC_UI),
     ];
     for (asm, ns, cls_name, hook_id) in targets {
-        let k = rt.find_class(asm, ns, cls_name);
-        if k.is_null() {
-            continue;
+        for comp in find_active_components(rt, asm, ns, cls_name) {
+            handle_static_ui_on_enable(rt, comp, hook_id);
         }
-        let type_obj = rt.class_get_type_object(k);
-        if type_obj.is_null() {
-            continue;
+    }
+}
+
+fn reapply_single_component(rt: &dyn UnityRuntime, comp: *mut c_void, hook_id: u64, ctx: u64, ctx2: u64) {
+    let comp_cls = rt.object_get_class(comp);
+    if comp_cls.is_null() {
+        return;
+    }
+    let text_ptr = read_component_text(rt, comp, comp_cls, hook_id);
+    if text_ptr.is_null() {
+        return;
+    }
+    let raw = rt.string_to_rust(text_ptr);
+    if raw.trim().is_empty() {
+        return;
+    }
+    if !embed::clear_text_enabled() && !embed::has_translatable_letters(&raw) {
+        return;
+    }
+    let cleaned: Cow<'_, str> = if is_tmp_like_tags(hook_id) {
+        clean_tmp_tags(&raw)
+    } else {
+        Cow::Borrowed(raw.as_str())
+    };
+    if let embed::ProcessOutcome::Replace { text: replaced, apply_font } = embed::process_unity(
+        hook_id,
+        || ctx,
+        ctx2,
+        comp as usize,
+        &cleaned,
+        &raw,
+        || rt.gchandle_pin(comp),
+    ) {
+        let mut cache = ASYNC_UNITY_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+        let m_set = resolve_setter_method(rt, &mut cache, comp_cls, hook_id);
+        if m_set.is_null() {
+            return;
         }
-        let arr = if !m_find_old.is_null() {
-            rt.invoke(m_find_old, std::ptr::null_mut(), &mut [type_obj])
-        } else {
-            let mut sort_mode: i32 = 0; // FindObjectsSortMode.None
-            rt.invoke(
-                m_find_new,
-                std::ptr::null_mut(),
-                &mut [type_obj, &mut sort_mode as *mut i32 as *mut c_void],
-            )
-        };
-        let Some(arr) = arr else { continue };
-        for comp in rt.array_elements(arr).into_iter().take(256) {
-            if comp.is_null() {
-                continue;
+        if apply_font {
+            embed::remember_output(&replaced);
+            let (font_target, font_hook_id) = resolve_font_target(rt, comp, hook_id);
+            if !font_target.is_null() {
+                font::on_text(rt, font_target, font_hook_id, &replaced);
             }
-            if !m_is_active.is_null() {
-                let Some(boxed) = rt.invoke(m_is_active, comp, &mut []) else { continue };
-                let ptr = rt.unbox(boxed) as *const u8;
-                if ptr.is_null() || unsafe { *ptr } == 0 {
+        }
+        let new_str = rt.string_new(&replaced);
+        if !new_str.is_null() {
+            let _ = rt.invoke(m_set, comp, &mut [new_str]);
+            rebuild_component_layout(rt, &mut cache, comp, comp_cls);
+        }
+    }
+}
+
+/// Immediately translates currently visible Unity components for hooks that were just enabled.
+fn reapply_enabled_hooks(rt: &dyn UnityRuntime) {
+    let targets = embed::take_reapply_targets();
+    if targets.is_empty() {
+        return;
+    }
+    let need_static_tmp = targets.iter().any(|&(h, _, _)| h == HOOK_TMP_STATIC_UI);
+    let need_static_ui = targets.iter().any(|&(h, _, _)| h == HOOK_UI_TEXT_STATIC_UI);
+    let need_dyn_tmp = targets.iter().any(|&(h, _, _)| is_tmp_hook(h) && h != HOOK_TMP_STATIC_UI);
+    let need_dyn_ui = targets.iter().any(|&(h, _, _)| h == HOOK_UI_TEXT_SET_TEXT);
+
+    if need_static_tmp || need_dyn_tmp {
+        for comp in find_active_components(rt, "Unity.TextMeshPro", "TMPro", "TMP_Text") {
+            if need_dyn_tmp {
+                if let Some((hid, ctx, ctx2)) = embed::find_reapply_hook_for_component(comp as usize, &targets) {
+                    reapply_single_component(rt, comp, hid, ctx, ctx2);
                     continue;
                 }
             }
-            handle_static_ui_on_enable(rt, comp, hook_id);
+            if need_static_tmp && embed::verbose_hooks_enabled() {
+                handle_static_ui_on_enable(rt, comp, HOOK_TMP_STATIC_UI);
+            }
+        }
+    }
+
+    if need_static_ui || need_dyn_ui {
+        for comp in find_active_components(rt, "UnityEngine.UI", "UnityEngine.UI", "Text") {
+            if need_dyn_ui {
+                if let Some((hid, ctx, ctx2)) = embed::find_reapply_hook_for_component(comp as usize, &targets) {
+                    reapply_single_component(rt, comp, hid, ctx, ctx2);
+                    continue;
+                }
+            }
+            if need_static_ui && embed::verbose_hooks_enabled() {
+                handle_static_ui_on_enable(rt, comp, HOOK_UI_TEXT_STATIC_UI);
+            }
         }
     }
 }
@@ -842,8 +1102,14 @@ pub(crate) fn on_frame_tick(rt: &dyn UnityRuntime) {
     {
         embed::reap_expired_async();
     }
+    if embed::has_debounce_work() {
+        embed::flush_ready_debounced();
+    }
     if embed::take_verbose_scan_pending() && embed::verbose_hooks_enabled() {
         scan_active_static_ui(rt);
+    }
+    if embed::has_reapply_pending() {
+        reapply_enabled_hooks(rt);
     }
     if embed::has_async_work() {
         flush_async_updates(rt);

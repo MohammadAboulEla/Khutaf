@@ -51,6 +51,7 @@ fn run() {
     loop {
         ipc::connect_wait(pid);
         embed::reset_for_session();
+        unity::reset_for_session();
         let engine = unity::detect();
         ipc::send(&Msg::Hello {
             proto: PROTO_VERSION,
@@ -87,4 +88,10 @@ pub(crate) fn telemetry(subsys: &str, func: &str, dur_us: u64, lvl: &str, msg: &
     };
     let line = format!("[telemetry|{subsys}|{func}|{dur_us}|{lvl}] {msg}");
     ipc::send(&Msg::Log { level: wire_lvl, msg: line });
+}
+
+/// Sends Unity component hierarchy metadata over `Msg::Log` without breaking wire compatibility.
+pub(crate) fn hook_meta(hook_id: u64, ctx: u64, ctx2: u64, path: &str) {
+    let line = format!("[meta|{hook_id}|{ctx:x}|{ctx2:x}] {path}");
+    ipc::send(&Msg::Log { level: level::INFO, msg: line });
 }

@@ -366,6 +366,8 @@ export namespace config {
 	    ctx: number;
 	    ctx2: number;
 	    sample?: string;
+	    path?: string;
+	    label?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new EmbedHook(source);
@@ -378,6 +380,8 @@ export namespace config {
 	        this.ctx = source["ctx"];
 	        this.ctx2 = source["ctx2"];
 	        this.sample = source["sample"];
+	        this.path = source["path"];
+	        this.label = source["label"];
 	    }
 	}
 	
@@ -700,6 +704,40 @@ export namespace session {
 	        this.lastCalledAt = source["lastCalledAt"];
 	    }
 	}
+	export class HookPresetResult {
+	    preset: string;
+	    enabledNow: number;
+	    disabledNow: number;
+	    totalActive: number;
+	    previousKeys: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new HookPresetResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.preset = source["preset"];
+	        this.enabledNow = source["enabledNow"];
+	        this.disabledNow = source["disabledNow"];
+	        this.totalActive = source["totalActive"];
+	        this.previousKeys = source["previousKeys"];
+	    }
+	}
+	export class HookSample {
+	    text: string;
+	    atMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new HookSample(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.atMs = source["atMs"];
+	    }
+	}
 	export class HookView {
 	    key: string;
 	    hookCode: string;
@@ -710,7 +748,15 @@ export namespace session {
 	    ctx2: number;
 	    embeddable: boolean;
 	    embedding: boolean;
+	    muted?: boolean;
 	    lastText?: string;
+	    objectPath?: string;
+	    category: string;
+	    dialogueScore: number;
+	    hitCount: number;
+	    updatesPerSec: number;
+	    lastSeenMs: number;
+	    history?: HookSample[];
 	
 	    static createFrom(source: any = {}) {
 	        return new HookView(source);
@@ -727,13 +773,62 @@ export namespace session {
 	        this.ctx2 = source["ctx2"];
 	        this.embeddable = source["embeddable"];
 	        this.embedding = source["embedding"];
+	        this.muted = source["muted"];
 	        this.lastText = source["lastText"];
+	        this.objectPath = source["objectPath"];
+	        this.category = source["category"];
+	        this.dialogueScore = source["dialogueScore"];
+	        this.hitCount = source["hitCount"];
+	        this.updatesPerSec = source["updatesPerSec"];
+	        this.lastSeenMs = source["lastSeenMs"];
+	        this.history = this.convertValues(source["history"], HookSample);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ImportProfileResult {
+	    title: string;
+	    hooksAdded: number;
+	    mutedAdded: number;
+	    glossaryAdded: number;
+	    rulesAdded: number;
+	    embedOverrideApplied: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportProfileResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.title = source["title"];
+	        this.hooksAdded = source["hooksAdded"];
+	        this.mutedAdded = source["mutedAdded"];
+	        this.glossaryAdded = source["glossaryAdded"];
+	        this.rulesAdded = source["rulesAdded"];
+	        this.embedOverrideApplied = source["embedOverrideApplied"];
 	    }
 	}
 	export class SavedGame {
 	    exePath: string;
 	    title: string;
 	    embedHooks: config.EmbedHook[];
+	    mutedHooks?: config.EmbedHook[];
 	    pipeline: config.PipelineSettings;
 	    embedOverride?: config.EmbedSettings;
 	    translatorOverride?: config.TranslatorSettings;
@@ -750,6 +845,7 @@ export namespace session {
 	        this.exePath = source["exePath"];
 	        this.title = source["title"];
 	        this.embedHooks = this.convertValues(source["embedHooks"], config.EmbedHook);
+	        this.mutedHooks = this.convertValues(source["mutedHooks"], config.EmbedHook);
 	        this.pipeline = this.convertValues(source["pipeline"], config.PipelineSettings);
 	        this.embedOverride = this.convertValues(source["embedOverride"], config.EmbedSettings);
 	        this.translatorOverride = this.convertValues(source["translatorOverride"], config.TranslatorSettings);

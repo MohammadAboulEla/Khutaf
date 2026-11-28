@@ -199,10 +199,20 @@ func (s *Session) Detach() {
 	s.hooks = map[string]hook.HookInfo{}
 	s.hookAddrs = map[string]map[uint32]uint64{}
 	s.embedding = map[string]bool{}
+	s.muted = map[string]bool{}
 	s.lastOutput = map[string]string{}
+	s.hookStats = map[string]*hookIntel{}
+	s.pendingMeta = map[hookMetaKey]string{}
+	s.lastDialogueMs = 0
+	s.lastDialogueKey = ""
 	s.gamePath = ""
 	s.engine = ""
 	s.mu.Unlock()
+	s.dialogueCtxMu.Lock()
+	s.dialogueCtx = nil
+	s.lastSpeaker = ""
+	s.lastSpeakerAt = time.Time{}
+	s.dialogueCtxMu.Unlock()
 	s.setLastEmbed("", hook.ThreadParam{})
 	if prevPath != "" {
 		s.recordDetachCooldown(prevPath)

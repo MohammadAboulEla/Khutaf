@@ -18,6 +18,7 @@ type SavedGame struct {
 	ExePath            string                     `json:"exePath"`
 	Title              string                     `json:"title"`
 	EmbedHooks         []config.EmbedHook         `json:"embedHooks"`
+	MutedHooks         []config.EmbedHook         `json:"mutedHooks,omitempty"`
 	Pipeline           config.PipelineSettings    `json:"pipeline"`
 	EmbedOverride      *config.EmbedSettings      `json:"embedOverride,omitempty"`
 	TranslatorOverride *config.TranslatorSettings `json:"translatorOverride,omitempty"`
@@ -56,6 +57,7 @@ func (s *Session) SavedGames() []SavedGame {
 			ExePath:            exePath,
 			Title:              title,
 			EmbedHooks:         prof.EmbedHooks,
+			MutedHooks:         prof.MutedHooks,
 			Pipeline:           prof.Pipeline,
 			EmbedOverride:      prof.EmbedOverride,
 			TranslatorOverride: prof.TranslatorOverride,
@@ -115,14 +117,15 @@ func (s *Session) RemoveSavedGameHook(exePath, hookCode string, ctx, ctx2 uint64
 
 	s.mu.Lock()
 	attachedMatch := s.gamePath != "" && strings.EqualFold(filepath.Clean(s.gamePath), filepath.Clean(exePath))
+	nowMs := currentUnixMs()
 	var tps []hook.ThreadParam
-	var liveDisabled []hook.HookInfo
+	var liveDisabled []HookView
 	if attachedMatch {
 		seenTP := map[string]bool{}
 		for _, h := range s.hooks {
 			if h.HookCode == hookCode && h.Ctx == ctx && h.Ctx2 == ctx2 {
 				delete(s.embedding, h.Key)
-				liveDisabled = append(liveDisabled, h)
+				liveDisabled = append(liveDisabled, s.buildHookViewLocked(h, nowMs))
 				if !seenTP[h.Key] {
 					seenTP[h.Key] = true
 					tps = append(tps, h.TP)
@@ -146,8 +149,8 @@ func (s *Session) RemoveSavedGameHook(exePath, hookCode string, ctx, ctx2 uint64
 			s.host.UseEmbed(tp, false)
 		}
 	}
-	for _, h := range liveDisabled {
-		s.post(EventHookNew, HookView{HookInfo: h, Embedding: false})
+	for _, view := range liveDisabled {
+		s.post(EventHookNew, view)
 	}
 	return nil
 }

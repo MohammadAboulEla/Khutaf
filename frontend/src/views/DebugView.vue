@@ -1,5 +1,6 @@
 <script setup>
 import { computed, shallowRef } from "vue";
+import Tooltip from "../components/Tooltip.vue";
 import { useSession } from "../composables/useSession.js";
 
 const {
@@ -194,31 +195,31 @@ function handleClearAll() {
           </p>
         </div>
         <div class="actions">
-          <button
-            class="btn"
-            :class="{ primary: status.debugMode }"
-            type="button"
-            title="When OFF, only INFO/WARN/ERROR alerts are recorded. Turn ON to record every TRACE/DEBUG span and pipeline waterfall."
-            @click="
-              status.debugMode
-                ? setDebugMode(false, status.debugRealTrans)
-                : setDebugMode(true, true)
-            "
-          >
-            {{ status.debugMode ? "Verbose Trace: ON" : "Verbose Trace: OFF" }}
-          </button>
-          <label
-            class="chk"
-            title="Replaces live translations with 'نص اختباري <id>' (0 ms) to benchmark hook & Arabic shaping without network latency."
-          >
-            <input
-              type="checkbox"
-              :checked="status.debugMode && !status.debugRealTrans"
-              :disabled="!status.debugMode"
-              @change="setDebugMode(status.debugMode, !$event.target.checked)"
-            />
-            <span>Mock Translation (0 ms)</span>
-          </label>
+          <Tooltip text="When OFF, only INFO/WARN/ERROR alerts are recorded. Turn ON to record every TRACE/DEBUG span and pipeline waterfall.">
+            <button
+              class="btn"
+              :class="{ primary: status.debugMode }"
+              type="button"
+              @click="
+                status.debugMode
+                  ? setDebugMode(false, status.debugRealTrans)
+                  : setDebugMode(true, true)
+              "
+            >
+              {{ status.debugMode ? "Verbose Trace: ON" : "Verbose Trace: OFF" }}
+            </button>
+          </Tooltip>
+          <Tooltip text="Replaces live translations with 'نص اختباري <id>' (0 ms) to benchmark hook & Arabic shaping without network latency.">
+            <label class="chk">
+              <input
+                type="checkbox"
+                :checked="status.debugMode && !status.debugRealTrans"
+                :disabled="!status.debugMode"
+                @change="setDebugMode(status.debugMode, !$event.target.checked)"
+              />
+              <span>Mock Translation (0 ms)</span>
+            </label>
+          </Tooltip>
           <button class="btn" type="button" @click="handleExport">
             Export .jsonl
           </button>
@@ -391,15 +392,17 @@ function handleClearAll() {
                     <span v-if="ev.fields?.key" class="mono muted"> [{{ ev.fields.key }}]</span>
                     <span v-if="ev.fields?.tier" class="mono muted"> ({{ ev.fields.tier }})</span>
                   </div>
-                  <div v-if="waterfallSegments(ev)" class="wf-bar" title="Pre -> Trans -> Post -> Shape -> IPC">
-                    <span
+                  <div v-if="waterfallSegments(ev)" class="wf-bar">
+                    <Tooltip
                       v-for="seg in waterfallSegments(ev)"
                       :key="seg.name"
-                      class="wf-seg"
-                      :class="seg.cls"
+                      class="wf-seg-tip"
                       :style="{ width: seg.w + '%' }"
-                      :title="`${seg.name}: ${seg.us} µs`"
-                    ></span>
+                      :text="`${seg.name}: ${seg.us} µs`"
+                      mono
+                    >
+                      <span class="wf-seg" :class="seg.cls"></span>
+                    </Tooltip>
                   </div>
                 </td>
               </tr>
@@ -735,7 +738,11 @@ function handleClearAll() {
   overflow: hidden;
   background: var(--bg-elev);
 }
+.wf-seg-tip {
+  height: 100%;
+}
 .wf-seg {
+  width: 100%;
   height: 100%;
 }
 .wf-pre {

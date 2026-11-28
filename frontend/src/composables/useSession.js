@@ -45,13 +45,23 @@ import {
   registerHookListeners,
   hooks,
   hookOutputs,
+  hookHistory,
+  hookPulses,
   embedFeed,
   quickHooksOpen,
   quickHooksStandalone,
+  resetHookState,
   applyHooksSnapshot,
+  applyHookOutputBatch,
   refreshHooks,
   setEmbed,
+  setHookMuted as runSetHookMuted,
+  applyHookPreset as runApplyHookPreset,
+  restoreEmbedHooks as runRestoreEmbedHooks,
   smartAutoEmbed as runSmartAutoEmbed,
+  addGlossaryTerm as runAddGlossaryTerm,
+  cycleDisplayMode,
+  adjustFontScale,
   setQuickHooksOpen,
   showMainFromHooksPopup,
 } from "./useHooks.js";
@@ -74,6 +84,8 @@ import {
   saveGamePipeline,
   saveGameOverrides as saveOverrides,
   setGameAutoAttach,
+  exportGameProfile,
+  importGameProfile,
 } from "./useConfig.js";
 
 const status = ref({
@@ -114,7 +126,7 @@ function init() {
     flushTimer = setTimeout(() => {
       flushTimer = null;
       if (Object.keys(pendingOutputs).length) {
-        hookOutputs.value = { ...hookOutputs.value, ...pendingOutputs };
+        applyHookOutputBatch(pendingOutputs);
         pendingOutputs = {};
       }
       if (pendingFeed.length) {
@@ -151,8 +163,9 @@ function init() {
   registerUpdaterListeners();
   registerBenchmarkListeners();
   registerHookListeners({
-    enqueueOutput: ({ key, text }) => {
-      pendingOutputs[key] = text;
+    enqueueOutput: (payload) => {
+      if (!payload?.key) return;
+      pendingOutputs[payload.key] = payload;
       scheduleFlush();
     },
     enqueueEmbedLine: (line) => {
@@ -160,7 +173,11 @@ function init() {
         cacheCount.value++;
       }
       if (line?.key && line?.original) {
-        pendingOutputs[line.key] = line.original;
+        const prev = pendingOutputs[line.key];
+        pendingOutputs[line.key] =
+          typeof prev === "object" && prev !== null
+            ? { ...prev, text: line.original }
+            : { key: line.key, text: line.original, atMs: Date.now() };
       }
       pendingFeed.push(line);
       scheduleFlush();
@@ -210,8 +227,7 @@ async function refreshProcesses() {
 async function attach(pid) {
   clearError();
   try {
-    hooks.value = [];
-    hookOutputs.value = {};
+    resetHookState();
     await callApp("Attach", Number(pid));
     const st = await callApp("Status");
     if (st) status.value = st;
@@ -223,8 +239,7 @@ async function attach(pid) {
 async function quickAttach(exePath) {
   clearError();
   try {
-    hooks.value = [];
-    hookOutputs.value = {};
+    resetHookState();
     await callApp("QuickAttach", exePath);
     const st = await callApp("Status");
     if (st) status.value = st;
@@ -239,8 +254,7 @@ async function quickAttach(exePath) {
 async function detach() {
   clearError();
   await callApp("Detach");
-  hooks.value = [];
-  hookOutputs.value = {};
+  resetHookState();
 }
 
 const previewArabic = (text) => callApp("PreviewArabic", text);
@@ -260,6 +274,11 @@ const saveGameOverrides = (exePath, embedOverride, translatorOverride) =>
   });
 
 const smartAutoEmbed = () => runSmartAutoEmbed(refreshSavedGames);
+const setHookMuted = (key, muted) => runSetHookMuted(key, muted, refreshSavedGames);
+const applyHookPreset = (preset) => runApplyHookPreset(preset, refreshSavedGames);
+const restoreEmbedHooks = (keys) => runRestoreEmbedHooks(keys, refreshSavedGames);
+const addGlossaryTerm = (source, target, caseSensitive = false, scopeGame = true) =>
+  runAddGlossaryTerm(source, target, caseSensitive, scopeGame, refreshSavedGames);
 
 async function restartAsAdmin() {
   clearError();
@@ -294,6 +313,8 @@ export function useSession() {
     processes: readonly(processes),
     hooks: readonly(hooks),
     hookOutputs: readonly(hookOutputs),
+    hookHistory: readonly(hookHistory),
+    hookPulses: readonly(hookPulses),
     embedFeed: readonly(embedFeed),
     logs: readonly(logs),
     debugTraces: readonly(debugTraces),
@@ -326,10 +347,18 @@ export function useSession() {
     quickAttach,
     detach,
     setEmbed,
+    setHookMuted,
+    applyHookPreset,
+    restoreEmbedHooks,
+    addGlossaryTerm,
+    cycleDisplayMode,
+    adjustFontScale,
     saveConfig,
     saveGamePipeline,
     saveGameOverrides,
     setGameAutoAttach,
+    exportGameProfile,
+    importGameProfile,
     deleteSavedGame,
     clearSavedGameHooks,
     removeSavedGameHook,

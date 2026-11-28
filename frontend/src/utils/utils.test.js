@@ -1,7 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { TRADITIONAL_PROVIDERS, ALL_PROVIDERS } from "./providers.js";
-import { formatHookLabel } from "./hookLabels.js";
+import {
+  formatHookLabel,
+  formatObjectPath,
+  formatHookPrimaryTitle,
+  getHookCategoryMeta,
+  formatRelativeAgo,
+} from "./hookLabels.js";
 import { formatFriendlyError } from "./friendlyErrors.js";
 
 describe("providers registry", () => {
@@ -37,6 +43,18 @@ describe("formatHookLabel", () => {
       formatHookLabel({ hookCode: "UNITY:TextAnimator.SetText" }, -1, "en"),
       "Febucci TextAnimator",
     );
+  });
+
+  it("formats Unity GameObject paths, categories, and relative timestamps", () => {
+    assert.equal(formatObjectPath("Canvas/DialoguePanel/BodyText"), "DialoguePanel › BodyText");
+    assert.equal(
+      formatHookPrimaryTitle({ hookCode: "UNITY:TMP_Text.set_text", objectPath: "Canvas/HUD/Speech/Text" }, "en"),
+      "HUD › Speech › Text",
+    );
+    assert.equal(getHookCategoryMeta("dialogue", "ar").label, "حوار");
+    assert.equal(getHookCategoryMeta("speaker", "en").label, "Speaker");
+    assert.equal(formatRelativeAgo(10_000, 11_500, "en"), "now");
+    assert.equal(formatRelativeAgo(10_000, 22_000, "ar"), "منذ 12ث");
   });
 });
 

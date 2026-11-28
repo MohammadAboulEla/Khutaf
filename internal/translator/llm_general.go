@@ -88,6 +88,9 @@ func (l *LLM) Translate(ctx context.Context, text string) (string, error) {
 	if gp := GlossaryPromptFromContext(ctx); gp != "" {
 		prompt += "\n\n" + gp
 	}
+	if dc := DialogueContextFromContext(ctx); dc != "" {
+		prompt += "\n\n" + dc
+	}
 	return doChatCompletion(ctx, l.client, l.cfg.BaseURL, l.cfg.APIKey, l.cfg.Model, l.cfg.Temperature, []chatMessage{
 		{Role: "system", Content: prompt},
 		{Role: "user", Content: text},

@@ -41,8 +41,24 @@ const (
 // HookView is a hook as shown in the UI.
 type HookView struct {
 	hook.HookInfo
-	Embedding bool   `json:"embedding"`
-	LastText  string `json:"lastText,omitempty"`
+	Embedding     bool         `json:"embedding"`
+	Muted         bool         `json:"muted,omitempty"`
+	LastText      string       `json:"lastText,omitempty"`
+	ObjectPath    string       `json:"objectPath,omitempty"`
+	Category      HookCategory `json:"category"`
+	DialogueScore int          `json:"dialogueScore"`
+	HitCount      int          `json:"hitCount"`
+	UpdatesPerSec float64      `json:"updatesPerSec"`
+	LastSeenMs    int64        `json:"lastSeenMs"`
+	History       []HookSample `json:"history,omitempty"`
+}
+
+func currentUnixMs() int64 { return time.Now().UnixMilli() }
+
+type dialogueTurn struct {
+	speaker    string
+	original   string
+	translated string
 }
 
 // Status describes the attached game.
@@ -131,15 +147,25 @@ type Session struct {
 	runningPathsFn func(map[string]bool) map[string]uint32
 	autoAttachFn   func(uint32) error
 
-	mu         sync.Mutex
-	gamePath   string
-	engine     string // engine reported by khutaf-hook64 or detected from files
-	is64       bool
-	pids       map[uint32]bool
-	hooks      map[string]hook.HookInfo
-	hookAddrs  map[string]map[uint32]uint64
-	embedding  map[string]bool
-	lastOutput map[string]string
+	mu              sync.Mutex
+	gamePath        string
+	engine          string // engine reported by khutaf-hook64 or detected from files
+	is64            bool
+	pids            map[uint32]bool
+	hooks           map[string]hook.HookInfo
+	hookAddrs       map[string]map[uint32]uint64
+	embedding       map[string]bool
+	muted           map[string]bool
+	lastOutput      map[string]string
+	hookStats       map[string]*hookIntel
+	pendingMeta     map[hookMetaKey]string
+	lastDialogueMs  int64
+	lastDialogueKey string
+
+	dialogueCtxMu sync.Mutex
+	dialogueCtx   []dialogueTurn
+	lastSpeaker   string
+	lastSpeakerAt time.Time
 
 	benchMu         sync.Mutex
 	benchCancel     context.CancelFunc
@@ -178,7 +204,10 @@ func New(store *config.Store, runtimeDir string, emit Emitter) *Session {
 		hooks:          map[string]hook.HookInfo{},
 		hookAddrs:      map[string]map[uint32]uint64{},
 		embedding:      map[string]bool{},
+		muted:          map[string]bool{},
 		lastOutput:     map[string]string{},
+		hookStats:      map[string]*hookIntel{},
+		pendingMeta:    map[hookMetaKey]string{},
 		detachCooldown: map[string]time.Time{},
 		runningPathsFn: hook.RunningPathsFor,
 	}
@@ -351,11 +380,12 @@ func (s *Session) pidList() []uint32 {
 
 // Hooks returns all discovered hooks.
 func (s *Session) Hooks() []HookView {
+	nowMs := currentUnixMs()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]HookView, 0, len(s.hooks))
-	for k, h := range s.hooks {
-		out = append(out, HookView{HookInfo: h, Embedding: s.embedding[k], LastText: s.lastOutput[k]})
+	for _, h := range s.hooks {
+		out = append(out, s.buildHookViewLocked(h, nowMs))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].HookCode != out[j].HookCode {

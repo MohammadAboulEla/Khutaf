@@ -33,7 +33,9 @@ func (s *Session) OnProcessRemove(pid uint32) {
 		if h.PID == pid {
 			delete(s.hooks, k)
 			delete(s.embedding, k)
+			delete(s.muted, k)
 			delete(s.lastOutput, k)
+			delete(s.hookStats, k)
 		}
 	}
 	s.mu.Unlock()
@@ -43,9 +45,31 @@ func (s *Session) OnProcessRemove(pid uint32) {
 
 // OnNewHook implements hook.Handler.
 func (s *Session) OnNewHook(h hook.HookInfo) {
+	nowMs := currentUnixMs()
 	s.mu.Lock()
 	s.hooks[h.Key] = h
-	view := HookView{HookInfo: h, Embedding: s.embedding[h.Key]}
+	gamePath := s.gamePath
+	hi := s.hookStats[h.Key]
+	if hi == nil {
+		hi = &hookIntel{}
+		s.hookStats[h.Key] = hi
+	}
+	mk := hookMetaKey{hookID: h.Addr, ctx: h.Ctx, ctx2: h.Ctx2}
+	if p, ok := s.pendingMeta[mk]; ok && hi.objectPath == "" {
+		hi.setObjectPath(h, p, nowMs)
+	} else if hi.category == "" {
+		hi.category, hi.dialogueScore = classifyHook(h, hi, nowMs)
+	}
+	s.mu.Unlock()
+
+	if gamePath != "" && s.isSavedHookMuted(gamePath, h) {
+		s.mu.Lock()
+		s.muted[h.Key] = true
+		s.mu.Unlock()
+	}
+
+	s.mu.Lock()
+	view := s.buildHookViewLocked(h, nowMs)
 	s.mu.Unlock()
 	s.post(EventHookNew, view)
 }
@@ -55,19 +79,64 @@ func (s *Session) OnRemoveHook(h hook.HookInfo) {
 	s.mu.Lock()
 	delete(s.hooks, h.Key)
 	delete(s.embedding, h.Key)
+	delete(s.muted, h.Key)
 	delete(s.lastOutput, h.Key)
+	delete(s.hookStats, h.Key)
 	s.mu.Unlock()
 	s.post(EventHookDel, h.Key)
 }
 
 // OnOutput implements hook.Handler.
 func (s *Session) OnOutput(h hook.HookInfo, text string) {
+	nowMs := currentUnixMs()
+	var (
+		cat      HookCategory = HookCatUnknown
+		score    int
+		hits     int
+		rate     float64
+		objPath  string
+		speakerT string
+	)
 	if strings.TrimSpace(text) != "" {
 		s.mu.Lock()
 		s.lastOutput[h.Key] = text
+		hi := s.hookStats[h.Key]
+		if hi == nil {
+			hi = &hookIntel{}
+			s.hookStats[h.Key] = hi
+		}
+		recentDlg := s.lastDialogueKey != "" && s.lastDialogueKey != h.Key && (nowMs-s.lastDialogueMs) <= speakerCoChangeMs
+		hi.recordText(h, text, nowMs, recentDlg)
+		cat = hi.category
+		score = hi.dialogueScore
+		hits = hi.hitCount
+		rate = hi.updatesPerSec(nowMs)
+		objPath = hi.objectPath
+		if cat == HookCatDialogue {
+			s.lastDialogueMs = nowMs
+			s.lastDialogueKey = h.Key
+		} else if cat == HookCatSpeaker {
+			speakerT = strings.TrimSpace(stripAngleTags(text))
+		}
 		s.mu.Unlock()
+		if speakerT != "" {
+			s.dialogueCtxMu.Lock()
+			s.lastSpeaker = speakerT
+			s.lastSpeakerAt = time.Now()
+			s.dialogueCtxMu.Unlock()
+		}
 	}
-	s.post(EventHookText, map[string]string{"key": h.Key, "text": text})
+	s.post(EventHookText, map[string]any{
+		"key":           h.Key,
+		"text":          text,
+		"atMs":          nowMs,
+		"category":      cat,
+		"dialogueScore": score,
+		"hitCount":      hits,
+		"updatesPerSec": rate,
+		"lastSeenMs":    nowMs,
+		"objectPath":    objPath,
+	})
 }
 
 // OnHostInfo implements hook.Handler.
@@ -95,6 +164,10 @@ func (s *Session) OnHostInfo(kind hook.HostInfo, msg string) {
 		}
 		s.log("warn", msg)
 	default:
+		if hid, c1, c2, path, ok := parseNativeHookMeta(msg); ok {
+			s.applyNativeHookMeta(hid, c1, c2, path)
+			return
+		}
 		if ev, ok := ParseNativeTelemetry(msg, "info"); ok {
 			s.recordTelemetry(ev.Subsystem, ev.Func, ev.Level, ev.Message, ev.DurationUs,
 				isTimeoutMsg(ev.Message), ev.Fields)
@@ -104,6 +177,35 @@ func (s *Session) OnHostInfo(kind hook.HostInfo, msg string) {
 			s.emitPerfTrace(strings.TrimPrefix(msg, "[perf] "))
 		}
 		s.log("info", msg)
+	}
+}
+
+func (s *Session) applyNativeHookMeta(hookID, ctx, ctx2 uint64, path string) {
+	nowMs := currentUnixMs()
+	mk := hookMetaKey{hookID: hookID, ctx: ctx, ctx2: ctx2}
+	s.mu.Lock()
+	if s.pendingMeta == nil {
+		s.pendingMeta = map[hookMetaKey]string{}
+	}
+	if len(s.pendingMeta) >= 2048 {
+		s.pendingMeta = map[hookMetaKey]string{}
+	}
+	s.pendingMeta[mk] = path
+	var updated []HookView
+	for _, h := range s.hooks {
+		if h.Addr == hookID && h.Ctx == ctx && h.Ctx2 == ctx2 {
+			hi := s.hookStats[h.Key]
+			if hi == nil {
+				hi = &hookIntel{}
+				s.hookStats[h.Key] = hi
+			}
+			hi.setObjectPath(h, path, nowMs)
+			updated = append(updated, s.buildHookViewLocked(h, nowMs))
+		}
+	}
+	s.mu.Unlock()
+	for _, v := range updated {
+		s.post(EventHookNew, v)
 	}
 }
 
