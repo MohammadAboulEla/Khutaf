@@ -26,16 +26,16 @@ This roadmap is ordered by ROI and risk—each phase can be executed independent
 
 ---
 
-## Phase 2 — Frontend Component Modularity & Automated Checks
+## Phase 2 — Frontend Component Modularity & Automated Checks *(Partially Completed in v0.2.5)*
 
 **Goal:** Prevent regressions in the Vue layer and break down 800–1000+ line views. **Risk:** Low.
 
-1. **Extract subcomponents from oversized views/modals:**
+1. **Completed in v0.2.5:**
+   - Consolidated the three duplicated hook lists (`QuickPlayView.vue`, `HookTable.vue`, `QuickHooksModal.vue`) into reusable `components/hook/HookBrowser.vue` + `composables/useHookBrowser.js` (`simple` / `picker` / `advanced` variants), shrinking `QuickHooksModal.vue` from 1,026 LOC to ~455 LOC and `HookTable.vue` to a thin compatibility wrapper.
+   - Standardized all UI tooltips onto `components/Tooltip.vue` (zero native HTML `title` attributes).
+2. **Remaining subcomponent extractions & checks:**
    - `TranslatorsView.vue` → `TraditionalTranslatorPanel.vue`, `OpenAICompatPanel.vue`, `OfflineLlamaPanel.vue`, `ProviderSelector.vue`.
-   - `QuickHooksModal.vue` → separate hook list, filters, and quick-embed actions.
-   - `EmbedSettingsView.vue`, `QuickPlayView.vue`, `TextPipelineView.vue`, `DebugView.vue` → extract logical sections into `components/<domain>/`.
-2. **Add lightweight CI checks for `frontend/`:**
-   - Add `vitest` tests for `utils/` (`hookLabels.js`, `friendlyErrors.js`, `providers.js`), composables, and an automated **EN/AR key-parity test** over `i18n/`.
+   - `EmbedSettingsView.vue`, `TextPipelineView.vue`, `DebugView.vue` → extract logical sections into `components/<domain>/`.
    - Add ESLint (Vue 3) and optional `tsc --noEmit --allowJs --checkJs` (JSDoc typechecking against `frontend/wailsjs/go/models.ts`) to `.github/workflows/ci.yml`.
 
 **Verification:** `npm --prefix frontend test` + `npm --prefix frontend run lint` + `npm --prefix frontend run build`.

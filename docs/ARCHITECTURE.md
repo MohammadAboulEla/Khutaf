@@ -45,8 +45,8 @@ flowchart LR
 ### Synchronous vs. Non-Blocking Embed Flow
 
 1. **Text interception:** A Unity detour calls `embed::process_unity` (`native/khutaf-hook/src/embed.rs`) after stripping TMP/rich-text tags (if `is_tmp_like_tags(hook_id)`) and checking `OWN_OUTPUT_HISTORY` to avoid re-translating text Khutaf itself wrote back.
-2. **Synchronous mode (`NonBlocking = false`):** The DLL sends `Msg::EmbedRequest` and blocks the calling game thread on a condition variable up to `Settings.wait_ms`. In Go, `Session.OnEmbedText` queues an `embedJob` onto `embedCh`; `Session.handleEmbed` runs pre-rules, glossary (`Apply` or `WithGlossaryPrompt`), `translator.Manager.TranslateValidated` (with `90%` of `TimeoutMs` budget), post-rules, placeholder validation, and `arabic.Process`, then sends `Msg::EmbedResponse`.
-3. **Non-blocking mode (`NonBlocking = true`):** `process_unity` enqueues an `AsyncTarget` (pinning the Unity component via `gchandle_pin`), returns `Settings.pending_text` (or keeps original text if empty) immediately, and lets `Session.handleEmbed` run with at least a `12s` timeout. When `Msg::EmbedResponse` arrives, it queues a `ReadyUpdate`; on the next `on_frame_tick` (`Canvas::SendWillRenderCanvases` or `Camera::FireOnPreCull`), `unity::mod::flush_async_updates` writes the shaped Arabic back, runs `font::on_text`, and calls `rebuild_component_layout` (`Graphic.SetLayoutDirty` + `LayoutRebuilder.ForceRebuildLayoutImmediate`).
+2. **Synchronous mode (`NonBlocking = false`):** The DLL sends `Msg::EmbedRequest` and blocks the calling game thread on a condition variable up to `Settings.wait_ms`. In Go, `Session.OnEmbedText` queues an `embedJob` onto `embedCh`; `Session.handleEmbed` runs pre-rules, glossary (`Apply` or `WithGlossaryPrompt`), rolling dialogue story context (`WithDialogueContext` for LLM/Offline LLM providers), `translator.Manager.TranslateValidated` (with `90%` of `TimeoutMs` budget), post-rules, placeholder validation, and `arabic.Process`, then sends `Msg::EmbedResponse`.
+3. **Non-blocking mode (`NonBlocking = true`):** `process_unity` detects incremental letter-by-letter typewriter streams (`180 ms` debounce) or enqueues an `AsyncTarget` (pinning the Unity component via `gchandle_pin`), returns `Settings.pending_text` (or keeps original text if empty) immediately, and lets `Session.handleEmbed` run with at least a `12s` timeout. When `Msg::EmbedResponse` arrives, it queues a `ReadyUpdate`; on the next `on_frame_tick` (`Canvas::SendWillRenderCanvases` or `Camera::FireOnPreCull`), `unity::mod::flush_async_updates` writes the shaped Arabic back, runs `font::on_text`, refreshes `TMP_Text.ForceMeshUpdate`, marks ancestor `ILayoutGroup` / `ILayoutSelfController` containers dirty (stopping strictly before any `Canvas`), and performs a deduplicated `LayoutRebuilder.ForceRebuildLayoutImmediate` pass once per layout root. Enabling a hook via `SetEmbed(true)` also queues an immediate `reapply_enabled_hooks` pass on the next frame tick, and `detour_tmp_set_max_visible_chars` flips TextMeshPro `maxVisibleCharacters` reveals to right-to-left top-to-bottom via `<alpha=#00>…<alpha=#FF>` masking.
 
 ---
 
@@ -65,7 +65,7 @@ flowchart LR
 | `0x03` `HookRemoved` | DLL → Host | `hook_id (u64)` |
 | `0x04` `Text` | DLL → Host | `hook_id (u64)`, `ctx (u64)`, `ctx2 (u64)`, `text (str)` |
 | `0x05` `EmbedRequest` | DLL → Host | `req_id (u64)`, `hook_id (u64)`, `ctx (u64)`, `ctx2 (u64)`, `text (str)` |
-| `0x06` `Log` | DLL → Host | `level (u8: 0..3)`, `msg (str)` (also carries `[telemetry\|...]` and `[perf] ...`) |
+| `0x06` `Log` | DLL → Host | `level (u8: 0..3)`, `msg (str)` (also carries `[telemetry\|...]`, `[meta\|<hook_id>\|<ctx_hex>\|<ctx2_hex>] <path>`, and `[perf] ...`) |
 | `0x81` `Settings` | Host → DLL | `wait_ms`, `display_mode`, `font_family`, `font_dir`, `clear_text`, `change_font_size`, `font_scale`, `strip_typewriter_tags`, `non_blocking`, `pending_text`, optional trailing `verbose_hooks` |
 | `0x82` `SetEmbed` | Host → DLL | `hook_id (u64)`, `ctx (u64)`, `ctx2 (u64)`, `on (bool)` |
 | `0x83` `EmbedResponse` | Host → DLL | `req_id (u64)`, `has_text (bool)`, optional `text (str)` (`false`/`None` keeps original) |
@@ -89,7 +89,7 @@ All 15 events subscribed in [`frontend/src/composables/useSession.js`](../fronte
 | `translator:bench:done` | `internal/session/benchmark.go` (`EventBenchmarkDone`) | Summary with `runId`, `items`, `total` |
 | `hook:new` | `internal/session/session.go` (`EventHookNew`) | `session.HookView` |
 | `hook:remove` | `internal/session/session.go` (`EventHookDel`) | Hook `key` string |
-| `hook:output` | `internal/session/session.go` (`EventHookText`) | `{ key, text }` |
+| `hook:output` | `internal/session/session.go` (`EventHookText`) | `{ key, text, atMs, category, dialogueScore, hitCount, updatesPerSec, lastSeenMs, objectPath }` |
 | `embed:line` | `internal/session/session.go` (`EventEmbedLine`) | `session.EmbedLine` |
 | `log` | `internal/session/session.go` (`EventLog`) | `{ level, msg, time }` |
 | `debug:trace` | `internal/session/session.go` (`EventDebugTrace`) | `session.DebugTrace` |
@@ -98,7 +98,7 @@ All 15 events subscribed in [`frontend/src/composables/useSession.js`](../fronte
 ### 2.3 Config, Per-Game Profiles & Secrets
 
 - **Storage (`internal/config/config.go`):** Portable `userconfig/` directory next to the executable (`config.json`, `games.json`, `glossary.json`). If `primaryDir` is not writable, `app.go` falls back to `%TEMP%\Khutaf` or `config.NewMemoryStore()`.
-- **Overrides:** `GameProfile` in `games.json` supports `EmbedHooks` (auto-re-enabled on `OnHookInsert`), `Pipeline`, `EmbedOverride`, `TranslatorOverride`, and `AutoAttach`.
+- **Overrides & Shareable Profiles:** `GameProfile` in `games.json` supports `EmbedHooks` (with optional `Path`/`Label`, auto-re-enabled on `OnHookInsert`), `MutedHooks`, `Pipeline`, `EmbedOverride`, `TranslatorOverride`, and `AutoAttach`. Sanitized `.khutaf.json` profile export/import (`internal/session/profile_io.go`) omits local paths and translator credentials.
 - **Secrets:** `LLMSettings.APIKey` is encrypted/decrypted with Windows DPAPI (`dpapi:` prefix) in `internal/config/dpapi_windows.go`.
 
 ### 2.4 Unity Hook Registry (`native/khutaf-hook/src/unity/mod.rs`)

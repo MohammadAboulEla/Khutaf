@@ -27,7 +27,8 @@
 - **Hook IDs `1..=14`** in `unity/mod.rs` are fixed identifiers. Helper predicates `is_tmp_hook`, `is_tmp_like_tags`, and `is_ui_text_hook` govern tag stripping and font target resolution (`resolve_font_target`).
 - **Own-output loop prevention:** `embed.rs` keeps `OWN_OUTPUT_HISTORY` (`256`) recent translations so if a game reads `.text` and writes it back, it passes through untouched.
 - **StaticUI (`VerboseHooks`):** `send_text_dedup` skips identical consecutive strings (`prev == text`) for `ctx == 0 && ctx2 == 0` hooks without applying the `250 ms` `TEXT_RATE_LIMIT`, preventing simultaneous UI labels in the same frame from being dropped. Toggling `verbose_hooks` from `false` to `true` arms `VERBOSE_SCAN_PENDING` so `on_frame_tick` runs `scan_active_static_ui` on already-open UI.
-- **Structured telemetry over `Msg::Log`:** Call `crate::telemetry(subsys, func, dur_us, lvl, msg)` to emit `[telemetry|<subsys>|<func>|<dur_us>|<lvl>] <msg>` without changing `PROTO_VERSION`.
+- **Structured telemetry & metadata over `Msg::Log`:** Call `crate::telemetry(subsys, func, dur_us, lvl, msg)` for `[telemetry|...]` and `crate::hook_meta(hook_id, ctx, ctx2, path)` for `[meta|...]` Unity `GameObject` hierarchy paths without changing `PROTO_VERSION`.
+- **RTL TMP Typewriter & Batched Layout Rebuild:** `embed::handle_max_visible_chars` maps TextMeshPro `maxVisibleCharacters` reveals right-to-left per line via `<alpha=#00>…<alpha=#FF>` under `hooks::Enter`. `unity::mod::flush_async_updates` refreshes `TMP_Text.ForceMeshUpdate`, walks ancestor `ILayoutGroup` / `ILayoutSelfController` containers stopping strictly before any `Canvas`, and runs a single deduplicated `LayoutRebuilder.ForceRebuildLayoutImmediate` per layout root per frame.
 
 ## Verification
 
