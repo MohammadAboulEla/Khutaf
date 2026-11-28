@@ -729,8 +729,18 @@ struct AsyncUnityCache {
     m_op_implicit: *mut c_void,
     layout_meta_resolved: bool,
     t_graphic: *mut c_void,
+    t_rect_transform: *mut c_void,
+    t_canvas: *mut c_void,
+    t_layout_group: *mut c_void,
+    t_layout_fitter: *mut c_void,
+    t_tmp_text: *mut c_void,
+    m_tmp_force_mesh_0: *mut c_void,
+    m_tmp_force_mesh_2: *mut c_void,
     m_graphic_get_rt: *mut c_void,
     m_graphic_set_layout_dirty: *mut c_void,
+    m_transform_get_parent: *mut c_void,
+    m_comp_get_component: *mut c_void,
+    m_mark_layout_for_rebuild: *mut c_void,
     m_force_rebuild_layout: *mut c_void,
     setters: HashMap<(usize, u64), *mut c_void>,
 }
@@ -745,8 +755,18 @@ static ASYNC_UNITY_CACHE: LazyLock<Mutex<AsyncUnityCache>> = LazyLock::new(|| {
         m_op_implicit: std::ptr::null_mut(),
         layout_meta_resolved: false,
         t_graphic: std::ptr::null_mut(),
+        t_rect_transform: std::ptr::null_mut(),
+        t_canvas: std::ptr::null_mut(),
+        t_layout_group: std::ptr::null_mut(),
+        t_layout_fitter: std::ptr::null_mut(),
+        t_tmp_text: std::ptr::null_mut(),
+        m_tmp_force_mesh_0: std::ptr::null_mut(),
+        m_tmp_force_mesh_2: std::ptr::null_mut(),
         m_graphic_get_rt: std::ptr::null_mut(),
         m_graphic_set_layout_dirty: std::ptr::null_mut(),
+        m_transform_get_parent: std::ptr::null_mut(),
+        m_comp_get_component: std::ptr::null_mut(),
+        m_mark_layout_for_rebuild: std::ptr::null_mut(),
         m_force_rebuild_layout: std::ptr::null_mut(),
         setters: HashMap::new(),
     })
@@ -866,37 +886,171 @@ pub(crate) fn resolve_font_target(
     (std::ptr::null_mut(), hook_id)
 }
 
+fn ensure_layout_meta(rt: &dyn UnityRuntime, cache: &mut AsyncUnityCache) {
+    if cache.layout_meta_resolved {
+        return;
+    }
+    cache.layout_meta_resolved = true;
+    let t_graphic = rt.find_class("UnityEngine.UI", "UnityEngine.UI", "Graphic");
+    cache.t_graphic = t_graphic;
+    if !t_graphic.is_null() {
+        cache.m_graphic_get_rt = rt.find_method_in_hierarchy(t_graphic, "get_rectTransform", 0);
+        cache.m_graphic_set_layout_dirty = rt.find_method_in_hierarchy(t_graphic, "SetLayoutDirty", 0);
+    }
+    cache.t_rect_transform = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "RectTransform");
+    cache.t_canvas = rt.find_class("UnityEngine.UIModule", "UnityEngine", "Canvas");
+
+    let t_ilg = rt.find_class("UnityEngine.UI", "UnityEngine.UI", "ILayoutGroup");
+    cache.t_layout_group = if !t_ilg.is_null() {
+        t_ilg
+    } else {
+        rt.find_class("UnityEngine.UI", "UnityEngine.UI", "LayoutGroup")
+    };
+    let t_ils = rt.find_class("UnityEngine.UI", "UnityEngine.UI", "ILayoutSelfController");
+    cache.t_layout_fitter = if !t_ils.is_null() {
+        t_ils
+    } else {
+        rt.find_class("UnityEngine.UI", "UnityEngine.UI", "ContentSizeFitter")
+    };
+
+    let t_tr = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Transform");
+    if !t_tr.is_null() {
+        cache.m_transform_get_parent = rt.find_method_in_hierarchy(t_tr, "get_parent", 0);
+    }
+    let t_comp = rt.find_class("UnityEngine.CoreModule", "UnityEngine", "Component");
+    if !t_comp.is_null() {
+        cache.m_comp_get_component = rt.find_method_param0(t_comp, "GetComponent", 1, "Type");
+    }
+
+    let t_rebuilder = rt.find_class("UnityEngine.UI", "UnityEngine.UI", "LayoutRebuilder");
+    if !t_rebuilder.is_null() {
+        cache.m_mark_layout_for_rebuild =
+            rt.find_method_param0(t_rebuilder, "MarkLayoutForRebuild", 1, "RectTransform");
+        cache.m_force_rebuild_layout =
+            rt.find_method_param0(t_rebuilder, "ForceRebuildLayoutImmediate", 1, "RectTransform");
+    }
+
+    let t_tmp = rt.find_class("Unity.TextMeshPro", "TMPro", "TMP_Text");
+    cache.t_tmp_text = t_tmp;
+    if !t_tmp.is_null() {
+        cache.m_tmp_force_mesh_0 = rt.find_method_in_hierarchy(t_tmp, "ForceMeshUpdate", 0);
+        cache.m_tmp_force_mesh_2 = rt.find_method_in_hierarchy(t_tmp, "ForceMeshUpdate", 2);
+    }
+}
+
+fn has_live_component(
+    rt: &dyn UnityRuntime,
+    cache: &mut AsyncUnityCache,
+    target: *mut c_void,
+    klass: *mut c_void,
+) -> bool {
+    if target.is_null() || klass.is_null() || cache.m_comp_get_component.is_null() {
+        return false;
+    }
+    let type_obj = rt.class_get_type_object(klass);
+    if type_obj.is_null() {
+        return false;
+    }
+    let Some(found) = rt.invoke(cache.m_comp_get_component, target, &mut [type_obj]) else {
+        return false;
+    };
+    if found.is_null() {
+        return false;
+    }
+    let found_cls = rt.object_get_class(found);
+    is_unity_object_alive(rt, cache, found, found_cls)
+}
+
+/// Refreshes TMP preferred-size metrics, marks the text and any ancestor layout
+/// containers dirty (stopping before any Canvas), and returns the highest layout
+/// root `RectTransform` to rebuild once per frame batch.
+fn prepare_component_layout(
+    rt: &dyn UnityRuntime,
+    cache: &mut AsyncUnityCache,
+    comp: *mut c_void,
+    comp_cls: *mut c_void,
+    hook_id: u64,
+) -> Option<*mut c_void> {
+    ensure_layout_meta(rt, cache);
+    if cache.t_graphic.is_null() || !rt.class_is_assignable_from(cache.t_graphic, comp_cls) {
+        return None;
+    }
+
+    // Update TMP preferredWidth/preferredHeight before layout containers measure it.
+    if is_tmp_hook(hook_id) && !cache.t_tmp_text.is_null() && rt.class_is_assignable_from(cache.t_tmp_text, comp_cls) {
+        if !cache.m_tmp_force_mesh_2.is_null() {
+            let mut ignore_inactive: u8 = 0;
+            let mut force_reparse: u8 = 0;
+            let _ = rt.invoke(
+                cache.m_tmp_force_mesh_2,
+                comp,
+                &mut [
+                    &mut ignore_inactive as *mut u8 as *mut c_void,
+                    &mut force_reparse as *mut u8 as *mut c_void,
+                ],
+            );
+        } else if !cache.m_tmp_force_mesh_0.is_null() {
+            let _ = rt.invoke(cache.m_tmp_force_mesh_0, comp, &mut []);
+        }
+    }
+
+    if !cache.m_graphic_set_layout_dirty.is_null() {
+        let _ = rt.invoke(cache.m_graphic_set_layout_dirty, comp, &mut []);
+    }
+    if cache.m_graphic_get_rt.is_null() {
+        return None;
+    }
+    let text_rt = rt.invoke(cache.m_graphic_get_rt, comp, &mut [])?;
+    if text_rt.is_null() {
+        return None;
+    }
+    if !cache.m_mark_layout_for_rebuild.is_null() {
+        let _ = rt.invoke(cache.m_mark_layout_for_rebuild, std::ptr::null_mut(), &mut [text_rt]);
+    }
+
+    let mut highest_root = text_rt;
+    if !cache.m_transform_get_parent.is_null() && !cache.t_rect_transform.is_null() {
+        let mut cur = text_rt;
+        for _ in 0..6 {
+            let Some(parent) = rt.invoke(cache.m_transform_get_parent, cur, &mut []) else {
+                break;
+            };
+            if parent.is_null() {
+                break;
+            }
+            let parent_cls = rt.object_get_class(parent);
+            if parent_cls.is_null() || !rt.class_is_assignable_from(cache.t_rect_transform, parent_cls) {
+                break;
+            }
+            // Never trigger a full-Canvas rebuild; stop strictly below any Canvas.
+            if has_live_component(rt, cache, parent, cache.t_canvas) {
+                break;
+            }
+            let has_layout = has_live_component(rt, cache, parent, cache.t_layout_group)
+                || has_live_component(rt, cache, parent, cache.t_layout_fitter);
+            if has_layout {
+                if !cache.m_mark_layout_for_rebuild.is_null() {
+                    let _ = rt.invoke(cache.m_mark_layout_for_rebuild, std::ptr::null_mut(), &mut [parent]);
+                }
+                highest_root = parent;
+            }
+            cur = parent;
+        }
+    }
+
+    Some(highest_root)
+}
+
 fn rebuild_component_layout(
     rt: &dyn UnityRuntime,
     cache: &mut AsyncUnityCache,
     comp: *mut c_void,
     comp_cls: *mut c_void,
+    hook_id: u64,
 ) {
-    if !cache.layout_meta_resolved {
-        cache.layout_meta_resolved = true;
-        let t_graphic = rt.find_class("UnityEngine.UI", "UnityEngine.UI", "Graphic");
-        cache.t_graphic = t_graphic;
-        if !t_graphic.is_null() {
-            cache.m_graphic_get_rt = rt.find_method_in_hierarchy(t_graphic, "get_rectTransform", 0);
-            cache.m_graphic_set_layout_dirty = rt.find_method_in_hierarchy(t_graphic, "SetLayoutDirty", 0);
-        }
-        let t_rebuilder = rt.find_class("UnityEngine.UI", "UnityEngine.UI", "LayoutRebuilder");
-        if !t_rebuilder.is_null() {
-            cache.m_force_rebuild_layout =
-                rt.find_method_param0(t_rebuilder, "ForceRebuildLayoutImmediate", 1, "RectTransform");
-        }
-    }
-    if cache.t_graphic.is_null() || !rt.class_is_assignable_from(cache.t_graphic, comp_cls) {
-        return;
-    }
-    if !cache.m_graphic_set_layout_dirty.is_null() {
-        let _ = rt.invoke(cache.m_graphic_set_layout_dirty, comp, &mut []);
-    }
-    if !cache.m_graphic_get_rt.is_null() && !cache.m_force_rebuild_layout.is_null() {
-        if let Some(rect_tr) = rt.invoke(cache.m_graphic_get_rt, comp, &mut []) {
-            if !rect_tr.is_null() {
-                let _ = rt.invoke(cache.m_force_rebuild_layout, std::ptr::null_mut(), &mut [rect_tr]);
-            }
+    if let Some(root_rt) = prepare_component_layout(rt, cache, comp, comp_cls, hook_id) {
+        if !cache.m_force_rebuild_layout.is_null() {
+            let _ = rt.invoke(cache.m_force_rebuild_layout, std::ptr::null_mut(), &mut [root_rt]);
         }
     }
 }
@@ -910,6 +1064,7 @@ pub(crate) fn flush_async_updates(rt: &dyn UnityRuntime) {
         return;
     }
     let mut cache = ASYNC_UNITY_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+    let mut roots_to_rebuild: Vec<*mut c_void> = Vec::new();
     for u in updates {
         let _pin_guard = GcHandleGuard { rt, handle: u.gc_handle };
         let comp = u.component as *mut c_void;
@@ -921,9 +1076,9 @@ pub(crate) fn flush_async_updates(rt: &dyn UnityRuntime) {
         if m_set.is_null() {
             continue;
         }
+        let (font_target, font_hook_id) = resolve_font_target(rt, comp, u.hook_id);
         if u.apply_font {
             embed::remember_output(&u.text);
-            let (font_target, font_hook_id) = resolve_font_target(rt, comp, u.hook_id);
             if !font_target.is_null() {
                 font::on_text(rt, font_target, font_hook_id, &u.text);
             }
@@ -931,7 +1086,26 @@ pub(crate) fn flush_async_updates(rt: &dyn UnityRuntime) {
         let new_str = rt.string_new(&u.text);
         if !new_str.is_null() {
             let _ = rt.invoke(m_set, comp, &mut [new_str]);
-            rebuild_component_layout(rt, &mut cache, comp, comp_cls);
+            let layout_comp = if font_target.is_null() { comp } else { font_target };
+            let layout_cls = if layout_comp == comp {
+                comp_cls
+            } else {
+                rt.object_get_class(layout_comp)
+            };
+            if !layout_cls.is_null() {
+                if let Some(root_rt) =
+                    prepare_component_layout(rt, &mut cache, layout_comp, layout_cls, font_hook_id)
+                {
+                    if !roots_to_rebuild.contains(&root_rt) {
+                        roots_to_rebuild.push(root_rt);
+                    }
+                }
+            }
+        }
+    }
+    if !cache.m_force_rebuild_layout.is_null() {
+        for root_rt in roots_to_rebuild {
+            let _ = rt.invoke(cache.m_force_rebuild_layout, std::ptr::null_mut(), &mut [root_rt]);
         }
     }
 }
@@ -1051,7 +1225,7 @@ fn reapply_single_component(rt: &dyn UnityRuntime, comp: *mut c_void, hook_id: u
         let new_str = rt.string_new(&replaced);
         if !new_str.is_null() {
             let _ = rt.invoke(m_set, comp, &mut [new_str]);
-            rebuild_component_layout(rt, &mut cache, comp, comp_cls);
+            rebuild_component_layout(rt, &mut cache, comp, comp_cls, hook_id);
         }
     }
 }
