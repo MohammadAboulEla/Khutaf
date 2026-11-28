@@ -55,6 +55,9 @@ const (
 	maxChecksumsBytes  = 64 << 10
 )
 
+// errNoChecksum is returned when an update cannot be verified against any SHA-256 digest.
+var errNoChecksum = errors.New("update rejected: no SHA-256 digest available to verify the download")
+
 // Status describes the current auto-update state exposed to the UI.
 type Status struct {
 	State           string `json:"state"`
@@ -330,6 +333,16 @@ func (m *Manager) Check(ctx context.Context, manual bool) (Status, error) {
 	if alreadyReady {
 		m.status.Progress = 100
 		m.status.DownloadedBytes = best.zipAsset.Size
+	} else if m.status.AssetSHA256 == "" && strings.TrimSpace(m.status.ChecksumsURL) == "" {
+		m.status.State = StateError
+		m.status.Error = errNoChecksum.Error()
+		st = m.status
+		m.mu.Unlock()
+		m.emitStatus(st)
+		if manual {
+			return st, errNoChecksum
+		}
+		return st, nil
 	}
 	st = m.status
 	m.mu.Unlock()
@@ -486,6 +499,14 @@ func (m *Manager) Download(ctx context.Context) error {
 	if m.status.AssetURL == "" || m.status.LatestVersion == "" {
 		m.mu.Unlock()
 		return errors.New("no update available to download")
+	}
+	if m.status.AssetSHA256 == "" && strings.TrimSpace(m.status.ChecksumsURL) == "" {
+		m.status.State = StateError
+		m.status.Error = errNoChecksum.Error()
+		st := m.status
+		m.mu.Unlock()
+		m.emitStatus(st)
+		return errNoChecksum
 	}
 	if !isDirWritable(m.installDir) {
 		m.status.Writable = false
@@ -671,13 +692,19 @@ func (m *Manager) runDownload(ctx context.Context, assetURL, assetName, expected
 	m.emitStatus(st)
 
 	if expectedSHA == "" && checksumsURL != "" {
-		if fetched, ferr := fetchChecksumForAsset(ctx, client, checksumsURL, assetName, m.currentVersion); ferr == nil && fetched != "" {
-			expectedSHA = fetched
+		fetched, ferr := fetchChecksumForAsset(ctx, client, checksumsURL, assetName, m.currentVersion)
+		if ferr != nil {
+			return fmt.Errorf("fetch checksums: %w", ferr)
 		}
+		expectedSHA = fetched
+	}
+	// Never install an unverified payload.
+	if expectedSHA == "" {
+		return errNoChecksum
 	}
 
 	actualSHA := hex.EncodeToString(hasher.Sum(nil))
-	if expectedSHA != "" && !strings.EqualFold(actualSHA, expectedSHA) {
+	if !strings.EqualFold(actualSHA, expectedSHA) {
 		return fmt.Errorf("update SHA-256 mismatch: got %s, expected %s", actualSHA, expectedSHA)
 	}
 

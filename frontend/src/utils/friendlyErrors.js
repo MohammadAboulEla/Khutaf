@@ -31,6 +31,9 @@ export function formatFriendlyError(raw, lang = "ar") {
   if (low.includes("hook host unavailable")) {
     return { title: dict.errHostTitle, hint: dict.errHostHint, action: "", raw: rawStr };
   }
+  if (low.includes("no sha-256 digest") || low.includes("fetch checksums") || low.includes("update sha-256 mismatch")) {
+    return { title: dict.errUpdateVerifyTitle, hint: dict.errUpdateVerifyHint, action: "", raw: rawStr };
+  }
 
   return { title: rawStr, hint: "", action: "", raw: rawStr };
 }

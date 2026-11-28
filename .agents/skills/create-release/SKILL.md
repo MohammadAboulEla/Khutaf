@@ -22,10 +22,11 @@ Follow these steps in order whenever creating a new release of Khutaf:
 - Update `version = "<version>"` under `[workspace.package]` in `native/Cargo.toml`.
 
 ## 3. Run Verification Checks
-- Run Go vet & tests, and verify the frontend builds cleanly:
+- Run Go vet & race-enabled tests, and verify the frontend tests & build cleanly:
   ```powershell
   go vet ./...
-  go test ./...
+  go test -race -count=1 ./...
+  npm --prefix frontend test
   npm --prefix frontend run build
   ```
 
@@ -38,24 +39,26 @@ Follow these steps in order whenever creating a new release of Khutaf:
   ```powershell
   wails build -ldflags "-X main.AppVersion=<version>"
   ```
+- *(Optional when a code-signing certificate is configured)* Sign `build/bin/Khutaf.exe` and `runtime/khutaf-hook64.dll` via `scripts/sign-release.ps1` before packaging.
 
 ## 5. Package Release Zip & Checksum in `dist/`
 - Keep the GitHub release tag `v<version>` identical to `AppVersion` in `app.go` (e.g. `v0.1.6-beta`) so in-app auto-update version checks stay aligned.
 - Stage only `Khutaf.exe` and `runtime/khutaf-hook64.dll` (never include `runtime/TMP_Font_AssetBundles/` — users download that in-app from the `unity-fonts` release).
 - Zip with `.NET ZipFile` (avoid `Compress-Archive` progress-bar errors in non-interactive shells) and write `dist/SHA256SUMS.txt` for updater integrity verification:
   ```powershell
-  $stage = "E:\programing\go\Khutaf\dist\_stage"
+  $repoRoot = (Get-Location).Path
+  $stage = Join-Path $repoRoot "dist\_stage"
   Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force "$stage\runtime" | Out-Null
   Copy-Item "build\bin\Khutaf.exe" "$stage\Khutaf.exe"
   Copy-Item "runtime\khutaf-hook64.dll" "$stage\runtime\khutaf-hook64.dll"
-  $zip = "E:\programing\go\Khutaf\dist\Khutaf-v<version>-win64.zip"
+  $zip = Join-Path $repoRoot "dist\Khutaf-v<version>-win64.zip"
   Remove-Item -Force $zip -ErrorAction SilentlyContinue
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
   Remove-Item -Recurse -Force $stage
   $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-  "$hash  $(Split-Path $zip -Leaf)" | Set-Content -Encoding ascii "E:\programing\go\Khutaf\dist\SHA256SUMS.txt"
+  "$hash  $(Split-Path $zip -Leaf)" | Set-Content -Encoding ascii (Join-Path $repoRoot "dist\SHA256SUMS.txt")
   Get-Item $zip | Select-Object Name, Length
   ```
 

@@ -285,6 +285,121 @@ func TestManagerDownloadVerifyAndZipSlip(t *testing.T) {
 	}
 }
 
+func TestManagerDownloadChecksumFailClosed(t *testing.T) {
+	oldAPI := DefaultReleasesAPIURL
+	defer func() { DefaultReleasesAPIURL = oldAPI }()
+	DefaultReleasesAPIURL = "https://api.github.com/repos/MohammadAboulEla/Khutaf/releases?per_page=15"
+
+	validZip, validSHA := makeTestZip(t, map[string]string{
+		"Khutaf.exe":                "new-exe",
+		"runtime/khutaf-hook64.dll": "new-dll",
+	})
+
+	// 1. Release with no Digest and no SHA256SUMS.txt must be rejected fail-closed.
+	rtNoChecksum := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/repos/MohammadAboulEla/Khutaf/releases":
+			return jsonResponse(http.StatusOK, []ghRelease{{
+				TagName: "v0.2.0",
+				Assets: []ghAsset{{
+					Name:               "Khutaf-v0.2.0-win64.zip",
+					Size:               int64(len(validZip)),
+					BrowserDownloadURL: "https://github.com/MohammadAboulEla/Khutaf/releases/download/v0.2.0/Khutaf-v0.2.0-win64.zip",
+				}},
+			}}, nil), nil
+		default:
+			return bytesResponse(http.StatusOK, validZip), nil
+		}
+	})
+	noSumDir := t.TempDir()
+	mgrNoSum := New("0.1.5-beta", noSumDir, nil, nil, nil)
+	mgrNoSum.httpClient.Transport = rtNoChecksum
+	if st, err := mgrNoSum.Check(context.Background(), true); err == nil || st.State != StateError {
+		t.Fatalf("expected Check error/StateError when no checksum exists, got state=%s err=%v", st.State, err)
+	}
+	if err := mgrNoSum.Download(context.Background()); err == nil || !strings.Contains(err.Error(), "no SHA-256 digest") {
+		t.Fatalf("expected errNoChecksum, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(noSumDir, stageDirName)); !os.IsNotExist(err) {
+		t.Fatal("stageDir must not be created when no checksum is available")
+	}
+
+	// 2. Release with SHA256SUMS.txt returning 404 must fail and never stage.
+	rtMissingChecksums := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/repos/MohammadAboulEla/Khutaf/releases":
+			return jsonResponse(http.StatusOK, []ghRelease{{
+				TagName: "v0.2.0",
+				Assets: []ghAsset{
+					{
+						Name:               "Khutaf-v0.2.0-win64.zip",
+						Size:               int64(len(validZip)),
+						BrowserDownloadURL: "https://github.com/MohammadAboulEla/Khutaf/releases/download/v0.2.0/Khutaf-v0.2.0-win64.zip",
+					},
+					{
+						Name:               "SHA256SUMS.txt",
+						BrowserDownloadURL: "https://github.com/MohammadAboulEla/Khutaf/releases/download/v0.2.0/SHA256SUMS.txt",
+					},
+				},
+			}}, nil), nil
+		case "/MohammadAboulEla/Khutaf/releases/download/v0.2.0/Khutaf-v0.2.0-win64.zip":
+			return bytesResponse(http.StatusOK, validZip), nil
+		default:
+			return bytesResponse(http.StatusNotFound, nil), nil
+		}
+	})
+	missingSumDir := t.TempDir()
+	mgrMissingSum := New("0.1.5-beta", missingSumDir, nil, nil, nil)
+	mgrMissingSum.httpClient.Transport = rtMissingChecksums
+	if _, err := mgrMissingSum.Check(context.Background(), true); err != nil {
+		t.Fatalf("Check with checksumsURL: %v", err)
+	}
+	if err := mgrMissingSum.Download(context.Background()); err == nil || !strings.Contains(err.Error(), "fetch checksums") {
+		t.Fatalf("expected fetch checksums error on 404, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(missingSumDir, stageDirName)); !os.IsNotExist(err) {
+		t.Fatal("stageDir must not be created when SHA256SUMS.txt fails")
+	}
+
+	// 3. Release with valid SHA256SUMS.txt fallback must succeed.
+	rtValidChecksums := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/repos/MohammadAboulEla/Khutaf/releases":
+			return jsonResponse(http.StatusOK, []ghRelease{{
+				TagName: "v0.2.0",
+				Assets: []ghAsset{
+					{
+						Name:               "Khutaf-v0.2.0-win64.zip",
+						Size:               int64(len(validZip)),
+						BrowserDownloadURL: "https://github.com/MohammadAboulEla/Khutaf/releases/download/v0.2.0/Khutaf-v0.2.0-win64.zip",
+					},
+					{
+						Name:               "SHA256SUMS.txt",
+						BrowserDownloadURL: "https://github.com/MohammadAboulEla/Khutaf/releases/download/v0.2.0/SHA256SUMS.txt",
+					},
+				},
+			}}, nil), nil
+		case "/MohammadAboulEla/Khutaf/releases/download/v0.2.0/Khutaf-v0.2.0-win64.zip":
+			return bytesResponse(http.StatusOK, validZip), nil
+		case "/MohammadAboulEla/Khutaf/releases/download/v0.2.0/SHA256SUMS.txt":
+			return bytesResponse(http.StatusOK, []byte(validSHA+"  Khutaf-v0.2.0-win64.zip\n")), nil
+		default:
+			return bytesResponse(http.StatusNotFound, nil), nil
+		}
+	})
+	mgrValidSum := New("0.1.5-beta", t.TempDir(), nil, nil, nil)
+	mgrValidSum.httpClient.Transport = rtValidChecksums
+	if _, err := mgrValidSum.Check(context.Background(), true); err != nil {
+		t.Fatalf("Check valid checksums: %v", err)
+	}
+	if err := mgrValidSum.Download(context.Background()); err != nil {
+		t.Fatalf("Download valid checksums: %v", err)
+	}
+	if mgrValidSum.Status().State != StateReady {
+		t.Fatalf("state = %s, want ready", mgrValidSum.Status().State)
+	}
+}
+
 func TestApplyUpdateSwapAndCleanup(t *testing.T) {
 	targetDir := t.TempDir()
 	stageDir := filepath.Join(targetDir, stageDirName)

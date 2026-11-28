@@ -20,9 +20,9 @@
 
 ---
 
-## Download (`v0.1.5-beta`)
+## Download
 
-Download the latest portable Windows release (`Khutaf.exe` + `runtime/khutaf-hook64.dll`) from [GitHub Releases](https://github.com/MohammadAboulEla/Khutaf/releases):
+Download the latest portable Windows release (`Khutaf.exe` + `runtime/khutaf-hook64.dll`) from [GitHub Releases (Latest)](https://github.com/MohammadAboulEla/Khutaf/releases/latest):
 
 * Extract the archive anywhere while keeping `Khutaf.exe` and `runtime/khutaf-hook64.dll` together.
 * Requires **Windows 10 / 11 (x64)** and **Microsoft Edge WebView2 Runtime**.
@@ -46,7 +46,7 @@ Download the latest portable Windows release (`Khutaf.exe` + `runtime/khutaf-hoo
 * **Font Fallback (Unity Mono & IL2CPP):** Dynamically creates OS TMP/UI fonts (`Tahoma` by default) and provides one-click in-app download of SHA-256-verified `TMP_Font_AssetBundles` (`arialuni_sdf_u*`) so Arabic renders cleanly instead of missing-glyph boxes.
 
 ### 🌐 Translation Providers, Pipeline, Cache & Diagnostics
-* **Free Traditional Translators:** Bing Translator (default, no API key required), plus Google, Microsoft, Yandex, Papago, Youdao, Alibaba, Volcengine, LingoCloud, ModernMT, QQ TranSmart, and Translate.com.
+* **Free Traditional Translators:** Bing Translator (default, no API key required), plus Google, Microsoft, Yandex, Papago, Youdao, Alibaba, Volcengine, LingoCloud, ModernMT, QQ TranSmart, QQIMT, and Translate.com.
 * **OpenAI-Compatible & Offline Local LLMs:** Presets for OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Ollama, LM Studio, plus a built-in `llama.cpp` (`llama-server.exe`) runner supporting offline translation templates (`HY-MT2`, `TranslateGemma`, `NLLB-Instruct`).
 * **Text Pipeline & 3-Tier SQLite Cache:** Pre/post literal & regex rules, global + per-game glossary, placeholder safety checks, and 3-tier SQLite translation cache (per-game -> global -> cross-game shared fallback) with a built-in manual cache editor.
 * **Diagnostics & Telemetry View:** Live per-subsystem telemetry stream, function latency matrix, and redacted JSONL diagnostic bundle export.

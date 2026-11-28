@@ -20,9 +20,9 @@
 
 ---
 
-## التحميل (`v0.1.5-beta`)
+## التحميل
 
-يمكنك تحميل أحدث نسخة محمولة لويندوز (`Khutaf.exe` + `runtime/khutaf-hook64.dll`) من صفحة [GitHub Releases](https://github.com/MohammadAboulEla/Khutaf/releases):
+يمكنك تحميل أحدث نسخة محمولة لويندوز (`Khutaf.exe` + `runtime/khutaf-hook64.dll`) من صفحة [GitHub Releases (الأحدث)](https://github.com/MohammadAboulEla/Khutaf/releases/latest):
 
 * فك ضغط الأرشيف في أي مجلد مع الإبقاء على `Khutaf.exe` ومجلد `runtime/khutaf-hook64.dll` بجانب بعضهما.
 * يتطلب **Windows 10 / 11 (x64)** ومكوّن **Microsoft Edge WebView2 Runtime**.
@@ -46,7 +46,7 @@
 * **دعم الخطوط الاحتياطية (Unity Mono & IL2CPP):** إنشاء خطوط ديناميكية من خطوط النظام (`Tahoma` افتراضياً) مع تحميل حزم `TMP_Font_AssetBundles` (`arialuni_sdf_u*`) من داخل التطبيق والتحقق من بصمتها بـ SHA-256 لظهور الحروف العربية بوضوح بدلاً من المربعات.
 
 ### 🌐 مزوّدو الترجمة ومعالجة النصوص والكاش والتشخيص
-* **مترجمات مجانية تقليدية:** Bing افتراضياً بدون مفتاح API، إلى جانب Google وMicrosoft وYandex وPapago وYoudao وAlibaba وVolcengine وLingoCloud وModernMT وQQ TranSmart وTranslate.com.
+* **مترجمات مجانية تقليدية:** Bing افتراضياً بدون مفتاح API، إلى جانب Google وMicrosoft وYandex وPapago وYoudao وAlibaba وVolcengine وLingoCloud وModernMT وQQ TranSmart وQQIMT وTranslate.com.
 * **دعم نماذج الذكاء الاصطناعي والتشغيل المحلي Offline:** جاهز للعمل مع OpenAI وGemini وDeepSeek وGroq وOpenRouter وOllama وLM Studio، بالإضافة إلى مُشغّل مدمج لـ `llama.cpp` (`llama-server.exe`) يدعم قوالب الترجمة المحلية (`HY-MT2`، `TranslateGemma`، `NLLB-Instruct`).
 * **خط معالجة نصوص وكاش SQLite ثلاثي المستويات:** قواعد نصية وRegex قبل الترجمة وبعدها، وقاموس مصطلحات (عام ولكل لعبة)، وفحص سلامة المتغيرات، وكاش SQLite ثلاثي المستويات (خاص باللعبة -> عام -> مشترك بين الألعاب) مع واجهة لتعديل الترجمات يدوياً.
 * **شاشة التشخيص والقياس (Diagnostics & Telemetry):** بث حي لأحداث كل نظام فرعي، ومصفوفة أزمنة تنفيذ الدوال، وتصدير تقارير تشخيصية بصيغة JSONL مع حجب البيانات الحساسة تلقائياً.
